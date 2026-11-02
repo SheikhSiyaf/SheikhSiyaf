@@ -23,7 +23,7 @@ async function companyInfo(db: Db, companyId: string) {
   return rows[0] ?? notFound();
 }
 
-async function systemAccounts(db: Db, companyId: string) {
+export async function systemAccounts(db: Db, companyId: string) {
   const { rows } = await db.query('SELECT code, id FROM accounts WHERE company_id = $1', [companyId]);
   const byCode = new Map(rows.map((r) => [r.code, r.id]));
   const need = (code: string) => byCode.get(code) ?? bad(`This client's chart of accounts has no account ${code}.`, 'err.chart');
@@ -35,7 +35,7 @@ async function systemAccounts(db: Db, companyId: string) {
 }
 
 /** Next number in a gap-free sequence per company and type (rolled back with the transaction). */
-async function nextNumber(db: Db, companyId: string, seq: string, prefix: string): Promise<string> {
+export async function nextNumber(db: Db, companyId: string, seq: string, prefix: string): Promise<string> {
   const { rows } = await db.query(
     `INSERT INTO document_sequences (company_id, type, next_no) VALUES ($1, $2, 2)
      ON CONFLICT (company_id, type) DO UPDATE SET next_no = document_sequences.next_no + 1

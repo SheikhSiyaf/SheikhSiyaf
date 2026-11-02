@@ -110,3 +110,31 @@ Every change below is covered by a test in `test/`.
 | The person who submitted a claim cannot approve or reject it; rejecting needs a reason | Separation of duties, enforced in the database rather than only on screen. |
 | Payments made can go to a supplier (settling bills) or an employee (settling approved claims); `document_amount_due()` covers claims | One payment screen for both; a claim can never be over-paid. |
 | `cost_centres.status`, `budget`, `contact_id`, `start_date`, `end_date`, `description`; a project's customer must be a customer of the same client | Projects are cost centres of kind `project`, so every invoice, bill, expense and claim line can be tagged with one. Project income, costs, profit and budget used come straight from the ledger. |
+
+## 0010_bank.sql
+| Change | Why |
+|---|---|
+| `bank_accounts`: one row per bank or cash ledger account (kind, bank name, account number, IBAN, remembered statement layout, open or closed). Created automatically for every `is_bank` account; adding a bank account in the app creates its ledger account (1020-1099) | Clients add their own bank accounts. The IBAN or account number lets an imported statement find its account. |
+| `iban_valid()` (ISO 13616 mod 97; Saudi 24 characters, UAE 23) as a check on `bank_accounts.iban`; IBAN and account number unique per client | A wrong IBAN is refused before it is saved. |
+| `bank_imports` and `bank_statement_lines` (amount signed: money in positive). A line's date, text and amount never change; only its match does. `UNIQUE (bank_account_id, fingerprint)` | The bank's record is kept as it came. Importing an overlapping statement skips lines already there. |
+| A statement line is matched to exactly one journal line on that bank's ledger account, for the same amount in the same direction (`journal_line_id UNIQUE`) | This is the reconciliation: every bank line is in the books once, and no book line is used twice. |
+| `bank_rules` (text to look for, direction, account, VAT, cost centre) | "Rules that learn" (PRODUCT_SPEC). They are suggestions; a person confirms each line or books all suggestions with one click. |
+| Audit triggers and row-level security on all four tables | Rules 5 and 6. |
+
+## 0011_inventory.sql
+| Change | Why |
+|---|---|
+| Accounts `1300 Inventory` and `2050 Goods received not yet billed` (added to existing clients); purchase lines may use 2050 | A GRN puts stock in the books before the supplier's bill arrives; the bill then clears 2050. |
+| `items` with `qty_on_hand` and `value_on_hand` (never negative). Quantity and value change only inside the posting of a goods note (`pg_trigger_depth()`), never directly | Stock and its value always come from GRNs and GDNs, so the stock report and the books agree. |
+| `stock_notes` (GRN / GDN, gap-free numbers GRN-0001 / GDN-0001) and `stock_note_lines` | Inbound and outbound goods, as asked. |
+| Posting a GRN adds quantity x cost; posting a GDN removes stock at weighted average cost (`round(value x qty / on hand, 2)`, all of the value when all the stock goes), checked by the database line by line | PRODUCT_SPEC: average cost. The database recomputes the cost, so a wrong amount cannot be posted. |
+| A posted note needs its own journal entry moving its value on 1300 (GRN: Dr 1300 / Cr 2050 or equity; GDN: Dr 5000 or another expense / Cr 1300); posted notes never change | Rule 2. Locked periods refuse the entry (rule 3). |
+
+## 0012_fixed_assets.sql
+| Change | Why |
+|---|---|
+| Accounts 1510 Vehicles, 1520 Furniture and fixtures, 1530 Computers and IT equipment, 1590 Accumulated depreciation, 4900 Gain or loss on sale of assets, 5050 Depreciation (added to existing clients) | The accounts the register posts to. |
+| `fixed_assets` (cost, residual value, useful life in months, depreciation start month, depreciation before Nusuh Books, cost centre, status) | The register. Cost, life and accounts cannot change once depreciation is booked. |
+| `depreciation_due()`: by the end of month n an asset has `round((cost - residual) x n / life, 2)`, all of it from the last month; a month books that target less what is already booked | Monthly straight-line depreciation (PRODUCT_SPEC). Missed months are caught up and the total never passes cost less residual. |
+| `depreciation_runs` (one per company per month, in order, never for a future month) and `depreciation_lines` (amount recomputed by the database) with one journal entry per run: Dr depreciation (with cost centre) / Cr 1590 | Rules 1-3: balanced, never changed, refused in locked periods. |
+| Disposal: depreciation must be up to date to the month before; one entry removes cost and accumulated depreciation, proceeds to bank, gain or loss to 4900; a disposed asset never changes | Selling or scrapping an asset leaves the books correct. |

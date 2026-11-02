@@ -172,7 +172,7 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
                       <td data-label={t('doc.dueDate')} className={d.dueDate && d.dueDate < today() ? 'bad' : ''}>{d.dueDate ?? '—'}</td>
                       <td className="num ltr" data-label={t('doc.amountDue')}>{fmt(d.amountDue)}</td>
                       <td className="num" data-label={t('pay.settle')}>
-                        <input inputMode="decimal" className="num ltr" style={{ width: 130 }} value={alloc[d.id] ?? ''} aria-label={`${t('pay.settle')} ${d.number}`}
+                        <input inputMode="decimal" className="num ltr amount" style={{ width: 160 }} value={alloc[d.id] ?? ''} aria-label={`${t('pay.settle')} ${d.number}`}
                           onChange={(e) => { setManual(true); setAlloc({ ...alloc, [d.id]: e.target.value }); }} placeholder="0.00" />
                       </td>
                     </tr>

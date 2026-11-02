@@ -2,7 +2,7 @@
 // Pure functions shared by the API (src/books/documentsService.ts) and the demo build.
 // The database re-checks the same maths (db/migrations/0005_sales_purchases.sql).
 import { divRoundHalfUp, fromMinor, toMinor, type Minor } from '../money.js';
-import { vatForLine } from '../vat/vat.js';
+import { rateToBasisPoints, vatForLine } from '../vat/vat.js';
 
 export type DocType = 'quotation' | 'invoice' | 'credit_note' | 'bill' | 'supplier_credit' | 'expense' | 'claim';
 export type VatCode = 'standard' | 'zero' | 'exempt' | 'out_of_scope';
@@ -158,3 +158,22 @@ export function nextOccurrence(date: string, frequency: Frequency, anchorDay: nu
   return `${ny}-${String(nm).padStart(2, '0')}-${String(Math.min(anchorDay, last)).padStart(2, '0')}`;
 }
 
+
+/**
+ * Splits an amount that includes VAT (e.g. a bank payment) into net and VAT, with VAT = round(net x rate).
+ * Some totals cannot be reached exactly (a 15% step is 1.15 halalas); then `rounding` (at most 0.01) is the
+ * difference left over, booked as a separate line with no VAT.
+ */
+export function netFromGross(gross: Minor, companyVatRate: string, vatCode: VatCode): { net: Minor; vat: Minor; rounding: Minor } {
+  const rate = vatCode === 'standard' ? companyVatRate : '0.00';
+  const guess = divRoundHalfUp(gross * 10_000n, 10_000n + rateToBasisPoints(rate));
+  let best: { net: Minor; vat: Minor; rounding: Minor } | null = null;
+  for (const net of [guess, guess - 1n, guess + 1n, guess - 2n, guess + 2n]) {
+    if (net < 0n) continue;
+    const vat = vatForLine(net, rate);
+    const rounding = gross - net - vat;
+    if (rounding === 0n) return { net, vat, rounding };
+    if (rounding > 0n && (!best || rounding < best.rounding)) best = { net, vat, rounding };
+  }
+  return best ?? { net: gross, vat: 0n, rounding: 0n };
+}

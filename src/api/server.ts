@@ -16,6 +16,8 @@ import { registerAdminRoutes } from './admin.js';
 import { registerSalesRoutes } from './sales.js';
 import { registerExpenseRoutes } from './expenses.js';
 import { registerLedgerRoutes } from './ledger.js';
+import { registerBankRoutes } from './bank.js';
+import { registerStockRoutes } from './stock.js';
 
 export type { ServerOptions } from './context.js';
 const POSTING_ROLES = ['partner', 'staff_accountant', 'client_accountant'];
@@ -225,6 +227,8 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerSalesRoutes(app, ctx);
   registerExpenseRoutes(app, ctx);
   registerLedgerRoutes(app, ctx);
+  registerBankRoutes(app, ctx);
+  registerStockRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });
 

@@ -37,6 +37,9 @@ function Source({ books, r }: { books: CompanyBooks; r: LRow }) {
   if (r.sourceId && (r.sourceType === 'payment_received' || r.sourceType === 'payment_made')) {
     return <button className="link" onClick={() => go(r.sourceType === 'payment_received' ? 'Sales' : 'Purchases', r.sourceType === 'payment_received' ? 'payments-received' : 'payments-made', r.sourceId!)}>{r.memo}</button>;
   }
+  if (r.sourceId && (r.sourceType === 'grn' || r.sourceType === 'gdn')) return <button className="link" onClick={() => go('Inventory', r.sourceType!, r.sourceId!)}>{r.memo}</button>;
+  if (r.sourceId && r.sourceType === 'asset_disposal') return <button className="link" onClick={() => go('Assets', 'register', r.sourceId!)}>{r.memo}</button>;
+  if (r.sourceType === 'depreciation') return <button className="link" onClick={() => go('Assets', 'depreciation')}>{r.memo}</button>;
   return <>{r.memo ?? '—'}</>;
 }
 

@@ -18,8 +18,12 @@ Read `CLAUDE.md` first. It holds the non-negotiable accounting rules.
     - **Journal:** entries, new entry, periods.
     - **Ledger:** general ledger for any account and cost centre ledger, with opening, running and closing balances; customer, supplier and employee ledgers. The employee ledger shows claims approved and paid back.
     - **Reports:** trial balance, P&L, P&L by cost centre, expenses by category, expenses by supplier, aged receivables, aged payables, VAT summary. The VAT return comes later.
-    - **Bank, Inventory, Assets, CRM and Review:** their sub-pages describe what each will do. CRM covers leads, pipeline, activities and campaigns.
+    - **Bank:** bank accounts (add your own; the IBAN is checked and names the bank, and the account in the books is created for you); import a statement as CSV or Excel (the file is matched to the bank account by its IBAN or account number, columns are found in English or Arabic or set once per account, and lines already imported are skipped); review each line with a suggestion (already in the books, a customer or supplier payment, or a rule) and match, book or ignore it; reconciliation (books, statement and the difference); rules ("always do this").
+    - **Inventory:** items with quantity, average cost and value; goods received notes (GRN, inbound: Dr 1300 Inventory, Cr 2050 Goods received not yet billed); goods delivery notes (GDN, outbound at average cost: Dr 5000 Cost of sales, Cr 1300); stock value against 1300 in the books.
+    - **Assets:** fixed asset register (cost, depreciation to date, book value, against the books); monthly straight-line depreciation posted one month at a time; selling or scrapping an asset with its gain or loss.
+    - **CRM and Review:** their sub-pages describe what each will do. CRM covers leads, pipeline, activities and campaigns.
   - **Sidebar:** pressing a module opens its sub-menu; pressing it again closes it.
+  - **Line editors:** quantity and price boxes show the full number; on laptop screens each line takes two rows so nothing scrolls out of view.
   - **Arabic names:** when you type an English name for a customer, supplier, employee, project, category or client, the Arabic name is filled in as a suggestion (common business words are translated, names are written in Arabic letters). It is worked out inside the app, so no names are sent anywhere. Change it if needed; once you edit it, it is not overwritten.
   - Administrator console:
     - **Clients:** summary (active, suspended, without staff), search, the **Add client** registration page, and a **Manage** page per client. The Manage page lets you edit details and entry settings, add client users, tick which staff handle the client, and suspend or reactivate it.

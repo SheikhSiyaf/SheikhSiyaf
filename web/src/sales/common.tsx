@@ -61,4 +61,6 @@ export function StateBadge({ state }: { state: string }) {
 
 export const bankAccounts = (b: CompanyBooks) => b.accounts.filter((a) => a.isBank);
 export const lineAccounts = (b: CompanyBooks, side: Side) =>
-  b.accounts.filter((a) => (side === 'sales' ? a.type === 'income' : (a.type === 'expense' || (a.type === 'asset' && !a.isBank && !['1100', '1200'].includes(a.code)))));
+  b.accounts.filter((a) => (side === 'sales' ? a.type === 'income'
+    // Purchases: expenses, fixed assets, and 2050 for goods already received on a GRN. Stock (1300) only moves through GRNs and GDNs.
+    : (a.type === 'expense' || a.code === '2050' || (a.type === 'asset' && !a.isBank && !['1100', '1200', '1300', '1590'].includes(a.code)))));

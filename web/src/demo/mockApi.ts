@@ -276,7 +276,7 @@ function priceLinesM(companyId: string, side: 'sales' | 'purchases', lines: Line
     if (!String(l.description ?? '').trim()) fail(400, `Line ${i + 1}: enter a description.`, 'err.lineDescription');
     if (!a) fail(400, `Line ${i + 1}: choose an account.`, 'err.lineAccount');
     if (side === 'sales' && a!.type !== 'income') fail(400, 'Sales lines use an income account.', 'err.salesAccount');
-    if (side === 'purchases' && !['expense', 'asset'].includes(a!.type)) fail(400, 'Purchase lines use an expense or asset account.', 'err.purchaseAccount');
+    if (side === 'purchases' && !['expense', 'asset'].includes(a!.type) && a!.code !== '2050') fail(400, 'Purchase lines use an expense or asset account.', 'err.purchaseAccount');
     try { return { ...priceLine({ ...l, description: String(l.description).trim() }, rate), id: uid() }; }
     catch { return fail(400, `Line ${i + 1}: check the quantity and price.`, 'err.lineNumbers'); }
   });

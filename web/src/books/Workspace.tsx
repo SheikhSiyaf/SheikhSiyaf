@@ -22,6 +22,9 @@ import { Approvals } from '../expenses/Approvals.tsx';
 import { ContactLedgers, CostCentreLedger, GeneralLedger } from '../ledger/Ledger.tsx';
 import { ProjectList, ProjectPage, ProjectReport } from '../projects/Projects.tsx';
 import { EmployeeList, EmployeePage } from '../hrm/Employees.tsx';
+import { BankAccountForm, BankAccountList, BankAccountPage, ImportStatement, Reconcile, Rules } from '../bank/Bank.tsx';
+import { ItemList, ItemPage, NoteEditor, NoteList, StockValue } from '../inventory/Inventory.tsx';
+import { AssetPage, AssetRegister, Depreciation } from '../assets/Assets.tsx';
 
 export const MODULES = NAV.map((m) => m.key);
 
@@ -122,6 +125,22 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Projects':
       if (sub === 'project-report') return <ProjectReport books={books} />;
       return item ? <ProjectPage key={item} books={books} id={item} /> : <ProjectList books={books} />;
+    case 'Bank':
+      if (sub === 'import') return <ImportStatement key={item ?? ''} books={books} bankId={item} />;
+      if (sub === 'reconcile') return <Reconcile key={item ?? ''} books={books} bankId={item} />;
+      if (sub === 'rules') return <Rules books={books} />;
+      if (item === 'new') return <BankAccountForm books={books} />;
+      return item ? <BankAccountPage key={item} books={books} id={item} filter={extra} /> : <BankAccountList books={books} />;
+    case 'Inventory':
+      if (sub === 'grn' || sub === 'gdn') {
+        if (item === 'new') return <NoteEditor key={`new-${sub}-${extra ?? ''}`} books={books} type={sub} presetItemId={extra} />;
+        return item ? <NoteEditor key={item} books={books} type={sub} id={item} /> : <NoteList key={sub} books={books} type={sub} />;
+      }
+      if (sub === 'stock-value') return <StockValue books={books} />;
+      return item ? <ItemPage key={item} books={books} id={item} /> : <ItemList books={books} />;
+    case 'Assets':
+      if (sub === 'depreciation') return <Depreciation books={books} />;
+      return item ? <AssetPage key={item} books={books} id={item} /> : <AssetRegister books={books} />;
     case 'HRM':
       if (sub === 'employees') return item ? <EmployeePage key={item} books={books} id={item} /> : <EmployeeList books={books} />;
       return null;

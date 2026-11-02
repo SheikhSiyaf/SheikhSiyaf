@@ -14,6 +14,11 @@ import { approveClaim, createCredit, issueDocument, recordPayment, rejectClaim, 
 import { saveProject } from '../books/ledgerService.js';
 import type { DocType } from '../books/documents.js';
 import { saveRecurring } from '../books/expensesService.js';
+import * as Bank from '../books/bankService.js';
+import * as Inv from '../books/inventoryService.js';
+import * as Fa from '../books/assetsService.js';
+import { monthEnd, nextMonthEnd, previousMonthEnd, targetDepreciation } from '../books/assets.js';
+import { toMinor } from '../money.js';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_USERS } from './demoData.js';
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -163,6 +168,68 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       await recordPayment(db, id, { direction: 'made', contactId: yusuf, date: daysAgo(16), amount: owed, accountId: acct['1010'], method: 'cash',
         allocations: [{ documentId: c1, amount: owed }] });
       void c2;
+
+      // Fixed assets the client already owned when the books started, with their depreciation so far.
+      const fa = [
+        { name: 'Delivery van', nameAr: 'شاحنة التوصيل', code: '1510', bought: daysAgo(430), cost: 85000n, residual: 15000n, life: 60, centre: 'Branch 1', serial: 'ABC 1234' },
+        { name: 'Office furniture', nameAr: 'أثاث المكتب', code: '1520', bought: daysAgo(800), cost: 18000n, residual: 0n, life: 84, centre: 'Head office', serial: null },
+        { name: 'Laptops (4)', nameAr: 'أجهزة حاسب محمولة (4)', code: '1530', bought: daysAgo(300), cost: 9600n, residual: 0n, life: 36, centre: 'Head office', serial: null },
+      ];
+      const booksStart = daysAgo(120);
+      const opening = fa.map((x) => targetDepreciation({ cost: x.cost * 100n, residual: x.residual * 100n, lifeMonths: x.life, start: `${x.bought.slice(0, 7)}-01`, opening: 0n },
+        previousMonthEnd(booksStart)));
+      const totalCost = fa.reduce((t, x) => t + x.cost * 100n, 0n), totalOpening = opening.reduce((t, x) => t + x, 0n);
+      await post(booksStart, 'Opening balances · fixed assets', [...fa.map((x) => L(x.code, fromMinor(x.cost * 100n))), L('1590', undefined, fromMinor(totalOpening)),
+        L('3000', undefined, fromMinor(totalCost - totalOpening))]);
+      for (const [i, x] of fa.entries()) {
+        await Fa.saveAsset(db, id, { name: x.name, nameAr: x.nameAr, assetAccountId: acct[x.code], purchaseDate: x.bought, cost: fromMinor(x.cost * 100n),
+          residualValue: fromMinor(x.residual * 100n), usefulLifeMonths: x.life, openingDepreciation: fromMinor(opening[i]!), costCentreId: cc[x.centre], serialNo: x.serial ?? undefined });
+      }
+      for (let m = monthEnd(booksStart); m <= previousMonthEnd(daysAgo(0)); m = nextMonthEnd(m)) await Fa.runDepreciation(db, id, m);
+
+      // Inventory: opening stock, a delivery from a supplier (its bill comes later, so 2050 shows it), and goods delivered to a customer.
+      const item = (sku: string, name: string, nameAr: string, unit: string, salePrice: string, reorderLevel: string) =>
+        Inv.saveItem(db, id, { sku, name, nameAr, unit, salePrice, reorderLevel });
+      const beam = await item('ST-12', 'Steel beam 12m', 'عارضة حديد 12م', 'pcs', '650.00', '10');
+      const rebar = await item('RB-16', 'Rebar 16mm', 'حديد تسليح 16مم', 'ton', '2600.00', '3');
+      const angle = await item('AI-50', 'Angle iron 50x50', 'زاوية حديد 50×50', 'pcs', '45.00', '50');
+      const note = async (type: 'grn' | 'gdn', ago: number, contactId: string | null, lines: Inv.NoteLineInput[], reference?: string, otherCode?: string) => {
+        const nid = await Inv.saveNoteDraft(db, id, { type, date: daysAgo(ago), contactId, reference, otherAccountId: otherCode ? acct[otherCode] : null, lines });
+        await Inv.postNote(db, nid);
+      };
+      await note('grn', 110, null, [{ itemId: beam, quantity: '30', unitCost: '410.00' }, { itemId: rebar, quantity: '6', unitCost: '2150.00' }, { itemId: angle, quantity: '200', unitCost: '28.50' }],
+        'Opening stock count', '3000');
+      await note('grn', 9, najd, [{ itemId: beam, quantity: '20', unitCost: '425.00' }, { itemId: angle, quantity: '100', unitCost: '29.00' }], 'NW-DN-5531');
+      await note('gdn', 3, gulf, [{ itemId: beam, quantity: '15', costCentreId: cc['Head office'] }, { itemId: angle, quantity: '40', costCentreId: cc['Head office'] }], 'PO-4520');
+      await note('gdn', 1, faisal, [{ itemId: rebar, quantity: '4', costCentreId: fitOut }], 'Warehouse fit-out');
+
+      // Bank: the client's bank account details, last month's statement imported, and two rules.
+      const bankId = (await client.query('SELECT id FROM bank_accounts WHERE account_id = $1', [acct['1000']])).rows[0].id;
+      await Bank.saveBankAccount(db, id, sa ? { kind: 'bank', iban: 'SA03 8000 0000 6080 1016 7519', accountNumber: '608010167519', name: 'Al Rajhi Bank – current account', nameAr: 'مصرف الراجحي – الحساب الجاري' }
+        : { kind: 'bank', iban: 'AE07 0331 2345 6789 0123 456', accountNumber: '1234567890123456', name: 'Mashreq – current account', nameAr: 'بنك المشرق – الحساب الجاري' }, bankId);
+      const from = daysAgo(45);
+      const inBooks = (await client.query(
+        `SELECT e.entry_date::text AS date, e.memo, (l.debit - l.credit)::text AS amount FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id
+         WHERE l.account_id = $1 AND e.entry_date >= $2 AND e.entry_date < $3 ORDER BY e.entry_date, e.created_at`, [acct['1000'], from, daysAgo(1)])).rows
+        .filter((r) => !/Office water|Reversal/.test(r.memo ?? ''))
+        .map((r) => ({ date: r.date as string, description: String(r.memo ?? 'TRANSFER').replace(/^[A-Z]+-\d+ · /, (m: string) => (toMinor(r.amount) > 0n ? 'TRF IN ' : 'TRF OUT ') + m).toUpperCase(), amount: r.amount as string }));
+      const extras = [
+        { date: daysAgo(30), description: 'STC BUSINESS BILL 0112233', amount: sa ? '-345.00' : '-157.50' },
+        { date: daysAgo(14), description: 'POS PETROMIN STATION 44', amount: '-86.25' },
+        { date: daysAgo(7), description: 'BANK SERVICE CHARGES', amount: '-25.00' },
+        { date: daysAgo(5), description: 'STC BUSINESS BILL 0112233', amount: sa ? '-299.00' : '-136.50' },
+      ];
+      const all = [...inBooks, ...extras].sort((a, b) => a.date.localeCompare(b.date));
+      let bal = toMinor((await client.query(
+        `SELECT coalesce(sum(l.debit - l.credit), 0)::numeric(18,2)::text AS v FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id WHERE l.account_id = $1 AND e.entry_date < $2`,
+        [acct['1000'], from])).rows[0].v);
+      const statement = all.map((l) => { bal += toMinor(l.amount); return { ...l, reference: null, balance: fromMinor(bal) }; });
+      await Bank.importStatement(db, bankId, { fileName: 'statement-last-45-days.csv', lines: statement });
+      await Bank.saveRule(db, id, { matchText: 'STC', direction: 'out', accountId: acct['5300'], vatCode: 'standard', label: 'Mobile and internet' });
+      await Bank.saveRule(db, id, { matchText: 'BANK SERVICE CHARGES', direction: 'out', accountId: acct['5400'], vatCode: 'exempt', label: 'Bank charges' });
+      for (const l of await Bank.statementLines(db, bankId, { status: 'open' })) {
+        if (l.suggestion?.kind === 'match' && l.date < daysAgo(20)) await Bank.matchLine(db, l.id, l.suggestion.journalLineId);
+      }
       await client.query('COMMIT');
 
       // The partner locks every month that ended more than a month ago.

@@ -36,6 +36,21 @@ const RAISED: [RegExp, string][] = [
   [/A sent quotation cannot be changed/, 'err.quoteImmutable'],
   [/same role for every client/, 'err.sameRole'],
   [/only belong to their own company/, 'err.clientOneCompany'],
+  [/Not enough stock/, 'err.notEnoughStock'],
+  [/Posted goods notes are never changed/, 'err.notePosted'],
+  [/Stock changes only through/, 'err.stockDirect'],
+  [/Imported statement lines are never changed/, 'err.statementImmutable'],
+  [/matched statement line cannot be removed/, 'err.lineMatched'],
+  [/not the amount on the statement/, 'err.matchAmount'],
+  [/same bank account/, 'err.matchAccount'],
+  [/Run depreciation up to/, 'err.depBeforeDisposal'],
+  [/already booked for months after this date/, 'err.disposeAfterRuns'],
+  [/runs one month at a time/, 'err.depNextMonth'],
+  [/future month/, 'err.depFuture'],
+  [/disposed asset never changes/, 'err.assetDisposed'],
+  [/Depreciation has been booked on this asset/, 'err.assetLocked'],
+  [/Goods received are credited/, 'err.noteAccount'],
+  [/Choose a supplier \(goods received\)/, 'err.noteContact'],
 ];
 
 const CONSTRAINTS: Record<string, [string, string]> = {
@@ -54,6 +69,11 @@ const CONSTRAINTS: Record<string, [string, string]> = {
   contact_ae_trn: ['A UAE TRN has 15 digits.', 'err.aeTrn'],
   line_net_is_qty_times_price: ['A line amount does not equal quantity x price.', 'err.lineNumbers'],
   line_vat_is_net_times_rate: ['A line VAT amount is not right.', 'err.lineNumbers'],
+  bank_accounts_iban: ['Another bank account already has this IBAN.', 'err.ibanTaken'],
+  bank_accounts_number: ['Another bank account already has this account number.', 'err.bankNumberTaken'],
+  bank_accounts_iban_check: ['This IBAN is not right.', 'err.iban'],
+  items_company_id_sku_key: ['Another item already has this code.', 'err.skuTaken'],
+  items_qty_on_hand_check: ['Not enough stock.', 'err.notEnoughStock'],
 };
 
 interface PgError { code?: string; message: string; constraint?: string }

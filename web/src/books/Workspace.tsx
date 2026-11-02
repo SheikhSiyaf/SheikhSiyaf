@@ -14,6 +14,10 @@ import { Overview } from '../sales/Overview.tsx';
 import { ContactList, ContactPage } from '../sales/Contacts.tsx';
 import { DocEditor, DocList, DocView } from '../sales/Documents.tsx';
 import { PaymentForm, PaymentList, PaymentView } from '../sales/Payments.tsx';
+import { ExpensesOverview } from '../expenses/Overview.tsx';
+import { RecurringForm, RecurringList } from '../expenses/Recurring.tsx';
+import { Categories } from '../expenses/Categories.tsx';
+import { ExpensesByCategory, ExpensesByPayee } from '../expenses/Reports.tsx';
 
 export const MODULES = NAV.map((m) => m.key);
 
@@ -21,7 +25,8 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
   const { t } = useI18n();
   const local = useLocalName();
   const books = useApi<CompanyBooks>(`/api/companies/${companyId}`);
-  const [, , , modKey, subKey, item, extra, extra2] = path.split('/');
+  const [, , , modKey, subKey, rawItem, extra, extra2] = path.split('/');
+  const item = rawItem === '-' ? undefined : rawItem;
   const mod = moduleOf(modKey ?? 'Home');
   const sub = mod.subs.find((s) => s.key === subKey) ?? mod.subs[0];
   const goModule = (m: string, s?: string) => navigate(`/c/${companyId}/${m}${s ? `/${s}` : ''}`);
@@ -77,12 +82,12 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
 function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goModule }: {
   books: CompanyBooks; module: string; sub: string; built: boolean; item?: string; extra?: string; extra2?: string; reloadBooks: () => void; goModule: (m: string, s?: string) => void;
 }): ReactNode {
-  const { t } = useI18n();
+  const { t, has } = useI18n();
   if (!built) {
     return (
       <div className="card">
         <h2>{t('soon.title', { module: t(`sub.${sub}` as Key) })}</h2>
-        <p className="mut">{t(`soon.${module}` as Key)}</p>
+        <p className="mut">{has(`soonSub.${sub}`) ? t(`soonSub.${sub}` as Key) : t(`soon.${module}` as Key)}</p>
       </div>
     );
   }
@@ -90,8 +95,21 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
   switch (module) {
     case 'Home': return <Home books={books} go={goModule} />;
     case 'Journal': return <Journal books={books} sub={sub} reloadBooks={reloadBooks} go={(s) => goModule('Journal', s)} />;
-    case 'Reports': return <Reports books={books} sub={sub} />;
-    case 'VAT': return <Vat books={books} />;
+    case 'Reports':
+      if (sub === 'vat-summary') return <Vat books={books} />;
+      if (sub === 'expenses-by-category') return <ExpensesByCategory books={books} />;
+      if (sub === 'expenses-by-payee') return <ExpensesByPayee books={books} />;
+      return <Reports books={books} sub={sub} />;
+    case 'Expenses':
+      if (sub === 'overview') return <ExpensesOverview books={books} />;
+      if (sub === 'recurring') return item ? <RecurringForm key={item} books={books} id={item} /> : <RecurringList books={books} />;
+      if (sub === 'categories') return <Categories books={books} onAdded={reloadBooks} />;
+      if (sub === 'expenses') {
+        if (item === 'new') return <DocEditor key="new-expense" books={books} type="expense" presetContactId={extra} />;
+        if (item) return <DocView key={item} books={books} id={item} />;
+        return <DocList key={`expense-${extra ?? ''}`} books={books} type="expense" filter={extra} />;
+      }
+      return null;
     case 'Sales':
     case 'Purchases': {
       if (sub === 'overview') return <Overview books={books} side={side} />;

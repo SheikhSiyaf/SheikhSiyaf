@@ -4,11 +4,11 @@
 import { divRoundHalfUp, fromMinor, toMinor, type Minor } from '../money.js';
 import { vatForLine } from '../vat/vat.js';
 
-export type DocType = 'quotation' | 'invoice' | 'credit_note' | 'bill' | 'supplier_credit';
+export type DocType = 'quotation' | 'invoice' | 'credit_note' | 'bill' | 'supplier_credit' | 'expense';
 export type VatCode = 'standard' | 'zero' | 'exempt' | 'out_of_scope';
 export type Direction = 'received' | 'made';
 
-export const DOC_TYPES: DocType[] = ['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit'];
+export const DOC_TYPES: DocType[] = ['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense'];
 export const VAT_CODES: VatCode[] = ['standard', 'zero', 'exempt', 'out_of_scope'];
 export const PAYMENT_METHODS = ['bank_transfer', 'cash', 'card', 'cheque', 'other'] as const;
 
@@ -18,7 +18,7 @@ export const posts = (t: DocType) => t !== 'quotation';
 
 /** Number prefixes; invoices use the client's own invoice prefix. */
 export function numberPrefix(type: DocType | 'receipt' | 'payment', invoicePrefix: string): string {
-  return { invoice: invoicePrefix, quotation: 'QT-', credit_note: 'CN-', bill: 'BILL-', supplier_credit: 'SC-', receipt: 'RCPT-', payment: 'PAY-' }[type];
+  return { invoice: invoicePrefix, quotation: 'QT-', credit_note: 'CN-', bill: 'BILL-', supplier_credit: 'SC-', expense: 'EXP-', receipt: 'RCPT-', payment: 'PAY-' }[type];
 }
 export const formatNumber = (prefix: string, n: number) => `${prefix}${String(n).padStart(4, '0')}`;
 
@@ -74,8 +74,9 @@ export interface PostingLine { accountId: string; costCentreId?: string | null; 
  *   Credit note:      the invoice entry, reversed
  *   Bill:             Dr expense lines (net)  Dr input VAT  Cr payables (gross)
  *   Supplier credit:  the bill entry, reversed
+ *   Expense:          Dr expense lines (net)  Dr input VAT  Cr the bank or cash account it was paid from (gross)
  */
-export function postingFor(type: DocType, lines: PricedLine[], sys: SystemAccounts): PostingLine[] {
+export function postingFor(type: DocType, lines: PricedLine[], sys: SystemAccounts, paidFromAccountId?: string): PostingLine[] {
   if (!posts(type)) return [];
   const { vat, gross } = documentTotals(lines);
   const sales = sideOf(type) === 'sales';
@@ -86,7 +87,8 @@ export function postingFor(type: DocType, lines: PricedLine[], sys: SystemAccoun
     return debit ? { debit: fromMinor(amount) } : { credit: fromMinor(amount) };
   };
   const out: PostingLine[] = [];
-  out.push({ accountId: sales ? sys.receivables : sys.payables, ...side(gross, sales) });
+  if (type === 'expense' && !paidFromAccountId) throw new Error('paid from');
+  out.push({ accountId: sales ? sys.receivables : type === 'expense' ? paidFromAccountId! : sys.payables, ...side(gross, sales) });
   for (const l of lines) if (l.net > 0n) out.push({ accountId: l.accountId, costCentreId: l.costCentreId ?? null, ...side(l.net, !sales) });
   if (vat > 0n) out.push({ accountId: sales ? sys.outputVat : sys.inputVat, ...side(vat, !sales) });
   return out;
@@ -132,3 +134,21 @@ export function addDays(date: string, days: number): string {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+
+// ------------------------------------------------------------------ recurring dates
+export type Frequency = 'weekly' | 'monthly' | 'quarterly' | 'yearly';
+
+/** Next date after `date`. Months keep the anchor day where the month has it (31st -> 30th/28th -> 31st). */
+export function nextOccurrence(date: string, frequency: Frequency, anchorDay: number): string {
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+  if (frequency === 'weekly') {
+    const x = new Date(Date.UTC(y, m - 1, d + 7));
+    return x.toISOString().slice(0, 10);
+  }
+  const add = frequency === 'monthly' ? 1 : frequency === 'quarterly' ? 3 : 12;
+  const total = (m - 1) + add;
+  const ny = y + Math.floor(total / 12), nm = (total % 12) + 1;
+  const last = new Date(Date.UTC(ny, nm, 0)).getUTCDate();
+  return `${ny}-${String(nm).padStart(2, '0')}-${String(Math.min(anchorDay, last)).padStart(2, '0')}`;
+}
+

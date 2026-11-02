@@ -6,15 +6,16 @@ import { fmt, fromMinor, isAmount, normalise, toMinor } from '../money.ts';
 import { today } from '../router.ts';
 import { ConfirmBar, ErrorNote, Loading, errorText } from '../ui.tsx';
 import { isLocked, lockedUpTo } from '../books/Workspace.tsx';
-import { pageForType } from '../books/nav.ts';
+import { moduleForType, pageForType } from '../books/nav.ts';
 import { documentTotals, priceLine, type VatCode } from '../../../src/books/documents.ts';
-import { StateBadge, lineAccounts, moduleOfSide, sideOf, useGo, type Contact, type DocDetail, type DocRow, type DocType } from './common.tsx';
+import { StateBadge, bankAccounts, lineAccounts, sideOf, useGo, type Contact, type DocDetail, type DocRow, type DocType } from './common.tsx';
 
 const FILTERS: Record<string, string[]> = {
   quotation: ['all', 'draft', 'sent', 'accepted', 'declined', 'invoiced'],
   invoice: ['all', 'draft', 'unpaid', 'overdue', 'paid'],
   bill: ['all', 'draft', 'unpaid', 'overdue', 'paid'],
   credit_note: ['all', 'draft', 'issued'],
+  expense: ['all', 'draft', 'issued', 'voided'],
   supplier_credit: ['all', 'draft', 'issued'],
 };
 
@@ -26,10 +27,11 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
   const [status, setStatus] = useState(filter ?? 'all');
   const [q, setQ] = useState('');
   const side = sideOf(type);
-  const m = moduleOfSide(side);
+  const m = moduleForType(type);
   const page = pageForType(type);
   const list = useApi<DocRow[]>(`/api/companies/${books.company.id}/documents?type=${type}&status=${status}&q=${encodeURIComponent(q)}`);
-  const canCreate = books.canPost && (type === 'invoice' || type === 'quotation' || type === 'bill');
+  const canCreate = books.canPost && (type === 'invoice' || type === 'quotation' || type === 'bill' || type === 'expense');
+  const hasDueCol = type === 'invoice' || type === 'bill';
   return (
     <>
       <div className="top" style={{ marginBottom: 10 }}>
@@ -49,8 +51,8 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
         {!list.data ? <Loading /> : list.data.length === 0 ? <div className="mut">{t('doc.noneYet')}</div> : (
           <div className="wrap">
             <table className="stack">
-              <thead><tr><th>{t('doc.number')}</th><th>{t(side === 'sales' ? 'contact.customer' : 'contact.supplier')}</th><th>{t('doc.date')}</th>
-                {type !== 'quotation' && !type.includes('credit') && <th>{t('doc.dueDate')}</th>}<th className="num">{t('doc.total')}</th>
+              <thead><tr><th>{t('doc.number')}</th><th>{t(side === 'sales' ? 'contact.customer' : type === 'expense' ? 'exp.paidTo' : 'contact.supplier')}</th><th>{t('doc.date')}</th>
+                {hasDueCol && <th>{t('doc.dueDate')}</th>}<th className="num">{t('doc.total')}</th>
                 {(type === 'invoice' || type === 'bill') && <th className="num">{t('doc.amountDue')}</th>}<th>{t('journal.status')}</th></tr></thead>
               <tbody>
                 {list.data.map((d) => (
@@ -58,10 +60,10 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
                     <td><button className="link" onClick={() => go(m, page, d.id)}>{d.number ?? t('doc.draftNo')}</button>{d.reference && <div className="mut small ltr">{d.reference}</div>}</td>
                     <td>{local(d.contactName, d.contactNameAr)}</td>
                     <td data-label={t('doc.date')}>{d.issueDate}</td>
-                    {type !== 'quotation' && !type.includes('credit') && <td data-label={t('doc.dueDate')}>{d.dueDate ?? '—'}</td>}
+                    {hasDueCol && <td data-label={t('doc.dueDate')}>{d.dueDate ?? '—'}</td>}
                     <td className="num ltr" data-label={t('doc.total')}>{fmt(d.grossTotal)}</td>
                     {(type === 'invoice' || type === 'bill') && <td className="num ltr" data-label={t('doc.amountDue')}>{d.status === 'issued' ? fmt(d.amountDue) : ''}</td>}
-                    <td><StateBadge state={d.state} /></td>
+                    <td><StateBadge state={type === 'expense' && d.state === 'issued' ? 'recorded' : d.state} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -81,8 +83,10 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
   const local = useLocalName();
   const go = useGo(books.company.id);
   const side = sideOf(type);
-  const m = moduleOfSide(side);
+  const m = moduleForType(type);
   const page = pageForType(type);
+  const isExpense = type === 'expense';
+  const banks = bankAccounts(books);
   const existing = useApi<DocDetail>(id ? `/api/documents/${id}` : null);
   const contacts = useApi<Contact[]>(`/api/companies/${books.company.id}/contacts?role=${side === 'sales' ? 'customer' : 'supplier'}`);
   const accounts = lineAccounts(books, side);
@@ -90,7 +94,7 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
   const registered = books.company.vatStatus !== 'unregistered';
   const blankLine = (): EditLine => ({ description: '', quantity: '1', unitPrice: '', accountId: defaultAccount, costCentreId: '', vatCode: registered ? 'standard' : 'out_of_scope' });
 
-  const [form, setForm] = useState<{ contactId: string; issueDate: string; dueDate: string; dueTouched: boolean; reference: string; notes: string; lines: EditLine[] }>();
+  const [form, setForm] = useState<{ contactId: string; issueDate: string; dueDate: string; dueTouched: boolean; reference: string; notes: string; lines: EditLine[]; payee: string; paidFrom: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -106,10 +110,11 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
     const contactId = d?.contactId ?? presetContactId ?? '';
     setForm(d ? {
       contactId, issueDate: d.issueDate, dueDate: d.dueDate ?? '', dueTouched: true, reference: d.reference ?? '', notes: d.notes ?? '',
+      payee: d.payee ?? '', paidFrom: d.paidFromAccountId ?? banks[0]?.id ?? '',
       lines: d.lines.map((l) => ({ description: l.description, quantity: l.quantity.replace(/\.?0+$/, ''), unitPrice: l.unitPrice, accountId: l.accountId, costCentreId: l.costCentreId ?? '', vatCode: l.vatCode as VatCode })),
     } : {
       contactId, issueDate: today(), dueDate: hasDue ? addDays(today(), contactId ? termsFor(contactId) : books.company.paymentTermsDays ?? 30) : '',
-      dueTouched: false, reference: '', notes: '', lines: [blankLine()],
+      dueTouched: false, reference: '', notes: '', lines: [blankLine()], payee: '', paidFrom: banks[0]?.id ?? '',
     });
   }
 
@@ -132,7 +137,10 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
 
   // Everything the database would refuse, said first in plain words.
   const problems: string[] = [];
-  if (!form.contactId) problems.push(t(side === 'sales' ? 'doc.pickCustomer' : 'doc.pickSupplier'));
+  if (isExpense) {
+    if (!form.contactId && !form.payee.trim()) problems.push(t('exp.needPayee'));
+    if (!form.paidFrom) problems.push(t('err.bankAccount'));
+  } else if (!form.contactId) problems.push(t(side === 'sales' ? 'doc.pickCustomer' : 'doc.pickSupplier'));
   if (!form.issueDate) problems.push(t('err.date'));
   if (form.dueDate && form.issueDate && form.dueDate < form.issueDate) problems.push(t('err.dueDate'));
   if (form.lines.length === 0) problems.push(t('err.noLines'));
@@ -148,13 +156,14 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
   if (willPost && form.issueDate && isLocked(books, form.issueDate)) problems.push(t('journal.dateLocked', { date: lockedUpTo(books) ?? '' }));
 
   const body = () => ({
-    type, contactId: form.contactId, issueDate: form.issueDate, dueDate: form.dueDate || null, reference: form.reference, notes: form.notes,
+    type, contactId: form.contactId || null, issueDate: form.issueDate, dueDate: form.dueDate || null, reference: form.reference, notes: form.notes,
+    ...(isExpense ? { payee: form.contactId ? null : form.payee, paidFromAccountId: form.paidFrom } : {}),
     lines: form.lines.map((l) => ({ ...l, unitPrice: normalise(l.unitPrice || '0'), costCentreId: l.costCentreId || null })),
   });
   const save = async (andIssue: boolean) => {
     setTried(true);
     if (andIssue && problems.length) return;
-    if (!andIssue && (!form.contactId || !form.issueDate)) return;
+    if (!andIssue && ((!form.contactId && !isExpense) || !form.issueDate)) return;
     setBusy(true); setError(undefined);
     try {
       const saved = id ? await api<{ id: string }>(`/api/documents/${id}`, { body: body() })
@@ -186,20 +195,33 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
 
       <div className="card">
         <div className="row">
-          <label className="f" style={{ flex: '2 1 240px' }}>{t(side === 'sales' ? 'contact.customer' : 'contact.supplier')}
+          <label className="f" style={{ flex: '2 1 240px' }}>{t(side === 'sales' ? 'contact.customer' : isExpense ? 'exp.supplierOptional' : 'contact.supplier')}
             <select id="doc-contact" value={form.contactId} onChange={(e) => setContact(e.target.value)} disabled={isCreditDoc}
-              style={tried && !form.contactId ? { borderColor: 'var(--bad)' } : undefined}>
-              <option value="">{t(side === 'sales' ? 'doc.pickCustomer' : 'doc.pickSupplier')}</option>
+              style={tried && !form.contactId && !isExpense ? { borderColor: 'var(--bad)' } : undefined}>
+              <option value="">{isExpense ? t('exp.noSupplier') : t(side === 'sales' ? 'doc.pickCustomer' : 'doc.pickSupplier')}</option>
               {(contacts.data ?? []).filter((c) => c.status === 'active' || c.id === form.contactId).map((c) => <option key={c.id} value={c.id}>{local(c.name, c.nameAr)}</option>)}
             </select>
           </label>
+          {isExpense && !form.contactId && (
+            <label className="f" style={{ flex: '2 1 200px' }}>{t('exp.payee')}
+              <input id="doc-payee" value={form.payee} onChange={(e) => set({ payee: e.target.value })} placeholder={t('exp.payeeHint')}
+                style={tried && !form.payee.trim() ? { borderColor: 'var(--bad)' } : undefined} />
+            </label>
+          )}
           <label className="f">{t('doc.date')}<input id="doc-date" type="date" value={form.issueDate} onChange={(e) => setIssueDate(e.target.value)} /></label>
+          {isExpense && (
+            <label className="f">{t('exp.paidFrom')}
+              <select id="doc-paid-from" value={form.paidFrom} onChange={(e) => set({ paidFrom: e.target.value })}>
+                {banks.map((a) => <option key={a.id} value={a.id}>{a.code} {local(a.name, a.nameAr)}</option>)}
+              </select>
+            </label>
+          )}
           {hasDue && (
             <label className="f">{t(type === 'quotation' ? 'doc.validUntil' : 'doc.dueDate')}
               <input id="doc-due" type="date" value={form.dueDate} onChange={(e) => set({ dueDate: e.target.value, dueTouched: true })} />
             </label>
           )}
-          <label className="f">{t(side === 'sales' ? 'doc.referenceSales' : 'doc.referencePurchases')}
+          <label className="f">{t(side === 'sales' ? 'doc.referenceSales' : isExpense ? 'exp.receiptNo' : 'doc.referencePurchases')}
             <input id="doc-ref" value={form.reference} onChange={(e) => set({ reference: e.target.value })} dir="ltr" disabled={isCreditDoc} />
           </label>
         </div>
@@ -290,13 +312,15 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
   const d = useApi<DocDetail>(`/api/documents/${id}`);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [confirmVoid, setConfirmVoid] = useState(false);
   if (d.error) return <ErrorNote error={d.error} onRetry={d.reload} />;
   if (!d.data) return <Loading />;
   const x = d.data;
   if (x.status === 'draft' && books.canPost) return <DocEditor books={books} type={x.type} id={x.id} />;
   const side = sideOf(x.type);
-  const m = moduleOfSide(side);
+  const m = moduleForType(x.type);
   const cur = books.company.currency;
+  const isExpense = x.type === 'expense';
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError(undefined);
     try { await fn(); d.reload(); } catch (e) { setError(errorText(t, has, e)); } finally { setBusy(false); }
@@ -314,6 +338,10 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
           const r = await api<{ id: string }>(`/api/documents/${x.id}/credit`, { body: {} });
           go(m, x.type === 'invoice' ? 'credit-notes' : 'supplier-credits', r.id);
         })}>{t(x.type === 'invoice' ? 'doc.createCredit' : 'doc.createSupplierCredit')}</button>}
+        {books.canPost && isExpense && x.status === 'issued' && !confirmVoid && (
+          <button className="b" disabled={busy || isLocked(books, today())} title={isLocked(books, today()) ? t('journal.reverseLocked') : undefined}
+            onClick={() => setConfirmVoid(true)}>{t('exp.void')}</button>
+        )}
         {books.canPost && x.type === 'quotation' && (
           <>
             {x.status === 'draft' && <button className="b p" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/quotation-status`, { body: { status: 'sent' } }))}>{t('doc.markSent')}</button>}
@@ -327,6 +355,8 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
         )}
       </div>
       {error && <div className="notice bad" role="alert">{error}</div>}
+      {confirmVoid && <ConfirmBar message={t('exp.voidConfirm')} busy={busy} onNo={() => setConfirmVoid(false)}
+        onYes={() => { setConfirmVoid(false); void run(() => api(`/api/documents/${x.id}/void`, { body: { date: today() } })); }} />}
 
       <div className="card paper">
         <div className="paper-head">
@@ -334,8 +364,25 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
             <div className="paper-title">{title}{x.type === 'invoice' && lang === 'en' && <span className="mut"> · فاتورة ضريبية</span>}</div>
             <div className="paper-no ltr">{x.number ?? t('doc.draftNo')}</div>
           </div>
-          <StateBadge state={x.state} />
+          <StateBadge state={isExpense && x.state === 'issued' ? 'recorded' : x.state} />
         </div>
+        {isExpense ? (
+          <div className="paper-parties">
+            <div>
+              <small className="mut">{t('exp.paidTo')}</small>
+              {x.contact ? <b><button className="link" onClick={() => go('Purchases', 'suppliers', x.contactId!)}>{local(x.contact.name, x.contact.nameAr)}</button></b> : <b>{x.payee}</b>}
+              {x.contact?.vatNumber && <div className="small">{t('contact.vatNumber')}: <span className="ltr">{x.contact.vatNumber}</span></div>}
+            </div>
+            <div>
+              <small className="mut">{t('exp.paidFrom')}</small>
+              <b>{local(x.paidFromName ?? '', x.paidFromNameAr ?? null)}</b>
+            </div>
+            <div className="small">
+              <div>{t('doc.date')}: <b>{x.issueDate}</b></div>
+              {x.reference && <div>{t('exp.receiptNo')}: <b className="ltr">{x.reference}</b></div>}
+            </div>
+          </div>
+        ) : (
         <div className="paper-parties">
           <div>
             <small className="mut">{t(side === 'sales' ? 'doc.from' : 'doc.supplierLabel')}</small>
@@ -345,16 +392,16 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
                 <div className="small">{t('contact.crNumber')}: <span className="ltr">{x.seller.crNumber}</span></div>
                 <div className="small mut">{x.seller.address}, {x.seller.city}</div></>
             ) : (
-              <><b>{local(x.contact.name, x.contact.nameAr)}</b>
-                {x.contact.vatNumber && <div className="small">{t('contact.vatNumber')}: <span className="ltr">{x.contact.vatNumber}</span></div>}</>
+              <><b>{local(x.contact!.name, x.contact!.nameAr)}</b>
+                {x.contact!.vatNumber && <div className="small">{t('contact.vatNumber')}: <span className="ltr">{x.contact!.vatNumber}</span></div>}</>
             )}
           </div>
           <div>
             <small className="mut">{t(side === 'sales' ? 'doc.billTo' : 'doc.billedTo')}</small>
             {side === 'sales' ? (
-              <><b><button className="link" onClick={() => go(m, 'customers', x.contactId)}>{local(x.contact.name, x.contact.nameAr)}</button></b>
-                {x.contact.vatNumber && <div className="small">{t('contact.vatNumber')}: <span className="ltr">{x.contact.vatNumber}</span></div>}
-                {(x.contact.address || x.contact.city) && <div className="small mut">{[x.contact.address, x.contact.city].filter(Boolean).join(', ')}</div>}</>
+              <><b><button className="link" onClick={() => go(m, 'customers', x.contactId)}>{local(x.contact!.name, x.contact!.nameAr)}</button></b>
+                {x.contact!.vatNumber && <div className="small">{t('contact.vatNumber')}: <span className="ltr">{x.contact!.vatNumber}</span></div>}
+                {(x.contact!.address || x.contact!.city) && <div className="small mut">{[x.contact!.address, x.contact!.city].filter(Boolean).join(', ')}</div>}</>
             ) : <b>{local(x.seller.name, x.seller.nameAr)}</b>}
           </div>
           <div className="small">
@@ -363,6 +410,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
             {x.reference && <div>{t(side === 'sales' ? 'doc.referenceSales' : 'doc.referencePurchases')}: <b className="ltr">{x.reference}</b></div>}
           </div>
         </div>
+        )}
         <div className="wrap">
           <table className="stack">
             <thead><tr><th>{t('doc.description')}</th><th className="num">{t('doc.qty')}</th><th className="num">{t('doc.price')}</th><th className="num">{t('doc.vat')}</th><th className="num">{t('doc.amount')}</th></tr></thead>
@@ -406,7 +454,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
           <table className="stack"><tbody>
             {x.related.map((r) => (
               <tr key={r.id}>
-                <td><button className="link" onClick={() => go(moduleOfSide(sideOf(r.type)), pageForType(r.type), r.id)}>{t(`doc.title.${r.type}` as Key)} {r.number ?? t('doc.draftNo')}</button></td>
+                <td><button className="link" onClick={() => go(moduleForType(r.type), pageForType(r.type), r.id)}>{t(`doc.title.${r.type}` as Key)} {r.number ?? t('doc.draftNo')}</button></td>
                 <td>{r.issueDate}</td>
                 <td className="num ltr">{fmt(r.grossTotal)}</td>
                 <td><StateBadge state={r.status} /></td>

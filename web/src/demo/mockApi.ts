@@ -8,7 +8,7 @@ import { vatForLine } from '../../../src/vat/vat.ts';
 import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../../../src/books/chartTemplate.ts';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_USERS } from '../../../src/db/demoData.ts';
 import {
-  addDays, AGE_BUCKETS, ageBucket, documentTotals, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, sideOf,
+  addDays, AGE_BUCKETS, ageBucket, nextOccurrence, type Frequency, documentTotals, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, sideOf,
   type AgeBucket, type Direction, type DocType, type LineInput, type PricedLine,
 } from '../../../src/books/documents.ts';
 
@@ -191,14 +191,19 @@ interface MContact {
   paymentTermsDays: number | null; status: 'active' | 'archived';
 }
 interface MDoc {
-  id: string; companyId: string; type: DocType; status: string; number: string | null; contactId: string; issueDate: string; dueDate: string | null;
+  id: string; companyId: string; type: DocType; status: string; number: string | null; contactId: string | null; issueDate: string; dueDate: string | null;
   reference: string | null; notes: string | null; originalId: string | null; journalEntryId: string | null; lines: (PricedLine & { id: string })[]; createdAt: string;
+  payee?: string | null; paidFromAccountId?: string | null; recurringId?: string | null; voidedAt?: string | null;
 }
 interface MPayment {
   id: string; companyId: string; direction: Direction; number: string; contactId: string; date: string; amount: bigint; accountId: string;
   method: string; reference: string | null; journalEntryId: string; voidedAt: string | null; allocations: { documentId: string; amount: bigint }[]; createdAt: string;
 }
-const sdb = { contacts: [] as MContact[], docs: [] as MDoc[], payments: [] as MPayment[], seqs: new Map<string, number>() };
+interface MRecurring {
+  id: string; companyId: string; name: string; contactId: string | null; payee: string | null; paidFromAccountId: string; frequency: string;
+  nextDate: string; anchorDay: number; endDate: string | null; active: boolean; lines: LineInput[]; reference: string | null;
+}
+const sdb = { contacts: [] as MContact[], docs: [] as MDoc[], payments: [] as MPayment[], seqs: new Map<string, number>(), recurring: [] as MRecurring[] };
 
 function canPostIn(companyId: string) {
   const role = roleOf(session, companyId);
@@ -217,13 +222,13 @@ const sysAccts = (companyId: string) => {
 };
 const docTotals = (d: MDoc) => documentTotals(d.lines);
 function amountDue(d: MDoc): bigint {
-  if (!['invoice', 'bill'].includes(d.type) || d.status !== 'issued') return 0n;
+  if (!['invoice', 'bill'].includes(d.type) || d.status !== 'issued') return 0n;   // expenses are paid at once
   const paid = sdb.payments.filter((p) => !p.voidedAt).flatMap((p) => p.allocations).filter((a) => a.documentId === d.id).reduce((s, a) => s + a.amount, 0n);
   const credited = sdb.docs.filter((c) => c.originalId === d.id && isCredit(c.type) && c.status === 'issued').reduce((s, c) => s + docTotals(c).gross, 0n);
   return docTotals(d).gross - paid - credited;
 }
 function stateOfDoc(d: MDoc): string {
-  if (d.type === 'quotation' || d.status === 'draft' || isCredit(d.type)) return d.status;
+  if (d.type === 'quotation' || d.type === 'expense' || d.status === 'draft' || isCredit(d.type)) return d.status;
   const due = amountDue(d);
   if (due < 0n) return 'credit';
   if (due === 0n) return 'paid';
@@ -231,10 +236,12 @@ function stateOfDoc(d: MDoc): string {
   return due < docTotals(d).gross ? 'partly_paid' : 'unpaid';
 }
 function docRow(d: MDoc) {
-  const c = sdb.contacts.find((x) => x.id === d.contactId)!;
+  const c = sdb.contacts.find((x) => x.id === d.contactId);
   const t = docTotals(d);
-  return { id: d.id, companyId: d.companyId, type: d.type, status: d.status, state: stateOfDoc(d), number: d.number, contactId: d.contactId, contactName: c.name,
-    contactNameAr: c.nameAr, issueDate: d.issueDate, dueDate: d.dueDate, reference: d.reference, notes: d.notes, originalId: d.originalId,
+  const pa = db.accounts.find((a) => a.id === d.paidFromAccountId);
+  return { id: d.id, companyId: d.companyId, type: d.type, status: d.status, state: stateOfDoc(d), number: d.number, contactId: d.contactId, contactName: c?.name ?? d.payee ?? '',
+    contactNameAr: c?.nameAr ?? null, payee: d.payee ?? null, paidFromAccountId: d.paidFromAccountId ?? null, paidFromName: pa?.name ?? null, paidFromNameAr: pa?.nameAr ?? null,
+    recurringId: d.recurringId ?? null, voidedAt: d.voidedAt ?? null, issueDate: d.issueDate, dueDate: d.dueDate, reference: d.reference, notes: d.notes, originalId: d.originalId,
     journalEntryId: d.journalEntryId, netTotal: s(t.net), vatTotal: s(t.vat), grossTotal: s(t.gross), amountDue: s(amountDue(d)), createdAt: d.createdAt };
 }
 function saveContactM(companyId: string, b: Record<string, unknown>, id?: string) {
@@ -269,19 +276,24 @@ function saveDraftM(companyId: string, b: Record<string, unknown>, id?: string):
   const existing = id ? sdb.docs.find((d) => d.id === id) ?? fail(404, 'Not found.', 'err.notFound') : undefined;
   if (existing && existing.status !== 'draft') fail(400, 'Only drafts can be changed.', 'err.notDraft');
   const type = (existing?.type ?? b.type) as DocType;
-  if (!['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit'].includes(type)) fail(400, 'Choose the document type.', 'err.format');
-  const contact = sdb.contacts.find((c) => c.id === b.contactId && c.companyId === companyId);
-  if (!contact) fail(400, 'Choose the customer or supplier.', 'err.contact');
-  if (sideOf(type) === 'sales' ? !contact!.isCustomer : !contact!.isSupplier) fail(400, 'Choose a customer or supplier of this company.', 'err.contact');
+  if (!['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense'].includes(type)) fail(400, 'Choose the document type.', 'err.format');
+  const isExpense = type === 'expense';
+  const contact = b.contactId ? sdb.contacts.find((c) => c.id === b.contactId && c.companyId === companyId) : undefined;
+  if (!contact && !(isExpense && !b.contactId)) fail(400, 'Choose the customer or supplier.', 'err.contact');
+  if (contact && (sideOf(type) === 'sales' ? !contact.isCustomer : !contact.isSupplier)) fail(400, 'Choose a customer or supplier of this company.', 'err.contact');
+  if (isExpense && b.paidFromAccountId && !db.accounts.some((a) => a.id === b.paidFromAccountId && a.companyId === companyId && a.isBank))
+    fail(400, 'Choose one of this company\'s bank or cash accounts.', 'err.bankAccount');
   const issueDate = String(b.issueDate ?? '');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) fail(400, 'Enter the date.', 'err.date');
   const dueDate = b.dueDate ? String(b.dueDate) : null;
   if (dueDate && dueDate < issueDate) fail(400, 'The due date cannot be before the document date.', 'err.dueDate');
   const lines = priceLinesM(companyId, sideOf(type), b.lines as LineInput[]);
-  const head = { contactId: contact!.id, issueDate, dueDate, reference: (b.reference as string)?.trim() || null, notes: (b.notes as string)?.trim() || null, lines };
+  const head = { contactId: contact?.id ?? null, issueDate, dueDate: isExpense ? null : dueDate, reference: (b.reference as string)?.trim() || null, notes: (b.notes as string)?.trim() || null, lines,
+    payee: isExpense ? (b.payee as string)?.trim() || null : null, paidFromAccountId: isExpense ? (b.paidFromAccountId as string) || null : null };
   if (existing) { Object.assign(existing, head); return existing.id; }
   const nid = uid();
-  sdb.docs.push({ id: nid, companyId, type, status: 'draft', number: null, originalId: (b.originalId as string) ?? null, journalEntryId: null, createdAt: new Date().toISOString(), ...head });
+  sdb.docs.push({ id: nid, companyId, type, status: 'draft', number: null, originalId: (b.originalId as string) ?? null, journalEntryId: null, createdAt: new Date().toISOString(),
+    recurringId: isExpense ? (b.recurringId as string) ?? null : null, ...head });
   return nid;
 }
 const docOf = (id: string) => sdb.docs.find((d) => d.id === id && roleOf(session, d.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
@@ -290,6 +302,8 @@ function issueM(id: string) {
   canPostIn(d.companyId);
   if (d.status !== 'draft') fail(400, 'This document has already been issued.', 'err.alreadyIssued');
   if (!d.lines.length) fail(400, 'Add at least one line.', 'err.noLines');
+  if (d.type === 'expense' && !d.paidFromAccountId) fail(400, 'Choose the bank or cash account the expense was paid from.', 'err.bankAccount');
+  if (d.type === 'expense' && !d.contactId && !(d.payee ?? '').trim()) fail(400, 'Enter who was paid (a supplier or a payee name).', 'err.payee');
   if (d.lines.some((l) => !l.costCentreId && db.accounts.find((a) => a.id === l.accountId)?.costCentreRequired))
     fail(400, 'A cost centre is required for one of the accounts used.', 'err.costCentreRequired');
   if (isCredit(d.type)) {
@@ -302,9 +316,9 @@ function issueM(id: string) {
   const savedSeq = sdb.seqs.get(seqKey);
   const number = nextNo(d.companyId, d.type, numberPrefix(d.type, company.invoicePrefix));
   try {
-    const c = sdb.contacts.find((x) => x.id === d.contactId)!;
-    d.journalEntryId = post(session!, d.companyId, d.issueDate, `${number} · ${c.name}`,
-      postingFor(d.type, d.lines, sysAccts(d.companyId)).map((l) => ({ accountId: l.accountId, costCentreId: l.costCentreId ?? null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
+    const c = sdb.contacts.find((x) => x.id === d.contactId);
+    d.journalEntryId = post(session!, d.companyId, d.issueDate, `${number} · ${c?.name ?? d.payee}`,
+      postingFor(d.type, d.lines, sysAccts(d.companyId), d.paidFromAccountId ?? undefined).map((l) => ({ accountId: l.accountId, costCentreId: l.costCentreId ?? null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
   } catch (e) { if (savedSeq === undefined) sdb.seqs.delete(seqKey); else sdb.seqs.set(seqKey, savedSeq); throw e; }   // no gap in numbers
   d.number = number; d.status = 'issued';
 }
@@ -374,6 +388,57 @@ function contactRow(c: MContact) {
 }
 const inCo = (id: string) => { member(id); return id; };
 
+function saveRecurringM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId);
+  const t = (k: string) => (typeof b[k] === 'string' && (b[k] as string).trim() ? (b[k] as string).trim() : null);
+  if (!t('name')) fail(400, 'Give the recurring expense a name.', 'err.recurringName');
+  if (!b.contactId && !t('payee')) fail(400, 'Enter who is paid (a supplier or a payee name).', 'err.payee');
+  if (!db.accounts.some((a) => a.id === b.paidFromAccountId && a.companyId === companyId && a.isBank)) fail(400, 'Choose the bank or cash account it is paid from.', 'err.bankAccount');
+  if (!['weekly', 'monthly', 'quarterly', 'yearly'].includes(String(b.frequency))) fail(400, 'Choose how often it repeats.', 'err.frequency');
+  const nextDate = String(b.nextDate ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) fail(400, 'Enter the next date.', 'err.date');
+  const endDate = t('endDate');
+  if (endDate && endDate < nextDate) fail(400, 'The end date cannot be before the next date.', 'err.endDate');
+  const lines = (b.lines as LineInput[]) ?? [];
+  if (!lines.length) fail(400, 'Add at least one line.', 'err.noLines');
+  priceLinesM(companyId, 'purchases', lines);   // same line checks as an expense
+  const v = { name: t('name')!, contactId: (b.contactId as string) || null, payee: b.contactId ? null : t('payee'), paidFromAccountId: String(b.paidFromAccountId),
+    frequency: String(b.frequency), nextDate, anchorDay: Number(nextDate.slice(8, 10)), endDate, active: b.active !== false, lines, reference: t('reference') };
+  if (id) { Object.assign(sdb.recurring.find((r) => r.id === id) ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
+  const nid = uid(); sdb.recurring.push({ id: nid, companyId, ...v }); return nid;
+}
+function generateM(companyId: string, onlyId?: string, upTo = today()) {
+  canPostIn(companyId);
+  const created: string[] = [];
+  for (const r of sdb.recurring.filter((x) => x.companyId === companyId && x.active && (!onlyId || x.id === onlyId))) {
+    let next = r.nextDate; let n = 0;
+    const limit = onlyId && next > upTo ? next : upTo;
+    while (next <= limit && (!r.endDate || next <= r.endDate) && n < 12) {
+      created.push(saveDraftM(companyId, { type: 'expense', contactId: r.contactId, payee: r.payee, paidFromAccountId: r.paidFromAccountId, issueDate: next,
+        reference: r.reference, notes: r.name, lines: r.lines, recurringId: r.id }));
+      next = nextOccurrence(next, r.frequency as Frequency, r.anchorDay); n++;
+      if (onlyId) break;
+    }
+    r.nextDate = next;
+    if (r.endDate && next > r.endDate) r.active = false;
+  }
+  return created;
+}
+function recRow(r: MRecurring) {
+  const a = db.accounts.find((x) => x.id === r.paidFromAccountId)!;
+  const net = r.lines.reduce((sum, l) => { try { return sum + priceLine({ ...l, vatCode: 'out_of_scope' }, '0').net; } catch { return sum; } }, 0n);
+  return { ...r, payeeName: sdb.contacts.find((c) => c.id === r.contactId)?.name ?? r.payee ?? '', paidFromName: a.name, paidFromNameAr: a.nameAr,
+    due: r.active && r.nextDate <= today() && (!r.endDate || r.nextDate <= r.endDate), netAmount: s(net) };
+}
+/** Spending per expense account between two dates, from the ledger. */
+function spentByAccount(companyId: string, from: string, to: string) {
+  return db.accounts.filter((a) => a.companyId === companyId && a.type === 'expense').map((a) => {
+    let v = 0n;
+    for (const e of db.entries) if (e.companyId === companyId && e.date >= from && e.date <= to) for (const l of e.lines) if (l.accountId === a.id) v += l.debit - l.credit;
+    return { id: a.id, code: a.code, name: a.name, nameAr: a.nameAr, costCentreRequired: a.costCentreRequired, spent: s(v), v };
+  }).sort((x, y) => x.code.localeCompare(y.code));
+}
+
 function seedSales(companyId: string, poster: string, c: { country: string; city: string; vatRate: string }) {
   const prev = session; session = poster;
   const acct = (code: string) => db.accounts.find((a) => a.companyId === companyId && a.code === code)!.id;
@@ -412,6 +477,16 @@ function seedSales(companyId: string, poster: string, c: { country: string; city
   const bill1 = doc('bill', najd, 30, 15, [SL('Steel stock purchase', '1', '3200.00', undefined, '5000')], 'NW-88102');
   pay('made', najd, 20, bill1, grossOf(bill1));
   doc('bill', telecom, 10, 15, [SL('Internet and phone lines', '1', '420.00', undefined, '5300')], 'DT-5531');
+  for (const [ago, payee, bankCode, desc, amount, vatCode] of [
+    [18, 'Petrol station', '1010', 'Fuel for delivery van', '150.00', 'standard'], [9, 'Al Waha Office Supplies', '1000', 'Printer toner and paper', '420.00', 'standard'],
+    [4, 'City taxi', '1010', 'Taxi to customer site', '45.00', 'zero']] as const) {
+    issueM(saveDraftM(companyId, { type: 'expense', payee, paidFromAccountId: acct(bankCode), issueDate: daysAgo(ago as number), lines: [{ ...SL(desc, '1', amount, undefined, '5400'), vatCode }] }));
+  }
+  const d0 = new Date(); const nextMonth = new Date(Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+  saveRecurringM(companyId, { name: 'Office rent', payee: 'Al Olaya Properties', paidFromAccountId: acct('1000'), frequency: 'monthly', nextDate: nextMonth,
+    lines: [{ ...SL('Monthly office rent', '1', '4000.00', 'Head office', '5100'), vatCode: 'exempt' }] });
+  saveRecurringM(companyId, { name: 'Internet and phones', contactId: telecom, paidFromAccountId: acct('1000'), frequency: 'monthly', nextDate: daysAgo(2),
+    lines: [{ ...SL('Fibre internet and 5 mobile lines', '1', '299.00', undefined, '5300'), vatCode: 'standard' }] });
   session = prev;
 }
 
@@ -566,6 +641,66 @@ const routes: [string, RegExp, Handler][] = [
     return { from, to, total: { income: s(income), expense: s(expense), profit: s(income - expense) }, byCostCentre };
   }],
   ['GET', /^\/api\/config$/, () => ({ demoLogins: true, demoPassword: DEMO_PASSWORD, minPassword: 10, publicUrl: '' })],
+  // ---------------------------------------------------------------- expenses
+  ['POST', /^\/api\/documents\/([\w-]+)\/void$/, (m, b) => {
+    const d = docOf(m[1]!); canPostIn(d.companyId);
+    if (d.type !== 'expense') fail(400, 'Only expenses can be voided.', 'err.format');
+    if (d.status === 'voided') fail(400, 'This expense has already been voided.', 'err.alreadyVoided');
+    if (d.status !== 'issued') fail(400, 'Only recorded expenses can be voided.', 'err.notIssued');
+    reverse(session!, d.journalEntryId!, String(b?.date ?? today()));
+    d.status = 'voided'; d.voidedAt = new Date().toISOString();
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/recurring$/, (m) => { const id = inCo(m[1]!); return sdb.recurring.filter((r) => r.companyId === id)
+    .sort((a, b) => Number(b.active) - Number(a.active) || a.nextDate.localeCompare(b.nextDate)).map(recRow); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/recurring$/, (m, b) => ({ id: saveRecurringM(inCo(m[1]!), b ?? {}) })],
+  ['POST', /^\/api\/companies\/([\w-]+)\/recurring\/generate$/, (m) => ({ created: generateM(inCo(m[1]!)) })],
+  ['GET', /^\/api\/recurring\/([\w-]+)$/, (m) => recRow(sdb.recurring.find((r) => r.id === m[1] && roleOf(session, r.companyId)) ?? fail(404, 'Not found.', 'err.notFound'))],
+  ['POST', /^\/api\/recurring\/([\w-]+)$/, (m, b) => { const r = sdb.recurring.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+    return { id: saveRecurringM(r.companyId, b ?? {}, r.id) }; }],
+  ['POST', /^\/api\/recurring\/([\w-]+)\/generate$/, (m) => { const r = sdb.recurring.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+    return { created: generateM(r.companyId, r.id) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/expense-categories$/, (m) => {
+    const id = inCo(m[1]!); return spentByAccount(id, `${today().slice(0, 4)}-01-01`, today()).map(({ v: _v, ...r }) => r); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/expense-categories$/, (m, b) => {
+    const id = inCo(m[1]!); canPostIn(id);
+    const name = String(b?.name ?? '').trim();
+    if (!name) fail(400, 'Enter the category name.', 'err.categoryName');
+    const codes = db.accounts.filter((a) => a.companyId === id && /^5\d{3}$/.test(a.code)).map((a) => Number(a.code)).sort((x, y) => y - x);
+    const last = codes[0] ?? 5000; const code = last + 100 <= 5999 ? Math.floor(last / 100) * 100 + 100 : last + 1;
+    const aid = uid();
+    db.accounts.push({ id: aid, companyId: id, code: String(code), name, nameAr: String(b?.nameAr ?? '').trim() || null, type: 'expense', costCentreRequired: Boolean(b?.costCentreRequired), isBank: false });
+    return { id: aid };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/expense-overview$/, (m) => {
+    const id = inCo(m[1]!); const t0 = today(); const ms = `${t0.slice(0, 7)}-01`;
+    const prev = new Date(`${ms}T00:00:00Z`); prev.setUTCMonth(prev.getUTCMonth() - 1);
+    const pe = new Date(Date.parse(`${ms}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    const cur = spentByAccount(id, ms, t0); const last = spentByAccount(id, prev.toISOString().slice(0, 10), pe);
+    const rec = sdb.recurring.filter((r) => r.companyId === id && r.active);
+    return { spentThisMonth: s(cur.reduce((x, r) => x + r.v, 0n)), spentLastMonth: s(last.reduce((x, r) => x + r.v, 0n)),
+      drafts: sdb.docs.filter((d) => d.companyId === id && d.type === 'expense' && d.status === 'draft').length,
+      recurringDue: rec.filter((r) => r.nextDate <= t0 && (!r.endDate || r.nextDate <= r.endDate)).length, recurringActive: rec.length,
+      topCategories: cur.filter((r) => r.v > 0n).sort((a, b) => (b.v > a.v ? 1 : -1)).slice(0, 6).map(({ v: _v, ...r }) => r) };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/reports\/expenses-by-category$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const to = q.get('to') || today(); const from = q.get('from') || `${to.slice(0, 4)}-01-01`;
+    const rows = spentByAccount(id, from, to).filter((r) => r.v !== 0n);
+    return { from, to, rows: rows.map(({ v: _v, ...r }) => r), total: s(rows.reduce((x, r) => x + r.v, 0n)) };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/reports\/expenses-by-payee$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const to = q.get('to') || today(); const from = q.get('from') || `${to.slice(0, 4)}-01-01`;
+    const groups = new Map<string, { name: string; nameAr: string | null; contactId: string | null; documents: number; net: bigint; vat: bigint; gross: bigint }>();
+    for (const d of sdb.docs.filter((x) => x.companyId === id && ['bill', 'expense', 'supplier_credit'].includes(x.type) && x.status === 'issued' && x.issueDate >= from && x.issueDate <= to)) {
+      const c = sdb.contacts.find((x) => x.id === d.contactId); const name = c?.name ?? d.payee ?? ''; const sign = d.type === 'supplier_credit' ? -1n : 1n; const t = docTotals(d);
+      const g = groups.get(name) ?? { name, nameAr: c?.nameAr ?? null, contactId: c?.id ?? null, documents: 0, net: 0n, vat: 0n, gross: 0n };
+      if (d.type !== 'supplier_credit') g.documents++;
+      g.net += sign * t.net; g.vat += sign * t.vat; g.gross += sign * t.gross; groups.set(name, g);
+    }
+    const rows = [...groups.values()].sort((a, b) => (b.net > a.net ? 1 : -1));
+    const tot = (k: 'net' | 'vat' | 'gross') => s(rows.reduce((x, r) => x + r[k], 0n));
+    return { from, to, rows: rows.map((r) => ({ ...r, net: s(r.net), vat: s(r.vat), gross: s(r.gross) })), total: { net: tot('net'), vat: tot('vat'), gross: tot('gross') } };
+  }],
   // ---------------------------------------------------------------- sales and purchases
   ['GET', /^\/api\/companies\/([\w-]+)\/contacts$/, (m, _b, q) => {
     const id = inCo(m[1]!); const role = q.get('role') === 'supplier' ? 'isSupplier' : 'isCustomer'; const needle = (q.get('q') ?? '').trim().toLowerCase();
@@ -587,7 +722,7 @@ const routes: [string, RegExp, Handler][] = [
     return { id: saveDraftM(inCo(m[1]!), { ...b, originalId: null }) };
   }],
   ['GET', /^\/api\/documents\/([\w-]+)$/, (m) => {
-    const d = docOf(m[1]!); const c = sdb.contacts.find((x) => x.id === d.contactId)!; const co = db.companies.find((x) => x.id === d.companyId)!;
+    const d = docOf(m[1]!); const c = sdb.contacts.find((x) => x.id === d.contactId) ?? null; const co = db.companies.find((x) => x.id === d.companyId)!;
     return { ...docRow(d), contact: c, seller: { name: co.name, nameAr: co.nameAr, vatNumber: co.vatNumber, crNumber: co.crNumber, address: co.fields.address ?? '', city: co.city, country: co.country, currency: co.currency },
       lines: d.lines.map((l, i) => { const a = db.accounts.find((x) => x.id === l.accountId)!; const cc = db.costCentres.find((x) => x.id === l.costCentreId);
         return { id: l.id, lineNo: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, accountId: a.id, accountCode: a.code, accountName: a.name, accountNameAr: a.nameAr,

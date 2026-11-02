@@ -11,10 +11,10 @@ Read `CLAUDE.md` first. It holds the non-negotiable accounting rules.
   - Client books, with a sub-menu under each module:
     - **Sales:** overview of what is owed and what is late; customers; quotations (send, accept, convert to invoice); tax invoices; credit notes; payments received, which settle invoices oldest first.
     - **Purchases:** overview; suppliers; bills; supplier credits; payments made.
+    - **Expenses:** overview (this month against last month, biggest categories, recurring expenses due); expenses paid at once by cash, card or bank, with a supplier or just a payee name, and voided if wrong; recurring expenses that create drafts to check; categories, which are expense accounts.
     - **Journal:** entries, new entry, periods.
-    - **Reports:** trial balance, P&L, P&L by cost centre, aged receivables, aged payables.
-    - **VAT:** summary.
-    - **Bank, Inventory, Assets and Review:** their sub-pages show what comes next.
+    - **Reports:** trial balance, P&L, P&L by cost centre, expenses by category, expenses by supplier, aged receivables, aged payables, VAT summary. The VAT return comes later.
+    - **Bank, Inventory, Assets, HRM, CRM and Review:** their sub-pages describe what each will do. HRM covers employees, payroll, leave, attendance, end of service, and iqama and documents. CRM covers leads, pipeline, activities and campaigns.
   - Administrator console:
     - **Clients:** summary (active, suspended, without staff), search, the **Add client** registration page, and a **Manage** page per client. The Manage page lets you edit details and entry settings, add client users, tick which staff handle the client, and suspend or reactivate it.
     - **Staff:** add staff, change the clients each person handles, send a new sign-in link, reset two-factor, and suspend or reactivate.

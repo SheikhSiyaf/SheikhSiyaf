@@ -12,10 +12,12 @@ import { vatForLine } from '../vat/vat.js';
 import { CHART_TEMPLATE } from '../books/chartTemplate.js';
 import { createCredit, issueDocument, recordPayment, saveContact, saveDraft, setQuotationStatus } from '../books/documentsService.js';
 import type { DocType } from '../books/documents.js';
+import { saveRecurring } from '../books/expensesService.js';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_USERS } from './demoData.js';
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return iso(d); };
+const firstOfNextMonth = () => { const d = new Date(); return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))); };
 
 export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
   const client = new pg.Client({ connectionString: adminUrl });
@@ -115,6 +117,21 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       await pay('made', najd, 20, gross(3200), '1000', [{ documentId: bill1, amount: gross(3200) }]);
       await doc('bill', telecom, 10, 15, [SL('Internet and phone lines', '1', '420.00', undefined, '5300')], { reference: 'DT-5531' });
       await post(daysAgo(1), 'Electricity', [L('5300', '650.00'), L('1000', undefined, '650.00')]);
+
+      // Expenses paid straight away, and recurring templates (one is due, so its draft can be created).
+      for (const [ago, payee, code, bankCode, desc, amount, vatCode, centre] of [
+        [18, 'Petrol station', '5400', '1010', 'Fuel for delivery van', '150.00', 'standard', undefined],
+        [9, 'Al Waha Office Supplies', '5400', '1000', 'Printer toner and paper', '420.00', 'standard', undefined],
+        [4, 'City taxi', '5400', '1010', 'Taxi to customer site', '45.00', 'zero', undefined],
+      ] as const) {
+        const did = await saveDraft(db, id, { type: 'expense', payee, paidFromAccountId: acct[bankCode], issueDate: daysAgo(ago),
+          lines: [{ ...SL(desc, '1', amount, centre, code), vatCode }] });
+        await issueDocument(db, did);
+      }
+      await saveRecurring(db, id, { name: 'Office rent', payee: 'Al Olaya Properties', paidFromAccountId: acct['1000'], frequency: 'monthly',
+        nextDate: firstOfNextMonth(), lines: [{ ...SL('Monthly office rent', '1', '4000.00', 'Head office', '5100'), vatCode: 'exempt' }] });
+      await saveRecurring(db, id, { name: 'Internet and phones', contactId: telecom, paidFromAccountId: acct['1000'], frequency: 'monthly',
+        nextDate: daysAgo(2), lines: [{ ...SL('Fibre internet and 5 mobile lines', '1', '299.00', undefined, '5300'), vatCode: 'standard' }] });
       await client.query('COMMIT');
 
       // The partner locks every month that ended more than a month ago.

@@ -104,8 +104,10 @@ export async function getContact(db: Db, id: string) {
 
 // ------------------------------------------------------------------ documents
 export interface DocumentInput {
-  type?: DocType; contactId?: string; issueDate?: string; dueDate?: string | null; reference?: string | null; notes?: string | null;
+  type?: DocType; contactId?: string | null; issueDate?: string; dueDate?: string | null; reference?: string | null; notes?: string | null;
   originalId?: string | null; lines?: LineInput[];
+  /** Expenses only: who was paid when there is no supplier record, and the bank or cash account it came from. */
+  payee?: string | null; paidFromAccountId?: string | null; recurringId?: string | null;
 }
 
 function priceAll(lines: LineInput[] | undefined, vatRate: string): PricedLine[] {
@@ -124,28 +126,32 @@ function priceAll(lines: LineInput[] | undefined, vatRate: string): PricedLine[]
 /** Creates a draft (no id) or replaces a draft's header and lines. */
 export async function saveDraft(db: Db, companyId: string, d: DocumentInput, id?: string): Promise<string> {
   const company = await companyInfo(db, companyId);
-  if (!d.contactId) bad('Choose the customer or supplier.', 'err.contact');
+  const type = id ? (await db.query('SELECT type FROM documents WHERE id = $1', [id])).rows[0]?.type : d.type;
+  const isExpense = type === 'expense';
+  if (!d.contactId && !isExpense) bad('Choose the customer or supplier.', 'err.contact');
   if (!d.issueDate || !DATE.test(d.issueDate)) bad('Enter the date.', 'err.date');
   if (d.dueDate && !DATE.test(d.dueDate)) bad('Some values are not in the right format.', 'err.format');
   if (d.dueDate && d.dueDate < d.issueDate!) bad('The due date cannot be before the document date.', 'err.dueDate');
   const lines = priceAll(d.lines, company.vatRate);
   const totals = documentTotals(lines);
-  const head = [d.contactId, d.issueDate, d.dueDate || null, d.reference?.trim() || null, d.notes?.trim() || null,
-    fromMinor(totals.net), fromMinor(totals.vat), fromMinor(totals.gross)];
+  const head = [d.contactId || null, d.issueDate, isExpense ? null : d.dueDate || null, d.reference?.trim() || null, d.notes?.trim() || null,
+    fromMinor(totals.net), fromMinor(totals.vat), fromMinor(totals.gross),
+    isExpense ? d.payee?.trim() || null : null, isExpense ? d.paidFromAccountId || null : null];
   let docId = id;
   if (docId) {
     const { rowCount } = await db.query(
-      `UPDATE documents SET contact_id=$2, issue_date=$3, due_date=$4, reference=$5, notes=$6, net_total=$7, vat_total=$8, gross_total=$9
-       WHERE id = $1 AND company_id = $10 AND status = 'draft'`, [docId, ...head, companyId]);
+      `UPDATE documents SET contact_id=$2, issue_date=$3, due_date=$4, reference=$5, notes=$6, net_total=$7, vat_total=$8, gross_total=$9,
+         payee=$10, paid_from_account_id=$11
+       WHERE id = $1 AND company_id = $12 AND status = 'draft'`, [docId, ...head, companyId]);
     if (!rowCount) bad('Only drafts can be changed.', 'err.notDraft');
     await db.query('DELETE FROM document_lines WHERE document_id = $1', [docId]);
   } else {
-    if (!d.type || !['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit'].includes(d.type)) bad('Choose the document type.', 'err.format');
+    if (!d.type || !['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense'].includes(d.type)) bad('Choose the document type.', 'err.format');
     const { rows } = await db.query(
       `INSERT INTO documents (company_id, type, contact_id, issue_date, due_date, reference, notes, net_total, vat_total, gross_total,
-         original_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, app_user_id()) RETURNING id`,
-      [companyId, d.type, ...head, d.originalId || null]);
+         payee, paid_from_account_id, original_id, recurring_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, app_user_id()) RETURNING id`,
+      [companyId, d.type, ...head, d.originalId || null, isExpense ? d.recurringId || null : null]);
     docId = rows[0].id as string;
   }
   let n = 1;
@@ -160,7 +166,7 @@ export async function saveDraft(db: Db, companyId: string, d: DocumentInput, id?
 
 async function lockDoc(db: Db, id: string) {
   const { rows } = await db.query(
-    `SELECT d.*, d.issue_date::text AS issue_day, c.name AS contact_name FROM documents d JOIN contacts c ON c.id = d.contact_id WHERE d.id = $1 FOR UPDATE OF d`, [id]);
+    `SELECT d.*, d.issue_date::text AS issue_day, coalesce(c.name, d.payee) AS contact_name FROM documents d LEFT JOIN contacts c ON c.id = d.contact_id WHERE d.id = $1 FOR UPDATE OF d`, [id]);
   return rows[0] ?? notFound();
 }
 
@@ -179,12 +185,14 @@ export async function issueDocument(db: Db, id: string): Promise<void> {
   if (d.type === 'quotation') bad('Quotations are sent, not issued.', 'err.format');
   const lines = await storedLines(db, id);
   if (!lines.length) bad('Add at least one line.', 'err.noLines');
+  if (d.type === 'expense' && !d.paid_from_account_id) bad('Choose the bank or cash account the expense was paid from.', 'err.bankAccount');
+  if (d.type === 'expense' && !d.contact_id && !String(d.payee ?? '').trim()) bad('Enter who was paid (a supplier or a payee name).', 'err.payee');
   const company = await companyInfo(db, d.company_id);
   const number = await nextNumber(db, d.company_id, d.type, numberPrefix(d.type, company.invoicePrefix));
   const entryId = await postEntry(db, {
     companyId: d.company_id, entryDate: d.issue_day,
     memo: `${number} · ${d.contact_name}`, sourceType: d.type, sourceId: d.id,
-    lines: postingFor(d.type, lines, await systemAccounts(db, d.company_id)),
+    lines: postingFor(d.type, lines, await systemAccounts(db, d.company_id), d.paid_from_account_id ?? undefined),
   });
   await db.query(`UPDATE documents SET status = 'issued', number = $2, journal_entry_id = $3 WHERE id = $1`, [id, number, entryId]);
 }
@@ -235,17 +243,18 @@ export async function deleteDraft(db: Db, id: string): Promise<void> {
   if (!rowCount) bad('Only drafts can be deleted.', 'err.notDraft');
 }
 
-const DOC_COLS = `d.id, d.company_id AS "companyId", d.type, d.status, d.number, d.contact_id AS "contactId", c.name AS "contactName",
-  c.name_ar AS "contactNameAr", d.issue_date::text AS "issueDate", d.due_date::text AS "dueDate", d.reference, d.notes,
+const DOC_COLS = `d.id, d.company_id AS "companyId", d.type, d.status, d.number, d.contact_id AS "contactId", coalesce(c.name, d.payee) AS "contactName",
+  c.name_ar AS "contactNameAr", d.payee, d.paid_from_account_id AS "paidFromAccountId", pa.name AS "paidFromName", pa.name_ar AS "paidFromNameAr",
+  d.recurring_id AS "recurringId", d.voided_at AS "voidedAt", d.issue_date::text AS "issueDate", d.due_date::text AS "dueDate", d.reference, d.notes,
   d.original_id AS "originalId", d.journal_entry_id AS "journalEntryId",
   d.net_total::text AS "netTotal", d.vat_total::text AS "vatTotal", d.gross_total::text AS "grossTotal",
   document_amount_due(d.id)::numeric(18,2)::text AS "amountDue", d.created_at AS "createdAt", d.issued_at AS "issuedAt"`;
 
 export async function listDocuments(db: Db, companyId: string, type: DocType, f: { status?: string; q?: string; contactId?: string } = {}) {
   const { rows } = await db.query(
-    `SELECT ${DOC_COLS} FROM documents d JOIN contacts c ON c.id = d.contact_id
+    `SELECT ${DOC_COLS} FROM documents d LEFT JOIN contacts c ON c.id = d.contact_id LEFT JOIN accounts pa ON pa.id = d.paid_from_account_id
      WHERE d.company_id = $1 AND d.type = $2
-       AND ($3 = '' OR c.name ILIKE '%' || $3 || '%' OR coalesce(d.number, '') ILIKE '%' || $3 || '%' OR coalesce(d.reference, '') ILIKE '%' || $3 || '%')
+       AND ($3 = '' OR coalesce(c.name, d.payee, '') ILIKE '%' || $3 || '%' OR coalesce(d.number, '') ILIKE '%' || $3 || '%' OR coalesce(d.reference, '') ILIKE '%' || $3 || '%')
        AND ($4::uuid IS NULL OR d.contact_id = $4)
      ORDER BY (d.status = 'draft') DESC, d.issue_date DESC, d.created_at DESC LIMIT 500`,
     [companyId, type, (f.q ?? '').trim(), f.contactId || null]);
@@ -256,7 +265,7 @@ export async function listDocuments(db: Db, companyId: string, type: DocType, f:
 
 /** draft | issued | paid | partly_paid | unpaid | overdue | credit, or a quotation's own status */
 function stateOf(r: { type: DocType; status: string; amountDue: string; grossTotal: string; dueDate: string | null }, t: string): string {
-  if (r.type === 'quotation' || r.status === 'draft' || isCredit(r.type)) return r.status;
+  if (r.type === 'quotation' || r.type === 'expense' || r.status === 'draft' || isCredit(r.type)) return r.status;
   const due = toMinor(r.amountDue);
   if (due < 0n) return 'credit';
   if (due === 0n) return 'paid';
@@ -265,7 +274,7 @@ function stateOf(r: { type: DocType; status: string; amountDue: string; grossTot
 }
 
 export async function getDocument(db: Db, id: string) {
-  const { rows } = await db.query(`SELECT ${DOC_COLS} FROM documents d JOIN contacts c ON c.id = d.contact_id WHERE d.id = $1`, [id]);
+  const { rows } = await db.query(`SELECT ${DOC_COLS} FROM documents d LEFT JOIN contacts c ON c.id = d.contact_id LEFT JOIN accounts pa ON pa.id = d.paid_from_account_id WHERE d.id = $1`, [id]);
   const d = rows[0] ?? notFound();
   const lines = await db.query(
     `SELECT l.id, l.line_no AS "lineNo", l.description, l.quantity::text, l.unit_price::text AS "unitPrice", l.account_id AS "accountId",
@@ -280,7 +289,7 @@ export async function getDocument(db: Db, id: string) {
   const related = await db.query(
     `SELECT d.id, d.type, d.status, d.number, d.issue_date::text AS "issueDate", d.gross_total::text AS "grossTotal"
      FROM documents d WHERE (d.original_id = $1 OR d.id = $2) AND d.id <> $1 ORDER BY d.created_at`, [id, d.originalId]);
-  const contact = await getContact(db, d.contactId);
+  const contact = d.contactId ? await getContact(db, d.contactId) : null;
   const seller = await db.query(
     `SELECT name, name_ar AS "nameAr", vat_number AS "vatNumber", cr_number AS "crNumber", address, city, country, currency
      FROM companies WHERE id = $1`, [d.companyId]);
@@ -403,7 +412,7 @@ export async function aged(db: Db, companyId: string, side: 'sales' | 'purchases
   const { rows } = await db.query(
     `SELECT d.contact_id AS "contactId", c.name, c.name_ar AS "nameAr", coalesce(d.due_date, d.issue_date)::text AS due,
             document_amount_due(d.id)::numeric(18,2)::text AS amount
-     FROM documents d JOIN contacts c ON c.id = d.contact_id
+     FROM documents d LEFT JOIN contacts c ON c.id = d.contact_id LEFT JOIN accounts pa ON pa.id = d.paid_from_account_id
      WHERE d.company_id = $1 AND d.type = $2 AND d.status = 'issued' AND d.issue_date <= $3`,
     [companyId, side === 'sales' ? 'invoice' : 'bill', asOf]);
   const byContact = new Map<string, { contactId: string; name: string; nameAr: string | null; buckets: Record<AgeBucket, bigint> }>();

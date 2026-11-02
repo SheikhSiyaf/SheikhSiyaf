@@ -90,3 +90,12 @@ Every change below is covered by a test in `test/`.
 | `payments` and `payment_allocations`; payments can't be edited or deleted, only voided with a reversal entry; allocations only at creation, only to issued invoices or bills of the same contact, never more than is due or than the payment | Rule 2 applied to payments, and payments can never over-settle. |
 | `document_amount_due()` (caller's rights) | One definition of "amount due": total minus payments (not voided) minus issued credits. |
 | Audit triggers and row-level security on all new tables; `audit_row()` records `issue`, `status` and `void` actions | Rules 5 and 6. |
+
+## 0006_expense_type.sql and 0007_expenses.sql
+| Change | Why |
+|---|---|
+| New document type `expense` (in its own migration) | PostgreSQL can only use a new enum value after the transaction that adds it has committed. |
+| `documents.paid_from_account_id`, `payee`, `recurring_id`; `contact_id` optional for expenses only | An expense is paid at once from a bank or cash account: Dr expense lines, Dr input VAT, Cr bank/cash. The supplier is optional; a payee name can be used instead (taxi, petrol station). |
+| Recording an expense needs a bank/cash account of the same company and either a supplier or a payee | The database refuses an expense that does not say where the money went or where it came from. |
+| `documents.voided_at`, `void_entry_id`, status `voided` (expenses only) | A recorded expense never changes. A mistake is voided: the reversing entry is posted, and only the void fields change. |
+| `recurring_expenses` (templates with frequency, next date, anchor day, end date and lines), with row-level security and audit | Rent, internet and subscriptions create **draft** expenses on their dates. Nothing posts automatically; a person checks and records each one. `anchor_day` keeps a 31st-of-the-month expense at month end every month. |

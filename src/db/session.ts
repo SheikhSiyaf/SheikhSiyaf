@@ -5,7 +5,11 @@ import pg from 'pg';
 export type Db = pg.PoolClient;
 
 export function createPool(connectionString: string): pg.Pool {
-  return new pg.Pool({ connectionString });
+  const pool = new pg.Pool({ connectionString });
+  // An idle connection dropped by the database (restart, failover) must not crash the server;
+  // the pool opens a new connection for the next request.
+  pool.on('error', (err) => console.error('Database connection lost:', err.message));
+  return pool;
 }
 
 export async function withUser<T>(pool: pg.Pool, userId: string, fn: (db: Db) => Promise<T>): Promise<T> {

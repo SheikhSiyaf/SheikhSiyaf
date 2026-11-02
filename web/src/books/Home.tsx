@@ -49,10 +49,11 @@ export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?:
         <div className="actions">
           {books.canPost && <button className="b p" onClick={() => go('Sales', 'invoices/new')}>{t('ov.newInvoice')}</button>}
           {books.canPost && <button className="b" onClick={() => go('Sales', 'payments-received/new')}>{t('ov.recordReceipt')}</button>}
+          {books.canPost && <button className="b" onClick={() => go('Expenses', 'expenses/new')}>{t('exp.record')}</button>}
           {books.canPost && <button className="b" onClick={() => go('Purchases', 'bills/new')}>{t('ov.newBill')}</button>}
           {books.canPost && <button className="b" onClick={() => go('Journal', 'new')}>{t('home.newEntry')}</button>}
           <button className="b" onClick={() => go('Reports', 'trial-balance')}>{t('home.trialBalance')}</button>
-          <button className="b" onClick={() => go('VAT')}>{t('home.vatSummary')}</button>
+          <button className="b" onClick={() => go('Reports', 'vat-summary')}>{t('home.vatSummary')}</button>
         </div>
       </div>
     </>

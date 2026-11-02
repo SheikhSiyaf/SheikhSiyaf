@@ -11,6 +11,10 @@ import {
   addDays, AGE_BUCKETS, ageBucket, nextOccurrence, type Frequency, documentTotals, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, sideOf,
   type AgeBucket, type Direction, type DocType, type LineInput, type PricedLine,
 } from '../../../src/books/documents.ts';
+import { autoAllocate, netFromGross, milliToString, quantityToMilli } from '../../../src/books/documents.ts';
+import { bankFromIban, fingerprints, ibanValid, normaliseIban, similarity, type Layout, type StatementRow } from '../../../src/bank/statement.ts';
+import { averageCost, issueCost, notePrefix, receivedValue, type NoteType } from '../../../src/books/inventory.ts';
+import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, previousMonthEnd, targetDepreciation, type AssetTerms } from '../../../src/books/assets.ts';
 
 type Role = 'partner' | 'reviewer' | 'staff_accountant' | 'client_accountant' | 'client_viewer';
 interface User {
@@ -642,6 +646,464 @@ function seedSales(companyId: string, poster: string, c: { country: string; city
   decideM(c1, true); decideM(c3, false, 'Customer lunches need a pre-approval form');
   session = poster;
   pay('made', yusuf, 16, c1, s(amountDue(sdb.docs.find((d) => d.id === c1)!)), '1010', 'cash');
+  seedOps(companyId, poster, c, { gulf, faisal, najd, fitOut });
+  session = prev;
+}
+
+// ------------------------------------------------------------------ bank, inventory and fixed assets (same rules as db/migrations/0010-0012)
+interface MBank { id: string; companyId: string; accountId: string; kind: 'bank' | 'cash' | 'card'; bankName: string | null; accountNumber: string | null; iban: string | null;
+  importLayout: Layout | null; status: 'active' | 'closed' }
+interface MLine { id: string; companyId: string; bankId: string; importId: string; date: string; description: string; reference: string | null; amount: bigint;
+  balance: bigint | null; fp: string; status: 'open' | 'matched' | 'ignored'; journalLineId: string | null; createdAt: string }
+interface MImport { id: string; companyId: string; bankId: string; fileName: string; lineCount: number; skipped: number; dateFrom: string; dateTo: string; importedBy: string; importedAt: string }
+interface MRule { id: string; companyId: string; matchText: string; direction: 'in' | 'out'; accountId: string; costCentreId: string | null; vatCode: string; label: string | null;
+  bankAccountId: string | null; active: boolean }
+interface MItem { id: string; companyId: string; sku: string; name: string; nameAr: string | null; unit: string; salePrice: string | null; reorderLevel: string | null;
+  q: bigint; v: bigint; status: 'active' | 'archived' }
+interface MNoteLine { id: string; itemId: string; q: bigint; unitCost: bigint | null; value: bigint; costCentreId: string | null }
+interface MNote { id: string; companyId: string; type: NoteType; status: 'draft' | 'posted'; number: string | null; date: string; contactId: string | null; reference: string | null;
+  notes: string | null; otherAccountId: string; total: bigint; journalEntryId: string | null; createdAt: string; postedAt: string | null; lines: MNoteLine[] }
+interface MAsset { id: string; companyId: string; number: string; name: string; nameAr: string | null; assetAccountId: string; expenseAccountId: string; costCentreId: string | null;
+  contactId: string | null; purchaseDate: string; start: string; cost: bigint; residual: bigint; life: number; opening: bigint; serialNo: string | null; location: string | null;
+  reference: string | null; notes: string | null; status: 'active' | 'disposed'; disposedOn: string | null; proceeds: bigint | null; disposalEntryId: string | null }
+interface MRun { id: string; companyId: string; periodEnd: string; total: bigint; journalEntryId: string | null; runBy: string; runAt: string; lines: { assetId: string; amount: bigint }[] }
+const odb = { banks: [] as MBank[], lines: [] as MLine[], imports: [] as MImport[], rules: [] as MRule[], items: [] as MItem[], notes: [] as MNote[], assets: [] as MAsset[], runs: [] as MRun[] };
+
+const acctBy = (companyId: string, code: string) => db.accounts.find((a) => a.companyId === companyId && a.code === code) ?? fail(400, `No account ${code}.`, 'err.chart');
+const ledgerSum = (accountId: string, upTo?: string) => db.entries.filter((e) => !upTo || e.date <= upTo).flatMap((e) => e.lines).filter((l) => l.accountId === accountId)
+  .reduce((t, l) => t + l.debit - l.credit, 0n);
+const days = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) / 86_400_000;
+const qtyStr = (q: bigint) => milliToString(q);
+const toQ = (q: string) => { const [w, f = ''] = q.split('.'); return BigInt(w!) * 1000n + BigInt(f.padEnd(3, '0').slice(0, 3)); };
+
+/** Every bank or cash ledger account has its bank account record (as the database trigger does). */
+function banksOf(companyId: string) {
+  for (const a of db.accounts.filter((x) => x.companyId === companyId && x.isBank)) {
+    if (!odb.banks.some((b) => b.accountId === a.id)) odb.banks.push({ id: uid(), companyId, accountId: a.id, kind: a.code === '1010' ? 'cash' : 'bank', bankName: null, accountNumber: null, iban: null, importLayout: null, status: 'active' });
+  }
+  return odb.banks.filter((b) => b.companyId === companyId);
+}
+function bankRow(b: MBank) {
+  const a = db.accounts.find((x) => x.id === b.accountId)!;
+  const ls = odb.lines.filter((l) => l.bankId === b.id);
+  return { ...b, code: a.code, name: a.name, nameAr: a.nameAr, booksBalance: s(ledgerSum(a.id)), openLines: ls.filter((l) => l.status === 'open').length,
+    lastStatementDate: ls.map((l) => l.date).sort().at(-1) ?? null };
+}
+const bankOf = (id: string) => odb.banks.find((b) => b.id === id && roleOf(session, b.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function saveBankM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId);
+  const kind = b.kind === 'cash' || b.kind === 'card' ? b.kind : 'bank';
+  const iban = String(b.iban ?? '').trim() ? normaliseIban(String(b.iban)) : null;
+  if (iban && !ibanValid(iban)) fail(400, 'This IBAN is not right.', 'err.iban');
+  const known = iban ? bankFromIban(iban) : undefined;
+  const bankName = String(b.bankName ?? '').trim() || known?.name || null;
+  if (kind === 'bank' && !bankName) fail(400, 'Enter the bank name.', 'err.bankName');
+  const number = String(b.accountNumber ?? '').replace(/\s/g, '') || null;
+  if (iban && odb.banks.some((x) => x.companyId === companyId && x.id !== id && x.iban === iban)) fail(400, 'Another bank account already has this IBAN.', 'err.ibanTaken');
+  if (number && odb.banks.some((x) => x.companyId === companyId && x.id !== id && x.accountNumber === number)) fail(400, 'Another bank account already has this account number.', 'err.bankNumberTaken');
+  const last4 = (number ?? iban ?? '').slice(-4);
+  const name = String(b.name ?? '').trim() || (kind === 'cash' ? 'Cash' : `${bankName ?? 'Bank'}${last4 ? ` ${last4}` : ''}`);
+  const nameAr = String(b.nameAr ?? '').trim() || known?.nameAr || null;
+  if (id) {
+    const cur = bankOf(id);
+    if (b.status === 'closed' && cur.status !== 'closed' && ledgerSum(cur.accountId) !== 0n) fail(400, 'Only an account with a zero balance in the books can be closed.', 'err.bankNotZero');
+    Object.assign(cur, { kind, bankName, accountNumber: number, iban, status: b.status === 'closed' ? 'closed' : 'active' });
+    Object.assign(db.accounts.find((a) => a.id === cur.accountId)!, { name, nameAr });
+    return id;
+  }
+  let code = 1020;
+  while (db.accounts.some((a) => a.companyId === companyId && a.code === String(code))) code++;
+  const accountId = uid();
+  db.accounts.push({ id: accountId, companyId, code: String(code), name, nameAr, type: 'asset', costCentreRequired: false, isBank: true });
+  const nid = uid();
+  odb.banks.push({ id: nid, companyId, accountId, kind, bankName, accountNumber: number, iban, importLayout: null, status: 'active' });
+  return nid;
+}
+function importM(bankId: string, body: Record<string, unknown>) {
+  const b = bankOf(bankId); canPostIn(b.companyId);
+  if (b.status !== 'active') fail(400, 'This bank account is closed.', 'err.bankClosed');
+  const lines = ((body.lines as StatementRow[]) ?? []).map((l) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(l.date))) fail(400, 'The date is not right.', 'err.date');
+    let amount: bigint, balance: bigint | null;
+    try { amount = toMinor(String(l.amount)); balance = l.balance ? toMinor(String(l.balance)) : null; } catch { return fail(400, 'The amount is not a number.', 'err.amountFormat'); }
+    if (!String(l.description ?? '').trim() || amount === 0n) fail(400, 'Each statement line needs a date, a description and an amount.', 'err.statementLine');
+    return { date: String(l.date), description: String(l.description).replace(/\s+/g, ' ').trim(), reference: l.reference || null, amount: s(amount), balance: balance === null ? null : s(balance) };
+  });
+  if (!lines.length) fail(400, 'The file has no statement lines.', 'err.noStatementLines');
+  const fps = fingerprints(lines);
+  const fresh = lines.map((l, i) => ({ ...l, fp: fps[i]! })).filter((l) => !odb.lines.some((x) => x.bankId === bankId && x.fp === l.fp));
+  const dates = lines.map((l) => l.date).sort();
+  const importId = uid();
+  odb.imports.push({ id: importId, companyId: b.companyId, bankId, fileName: String(body.fileName ?? 'statement'), lineCount: fresh.length, skipped: lines.length - fresh.length,
+    dateFrom: dates[0]!, dateTo: dates.at(-1)!, importedBy: session!, importedAt: new Date().toISOString() });
+  for (const l of fresh) odb.lines.push({ id: uid(), companyId: b.companyId, bankId, importId, date: l.date, description: l.description, reference: l.reference, amount: toMinor(l.amount),
+    balance: l.balance === null ? null : toMinor(l.balance), fp: l.fp, status: 'open', journalLineId: null, createdAt: new Date().toISOString() });
+  if (body.layout) b.importLayout = body.layout as Layout;
+  return { importId, imported: fresh.length, skipped: lines.length - fresh.length };
+}
+/** Journal lines on the bank's ledger account not matched to any statement line (an entry and its reversal both left out). */
+function unmatchedM(accountId: string, upTo?: string) {
+  const matched = new Set(odb.lines.map((l) => l.journalLineId).filter(Boolean));
+  const list = db.entries.filter((e) => !upTo || e.date <= upTo).flatMap((e) => e.lines.filter((l) => l.accountId === accountId && !matched.has(l.id))
+    .map((l) => ({ id: l.id, date: e.date, memo: e.memo, amount: l.debit - l.credit, entryId: e.id, reversesEntryId: e.reversesEntryId, at: e.createdAt })))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.at.localeCompare(b.at));
+  const ids = new Set(list.map((l) => l.entryId));
+  return list.filter((l) => !(l.reversesEntryId && ids.has(l.reversesEntryId)) && !list.some((x) => x.reversesEntryId === l.entryId));
+}
+function linesM(bankId: string, status: string) {
+  const b = bankOf(bankId);
+  const rows = odb.lines.filter((l) => l.bankId === bankId && (status === 'all' || l.status === status))
+    .sort((x, y) => y.date.localeCompare(x.date) || y.createdAt.localeCompare(x.createdAt));
+  const ledger = unmatchedM(b.accountId);
+  const rules = odb.rules.filter((r) => r.companyId === b.companyId && r.active && (!r.bankAccountId || r.bankAccountId === bankId)).sort((x, y) => y.matchText.length - x.matchText.length);
+  const due = sdb.docs.filter((d) => d.companyId === b.companyId && d.status === 'issued' && ['invoice', 'bill', 'claim'].includes(d.type) && amountDue(d) > 0n);
+  const taken = new Set<string>();
+  const suggest = (r: MLine) => {
+    const hit = ledger.filter((l) => l.amount === r.amount && !taken.has(l.id) && days(l.date, r.date) <= 14)
+      .sort((x, y) => (days(x.date, r.date) - similarity(x.memo ?? '', r.description) * 5) - (days(y.date, r.date) - similarity(y.memo ?? '', r.description) * 5))[0];
+    if (hit) { taken.add(hit.id); return { kind: 'match', journalLineId: hit.id, date: hit.date, memo: hit.memo }; }
+    const abs = r.amount < 0n ? -r.amount : r.amount;
+    const name = (d: MDoc) => sdb.contacts.find((c) => c.id === d.contactId)!.name;
+    const doc = due.filter((d) => (r.amount > 0n ? d.type === 'invoice' : d.type !== 'invoice') && amountDue(d) === abs)
+      .sort((x, y) => similarity(name(y), r.description) - similarity(name(x), r.description))[0];
+    if (doc) return { kind: 'pay', contactId: doc.contactId, contactName: name(doc), documentNumber: doc.number };
+    const rule = rules.find((x) => x.direction === (r.amount > 0n ? 'in' : 'out') && r.description.toLowerCase().includes(x.matchText.toLowerCase()));
+    if (rule) { const a = db.accounts.find((x) => x.id === rule.accountId)!; return { kind: 'rule', ruleId: rule.id, accountId: a.id, costCentreId: rule.costCentreId, vatCode: rule.vatCode, accountCode: a.code, accountName: a.name, accountNameAr: a.nameAr, label: rule.label }; }
+    return null;
+  };
+  return rows.map((r) => {
+    const e = r.journalLineId ? db.entries.find((x) => x.lines.some((l) => l.id === r.journalLineId)) : undefined;
+    return { id: r.id, date: r.date, description: r.description, reference: r.reference, amount: s(r.amount), balance: r.balance === null ? null : s(r.balance), status: r.status,
+      journalLineId: r.journalLineId, matchedMemo: e?.memo ?? null, suggestion: r.status === 'open' ? suggest(r) : null };
+  });
+}
+const lineOf = (id: string) => odb.lines.find((l) => l.id === id && roleOf(session, l.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+const openLineOf = (id: string) => { const l = lineOf(id); canPostIn(l.companyId); if (l.status !== 'open') fail(400, 'This statement line is already dealt with.', 'err.lineDone'); return l; };
+function matchToM(line: MLine, journalLineId: string) {
+  const b = odb.banks.find((x) => x.id === line.bankId)!;
+  const jl = db.entries.flatMap((e) => e.lines).find((l) => l.id === journalLineId);
+  if (!jl || jl.accountId !== b.accountId) fail(400, 'A statement line can only be matched to an entry on the same bank account.', 'err.matchAccount');
+  if ((line.amount > 0n && jl!.debit !== line.amount) || (line.amount < 0n && jl!.credit !== -line.amount)) fail(400, 'The amount in the books is not the amount on the statement.', 'err.matchAmount');
+  if (odb.lines.some((l) => l.journalLineId === journalLineId)) fail(400, 'Already matched.', 'err.lineDone');
+  line.status = 'matched'; line.journalLineId = journalLineId;
+}
+const bankSideM = (entryId: string, line: MLine) => {
+  const b = odb.banks.find((x) => x.id === line.bankId)!;
+  return db.entries.find((e) => e.id === entryId)!.lines.find((l) => l.accountId === b.accountId && (line.amount > 0n ? l.debit === line.amount : l.credit === -line.amount))!.id;
+};
+function bookM(lineId: string, body: Record<string, unknown>) {
+  const line = openLineOf(lineId);
+  const b = odb.banks.find((x) => x.id === line.bankId)!;
+  const target = db.accounts.find((a) => a.id === body.accountId && a.companyId === line.companyId) ?? fail(400, 'Choose the account.', 'err.lineAccount');
+  if (target.id === b.accountId) fail(400, 'Choose an account other than this bank account.', 'err.sameBank');
+  const vatCode = (['standard', 'zero', 'exempt', 'out_of_scope'].includes(String(body.vatCode)) ? body.vatCode : 'out_of_scope') as LineInput['vatCode'];
+  const description = (String(body.description ?? '').trim() || line.description).slice(0, 200);
+  const cc = (body.costCentreId as string) || null;
+  let entryId: string;
+  if (line.amount < 0n && target.type === 'expense') {
+    const split = netFromGross(-line.amount, db.companies.find((c) => c.id === line.companyId)!.vatRate, vatCode);
+    const did = saveDraftM(line.companyId, { type: 'expense', payee: line.description.slice(0, 120), paidFromAccountId: b.accountId, issueDate: line.date, reference: line.reference,
+      lines: [{ description, quantity: '1', unitPrice: s(split.net), accountId: target.id, costCentreId: cc, vatCode },
+        ...(split.rounding > 0n ? [{ description: 'VAT rounding', quantity: '1', unitPrice: s(split.rounding), accountId: target.id, costCentreId: cc, vatCode: 'out_of_scope' }] : [])] });
+    issueM(did); entryId = sdb.docs.find((d) => d.id === did)!.journalEntryId!;
+  } else {
+    const a = line.amount < 0n ? -line.amount : line.amount;
+    entryId = post(session!, line.companyId, line.date, description, line.amount > 0n
+      ? [{ accountId: b.accountId, costCentreId: null, debit: a, credit: 0n }, { accountId: target.id, costCentreId: cc, debit: 0n, credit: a }]
+      : [{ accountId: target.id, costCentreId: cc, debit: a, credit: 0n }, { accountId: b.accountId, costCentreId: null, debit: 0n, credit: a }]);
+  }
+  matchToM(line, bankSideM(entryId, line));
+  if (body.remember && String(body.remember).trim().length >= 3) {
+    odb.rules.push({ id: uid(), companyId: line.companyId, matchText: String(body.remember).trim(), direction: line.amount > 0n ? 'in' : 'out', accountId: target.id, costCentreId: cc,
+      vatCode, label: description, bankAccountId: null, active: true });
+  }
+  return entryId;
+}
+function payLineM(lineId: string, contactId: string) {
+  const line = openLineOf(lineId);
+  const b = odb.banks.find((x) => x.id === line.bankId)!;
+  const direction = line.amount > 0n ? 'received' : 'made';
+  const abs = line.amount < 0n ? -line.amount : line.amount;
+  const c = sdb.contacts.find((x) => x.id === contactId) ?? fail(400, 'Choose the customer or supplier.', 'err.contact');
+  const open = sdb.docs.filter((d) => d.contactId === contactId && d.status === 'issued' && d.type === (direction === 'received' ? 'invoice' : c.isEmployee ? 'claim' : 'bill') && amountDue(d) > 0n)
+    .sort((x, y) => (x.dueDate ?? x.issueDate).localeCompare(y.dueDate ?? y.issueDate));
+  const allocs = autoAllocate(abs, open.map((d) => ({ id: d.id, due: amountDue(d) })));
+  const pid = payM(line.companyId, { direction, contactId, date: line.date, amount: s(abs), accountId: b.accountId, method: 'bank_transfer', reference: line.reference ?? line.description.slice(0, 80),
+    allocations: allocs.map((a) => ({ documentId: a.id, amount: s(a.amount) })) });
+  matchToM(line, bankSideM(sdb.payments.find((p) => p.id === pid)!.journalEntryId, line));
+  return pid;
+}
+function reconM(bankId: string) {
+  const b = bankOf(bankId); const acct = bankRow(b);
+  const ls = odb.lines.filter((l) => l.bankId === bankId);
+  const last = ls.map((l) => l.date).sort().at(-1) ?? null;
+  if (!last) return { account: acct, statementDate: null, statementBalance: null, booksBalance: acct.booksBalance, inBooksOnly: [], onStatementOnly: [], difference: null };
+  const end = ls.filter((l) => l.date === last && l.balance !== null);
+  const lastLine = end.find((l) => !end.some((m) => m !== l && m.balance! - m.amount === l.balance)) ?? end.at(-1);
+  const books = ledgerSum(b.accountId, last);
+  const inBooks = unmatchedM(b.accountId, last);
+  const onStatement = ls.filter((l) => l.status === 'open').sort((x, y) => x.date.localeCompare(y.date));
+  const adjusted = books - inBooks.reduce((t, l) => t + l.amount, 0n) + onStatement.reduce((t, l) => t + l.amount, 0n);
+  return { account: acct, statementDate: last, statementBalance: lastLine ? s(lastLine.balance!) : null, booksBalance: s(books),
+    inBooksOnly: inBooks.map((l) => ({ journalLineId: l.id, date: l.date, memo: l.memo, amount: s(l.amount) })),
+    onStatementOnly: onStatement.map((l) => ({ id: l.id, date: l.date, description: l.description, amount: s(l.amount) })), adjustedBooks: s(adjusted),
+    difference: lastLine ? s(lastLine.balance! - adjusted) : null };
+}
+function ruleRow(r: MRule) {
+  const a = db.accounts.find((x) => x.id === r.accountId)!; const cc = db.costCentres.find((x) => x.id === r.costCentreId);
+  return { ...r, accountCode: a.code, accountName: a.name, accountNameAr: a.nameAr, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null };
+}
+function saveRuleM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId);
+  const text = String(b.matchText ?? '').trim();
+  if (text.length < 3) fail(400, 'Enter at least 3 letters of the text to look for.', 'err.ruleText');
+  if (!db.accounts.some((a) => a.id === b.accountId && a.companyId === companyId)) fail(400, 'Choose the account.', 'err.lineAccount');
+  const v = { matchText: text, direction: b.direction === 'in' ? 'in' as const : 'out' as const, accountId: String(b.accountId), costCentreId: (b.costCentreId as string) || null,
+    vatCode: String(b.vatCode ?? 'out_of_scope'), label: (b.label as string)?.trim() || null, bankAccountId: (b.bankAccountId as string) || null, active: b.active !== false };
+  if (id) { Object.assign(odb.rules.find((r) => r.id === id) ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
+  const nid = uid(); odb.rules.push({ id: nid, companyId, ...v }); return nid;
+}
+
+// ---- inventory
+const itemRow = (i: MItem) => ({ id: i.id, companyId: i.companyId, sku: i.sku, name: i.name, nameAr: i.nameAr, unit: i.unit, salePrice: i.salePrice, reorderLevel: i.reorderLevel,
+  qtyOnHand: qtyStr(i.q), valueOnHand: s(i.v), status: i.status, averageCost: s(averageCost(i.q, i.v)), low: i.reorderLevel !== null && i.q <= toQ(i.reorderLevel) });
+const itemOf = (id: string) => odb.items.find((i) => i.id === id && roleOf(session, i.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function saveItemM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId);
+  const sku = String(b.sku ?? '').trim(), name = String(b.name ?? '').trim();
+  if (!sku) fail(400, 'Enter the item code.', 'err.itemSku');
+  if (!name) fail(400, 'Enter the item name.', 'err.itemName');
+  if (odb.items.some((i) => i.companyId === companyId && i.id !== id && i.sku === sku)) fail(400, 'Another item already has this code.', 'err.skuTaken');
+  const v = { sku, name, nameAr: (b.nameAr as string)?.trim() || null, unit: (b.unit as string) || 'pcs', salePrice: b.salePrice ? s(toMinor(String(b.salePrice))) : null,
+    reorderLevel: b.reorderLevel ? qtyStr(toQ(String(b.reorderLevel))) : null, status: b.status === 'archived' ? 'archived' as const : 'active' as const };
+  if (id) { Object.assign(itemOf(id), v); return id; }
+  const nid = uid(); odb.items.push({ id: nid, companyId, q: 0n, v: 0n, ...v }); return nid;
+}
+function noteRow(n: MNote) {
+  const c = sdb.contacts.find((x) => x.id === n.contactId); const a = db.accounts.find((x) => x.id === n.otherAccountId)!;
+  return { id: n.id, companyId: n.companyId, type: n.type, status: n.status, number: n.number, date: n.date, contactId: n.contactId, contactName: c?.name ?? null, contactNameAr: c?.nameAr ?? null,
+    reference: n.reference, notes: n.notes, otherAccountId: a.id, otherAccountCode: a.code, otherAccountName: a.name, otherAccountNameAr: a.nameAr, totalValue: s(n.total),
+    journalEntryId: n.journalEntryId, createdAt: n.createdAt, lineCount: n.lines.length };
+}
+const noteOf = (id: string) => odb.notes.find((n) => n.id === id && roleOf(session, n.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function saveNoteM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId);
+  const existing = id ? noteOf(id) : undefined;
+  if (existing && existing.status !== 'draft') fail(400, 'Posted goods notes are never changed. Record a new note to correct one.', 'err.notePosted');
+  const type: NoteType = existing?.type ?? (b.type === 'gdn' ? 'gdn' : 'grn');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.date ?? ''))) fail(400, 'Enter the date.', 'err.date');
+  const other = (b.otherAccountId as string) || acctBy(companyId, type === 'grn' ? '2050' : '5000').id;
+  const oa = db.accounts.find((a) => a.id === other && a.companyId === companyId);
+  if (!oa || oa.code === '1300' || (type === 'grn' ? !['liability', 'equity'].includes(oa.type) : oa.type !== 'expense'))
+    fail(400, 'Goods received are credited to a liability or equity account; goods delivered are charged to an expense account.', 'err.noteAccount');
+  const contactId = (b.contactId as string) || null;
+  if (contactId && !sdb.contacts.some((c) => c.id === contactId && c.companyId === companyId && (type === 'grn' ? c.isSupplier : c.isCustomer)))
+    fail(400, 'Choose a supplier (goods received) or a customer (goods delivered) of this company.', 'err.noteContact');
+  const lines = ((b.lines as Record<string, string | null>[]) ?? []).filter((l) => l.itemId).map((l) => {
+    let q: bigint; try { q = quantityToMilli(String(l.quantity ?? '').trim()); } catch { return fail(400, 'Enter a quantity above 0 (up to 3 decimals).', 'err.noteQty'); }
+    let cost: bigint | null = null;
+    if (type === 'grn') { try { cost = toMinor(String(l.unitCost ?? '').replace(/,/g, '').trim()); } catch { return fail(400, 'Enter the cost per unit.', 'err.noteCost'); } }
+    if (!odb.items.some((i) => i.id === l.itemId && i.companyId === companyId)) fail(400, 'Choose the item on each line.', 'err.noteItem');
+    return { id: uid(), itemId: String(l.itemId), q, unitCost: cost, value: cost === null ? 0n : receivedValue(q, cost), costCentreId: (l.costCentreId as string) || null };
+  });
+  const head = { date: String(b.date), contactId, reference: (b.reference as string)?.trim() || null, notes: (b.notes as string)?.trim() || null, otherAccountId: other, lines };
+  if (existing) { Object.assign(existing, head); return existing.id; }
+  const nid = uid();
+  odb.notes.push({ id: nid, companyId, type, status: 'draft', number: null, total: 0n, journalEntryId: null, createdAt: new Date().toISOString(), postedAt: null, ...head });
+  return nid;
+}
+function postNoteM(id: string) {
+  const n = noteOf(id); canPostIn(n.companyId);
+  if (n.status !== 'draft') fail(400, 'This note has already been posted.', 'err.notePosted');
+  if (!n.lines.length) fail(400, 'Add at least one item.', 'err.noteNoLines');
+  const stock = new Map(odb.items.filter((i) => i.companyId === n.companyId).map((i) => [i.id, { q: i.q, v: i.v }]));
+  const byCc = new Map<string, bigint>(); let total = 0n;
+  const values = n.lines.map((l) => {
+    const st = stock.get(l.itemId)!;
+    let v = l.value;
+    if (n.type === 'gdn') {
+      if (l.q > st.q) { const it = odb.items.find((i) => i.id === l.itemId)!; fail(400, `Not enough stock of ${it.name} (${it.sku}).`, 'err.notEnoughStock'); }
+      v = issueCost(st.q, st.v, l.q); st.q -= l.q; st.v -= v;
+    } else { st.q += l.q; st.v += v; }
+    total += v; byCc.set(l.costCentreId ?? '', (byCc.get(l.costCentreId ?? '') ?? 0n) + v);
+    return v;
+  });
+  const seqKey = `${n.companyId}:${n.type}`; const saved = sdb.seqs.get(seqKey);
+  const number = nextNo(n.companyId, n.type, notePrefix(n.type));
+  let entryId: string | null = null;
+  try {
+    if (total > 0n) {
+      const inv = acctBy(n.companyId, '1300').id;
+      const c = sdb.contacts.find((x) => x.id === n.contactId);
+      const side = [...byCc.entries()].filter(([, v]) => v > 0n).map(([cc, v]) => ({ accountId: n.type === 'grn' ? inv : n.otherAccountId, costCentreId: cc || null, debit: v, credit: 0n }));
+      entryId = post(session!, n.companyId, n.date, `${number}${c ? ` · ${c.name}` : ''}`, [...side, { accountId: n.type === 'grn' ? n.otherAccountId : inv, costCentreId: null, debit: 0n, credit: total }]);
+    }
+  } catch (e) { if (saved === undefined) sdb.seqs.delete(seqKey); else sdb.seqs.set(seqKey, saved); throw e; }
+  n.lines.forEach((l, i) => { l.value = values[i]!; });
+  for (const [iid, st] of stock) { const it = odb.items.find((i) => i.id === iid)!; it.q = st.q; it.v = st.v; }
+  Object.assign(n, { status: 'posted', number, total, journalEntryId: entryId, postedAt: new Date().toISOString() });
+}
+
+// ---- fixed assets
+const accumulatedOf = (a: MAsset) => a.opening + odb.runs.flatMap((r) => r.lines).filter((l) => l.assetId === a.id).reduce((t, l) => t + l.amount, 0n);
+const bookedBefore = (a: MAsset, periodEnd: string, including = false) => odb.runs.filter((r) => r.periodEnd < periodEnd || (including && r.periodEnd === periodEnd))
+  .flatMap((r) => r.lines).filter((l) => l.assetId === a.id).reduce((t, l) => t + l.amount, 0n);
+const terms = (a: MAsset): AssetTerms => ({ cost: a.cost, residual: a.residual, lifeMonths: a.life, start: a.start, opening: a.opening, disposedOn: a.disposedOn });
+function assetRow(a: MAsset) {
+  const acc = db.accounts.find((x) => x.id === a.assetAccountId)!; const cc = db.costCentres.find((x) => x.id === a.costCentreId);
+  const accumulated = accumulatedOf(a);
+  return { id: a.id, companyId: a.companyId, number: a.number, name: a.name, nameAr: a.nameAr, assetAccountId: acc.id, assetAccountCode: acc.code, assetAccountName: acc.name, assetAccountNameAr: acc.nameAr,
+    expenseAccountId: a.expenseAccountId, costCentreId: a.costCentreId, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null, contactId: a.contactId,
+    supplierName: sdb.contacts.find((c) => c.id === a.contactId)?.name ?? null, purchaseDate: a.purchaseDate, depreciationStart: a.start, cost: s(a.cost), residualValue: s(a.residual),
+    usefulLifeMonths: a.life, openingDepreciation: s(a.opening), serialNo: a.serialNo, location: a.location, reference: a.reference, notes: a.notes, status: a.status,
+    disposedOn: a.disposedOn, disposalProceeds: a.proceeds === null ? null : s(a.proceeds), disposalEntryId: a.disposalEntryId, accumulated: s(accumulated),
+    bookValue: a.status === 'disposed' ? '0.00' : s(a.cost - accumulated) };
+}
+const assetOf = (id: string) => odb.assets.find((a) => a.id === id && roleOf(session, a.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function saveAssetM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId);
+  const name = String(b.name ?? '').trim();
+  if (!name) fail(400, 'Enter the asset name.', 'err.assetName');
+  const acc = db.accounts.find((a) => a.id === b.assetAccountId && a.companyId === companyId);
+  if (!acc || acc.type !== 'asset' || acc.isBank || ['1100', '1200', '1300', '1590'].includes(acc.code)) fail(400, 'Choose the fixed asset account.', 'err.assetAccount');
+  const purchaseDate = String(b.purchaseDate ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(purchaseDate)) fail(400, 'Enter the purchase date.', 'err.date');
+  const m = (v: unknown) => { const t = String(v ?? '').replace(/,/g, '').trim(); if (!t) return 0n; try { return toMinor(t); } catch { return fail(400, 'Amounts have at most 2 decimals.', 'err.amountFormat'); } };
+  const cost = m(b.cost), residual = m(b.residualValue), opening = m(b.openingDepreciation);
+  if (cost <= 0n) fail(400, 'Enter the cost.', 'err.assetCost');
+  if (residual < 0n || residual >= cost) fail(400, 'The value at the end of its life must be less than the cost.', 'err.assetResidual');
+  if (opening < 0n || opening > cost - residual) fail(400, 'Depreciation before Nusuh Books is too high.', 'err.assetOpening');
+  const life = Number(b.usefulLifeMonths);
+  if (!Number.isInteger(life) || life < 1 || life > 1200) fail(400, 'Enter the useful life in months (1 to 1200).', 'err.assetLife');
+  const start = monthStart(b.depreciationStart ? String(b.depreciationStart) : purchaseDate);
+  if (start < monthStart(purchaseDate)) fail(400, 'Depreciation cannot start before the month the asset was bought.', 'err.assetStart');
+  const t = (k: string) => (b[k] as string)?.trim() || null;
+  const v = { name, nameAr: t('nameAr'), assetAccountId: acc!.id, expenseAccountId: (b.expenseAccountId as string) || acctBy(companyId, '5050').id, costCentreId: t('costCentreId'),
+    contactId: t('contactId'), purchaseDate, start, cost, residual, life, opening, serialNo: t('serialNo'), location: t('location'), reference: t('reference'), notes: t('notes') };
+  if (id) {
+    const cur = assetOf(id);
+    if (cur.status === 'disposed') fail(400, 'A disposed asset never changes.', 'err.assetDisposed');
+    if (odb.runs.some((r) => r.lines.some((l) => l.assetId === id)) && (cur.cost !== cost || cur.residual !== residual || cur.life !== life || cur.start !== start || cur.opening !== opening || cur.assetAccountId !== v.assetAccountId))
+      fail(400, 'Depreciation has been booked on this asset, so its cost, life and accounts can no longer change.', 'err.assetLocked');
+    Object.assign(cur, v); return id;
+  }
+  const nid = uid();
+  odb.assets.push({ id: nid, companyId, number: nextNo(companyId, 'asset', 'FA-'), status: 'active', disposedOn: null, proceeds: null, disposalEntryId: null, ...v });
+  return nid;
+}
+function nextRunM(companyId: string) {
+  const last = odb.runs.filter((r) => r.companyId === companyId).map((r) => r.periodEnd).sort().at(-1);
+  return last ? { periodEnd: nextMonthEnd(last), first: false } : { periodEnd: previousMonthEnd(today()), first: true };
+}
+function previewM(companyId: string, periodEnd: string) {
+  if (monthEnd(periodEnd) !== periodEnd) fail(400, 'Choose the month.', 'err.date');
+  const lines = odb.assets.filter((a) => a.companyId === companyId).sort((x, y) => x.number.localeCompare(y.number))
+    .map((a) => ({ a, amount: depreciationDue(terms(a), periodEnd, bookedBefore(a, periodEnd)) })).filter((x) => x.amount > 0n);
+  return { periodEnd, lines: lines.map(({ a, amount }) => ({ assetId: a.id, number: a.number, name: a.name, nameAr: a.nameAr, expenseAccountId: a.expenseAccountId, costCentreId: a.costCentreId, amount: s(amount) })),
+    total: s(lines.reduce((t, x) => t + x.amount, 0n)) };
+}
+function runM(companyId: string, periodEnd: string) {
+  canPostIn(companyId);
+  const next = nextRunM(companyId);
+  if (!next.first && periodEnd !== next.periodEnd) fail(400, 'Depreciation runs one month at a time, in order.', 'err.depNextMonth');
+  if (periodEnd > monthEnd(today())) fail(400, 'Depreciation cannot be run for a future month.', 'err.depFuture');
+  const p = previewM(companyId, periodEnd);
+  const total = toMinor(p.total);
+  let entryId: string | null = null;
+  if (total > 0n) {
+    const g = new Map<string, { accountId: string; costCentreId: string | null; v: bigint }>();
+    for (const l of p.lines) { const k = `${l.expenseAccountId}|${l.costCentreId ?? ''}`; const x = g.get(k) ?? { accountId: l.expenseAccountId, costCentreId: l.costCentreId, v: 0n }; x.v += toMinor(l.amount); g.set(k, x); }
+    entryId = post(session!, companyId, periodEnd, `Depreciation ${periodEnd.slice(0, 7)}`, [...[...g.values()].map((x) => ({ accountId: x.accountId, costCentreId: x.costCentreId, debit: x.v, credit: 0n })),
+      { accountId: acctBy(companyId, '1590').id, costCentreId: null, debit: 0n, credit: total }]);
+  }
+  const id = uid();
+  odb.runs.push({ id, companyId, periodEnd, total, journalEntryId: entryId, runBy: session!, runAt: new Date().toISOString(), lines: p.lines.map((l) => ({ assetId: l.assetId, amount: toMinor(l.amount) })) });
+  return { runId: id, total: p.total };
+}
+function disposeM(id: string, b: Record<string, unknown>) {
+  const a = assetOf(id); canPostIn(a.companyId);
+  if (a.status !== 'active') fail(400, 'This asset has already been disposed of.', 'err.assetDisposed');
+  const date = String(b.date ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(400, 'Enter the date.', 'err.date');
+  if (date < a.purchaseDate) fail(400, 'An asset cannot be disposed of before it was bought.', 'err.assetDisposeDate');
+  let proceeds: bigint; try { proceeds = toMinor(String(b.proceeds ?? '0').trim() || '0'); } catch { return fail(400, 'Amounts have at most 2 decimals.', 'err.amountFormat'); }
+  if (proceeds > 0n && !db.accounts.some((x) => x.id === b.bankAccountId && x.companyId === a.companyId && x.isBank)) fail(400, 'Choose the bank or cash account the money went into.', 'err.bankAccount');
+  const prev = previousMonthEnd(date);
+  if (depreciationDue(terms(a), prev, bookedBefore(a, prev, true)) > 0n) fail(400, `Run depreciation up to ${prev} before disposing of this asset.`, 'err.depBeforeDisposal');
+  if (odb.runs.some((r) => r.periodEnd > monthEnd(date) && r.lines.some((l) => l.assetId === id))) fail(400, 'Depreciation was already booked for months after this date.', 'err.disposeAfterRuns');
+  const acc = accumulatedOf(a); const result = disposalResult(a.cost, acc, proceeds);
+  const gl = acctBy(a.companyId, '4900').id;
+  const entryId = post(session!, a.companyId, date, `Disposal of ${a.number} · ${a.name}`, [
+    ...(acc > 0n ? [{ accountId: acctBy(a.companyId, '1590').id, costCentreId: null, debit: acc, credit: 0n }] : []),
+    ...(proceeds > 0n ? [{ accountId: String(b.bankAccountId), costCentreId: null, debit: proceeds, credit: 0n }] : []),
+    { accountId: a.assetAccountId, costCentreId: null, debit: 0n, credit: a.cost },
+    ...(result > 0n ? [{ accountId: gl, costCentreId: a.costCentreId, debit: 0n, credit: result }] : result < 0n ? [{ accountId: gl, costCentreId: a.costCentreId, debit: -result, credit: 0n }] : []),
+  ]);
+  Object.assign(a, { status: 'disposed', disposedOn: date, proceeds, disposalEntryId: entryId });
+  return entryId;
+}
+function assetSummaryM(companyId: string) {
+  const active = odb.assets.filter((a) => a.companyId === companyId && a.status === 'active');
+  const by = new Map<string, bigint>();
+  for (const a of active) by.set(a.assetAccountId, (by.get(a.assetAccountId) ?? 0n) + a.cost);
+  return {
+    cost: s(active.reduce((t, a) => t + a.cost, 0n)), accumulated: s(active.reduce((t, a) => t + accumulatedOf(a), 0n)),
+    bookValue: s(active.reduce((t, a) => t + a.cost - accumulatedOf(a), 0n)), accumulatedInBooks: s(-ledgerSum(acctBy(companyId, '1590').id)),
+    accounts: [...by.entries()].map(([accountId, cost]) => { const a = db.accounts.find((x) => x.id === accountId)!; return { accountId, code: a.code, name: a.name, nameAr: a.nameAr, cost: s(cost), books: s(ledgerSum(accountId)) }; }),
+    nextRun: nextRunM(companyId),
+  };
+}
+
+/** Sample bank, stock and asset data, as in src/db/seed.ts. */
+function seedOps(companyId: string, poster: string, c: { country: string }, contacts: { gulf: string; faisal: string; najd: string; fitOut: string }) {
+  const prev = session; session = poster;
+  const acct = (code: string) => acctBy(companyId, code).id;
+  const cc = (name: string) => db.costCentres.find((x) => x.companyId === companyId && x.name === name)!.id;
+  const fa = [
+    { name: 'Delivery van', nameAr: 'شاحنة التوصيل', code: '1510', bought: daysAgo(430), cost: 8500000n, residual: 1500000n, life: 60, centre: 'Branch 1', serial: 'ABC 1234' },
+    { name: 'Office furniture', nameAr: 'أثاث المكتب', code: '1520', bought: daysAgo(800), cost: 1800000n, residual: 0n, life: 84, centre: 'Head office', serial: null },
+    { name: 'Laptops (4)', nameAr: 'أجهزة حاسب محمولة (4)', code: '1530', bought: daysAgo(300), cost: 960000n, residual: 0n, life: 36, centre: 'Head office', serial: null },
+  ];
+  const booksStart = daysAgo(120);
+  const opening = fa.map((x) => targetDepreciation({ cost: x.cost, residual: x.residual, lifeMonths: x.life, start: monthStart(x.bought), opening: 0n }, previousMonthEnd(booksStart)));
+  const tc = fa.reduce((t, x) => t + x.cost, 0n), to = opening.reduce((t, x) => t + x, 0n);
+  post(poster, companyId, booksStart, 'Opening balances · fixed assets', [...fa.map((x) => ({ accountId: acct(x.code), costCentreId: null, debit: x.cost, credit: 0n })),
+    { accountId: acct('1590'), costCentreId: null, debit: 0n, credit: to }, { accountId: acct('3000'), costCentreId: null, debit: 0n, credit: tc - to }]);
+  fa.forEach((x, i) => saveAssetM(companyId, { name: x.name, nameAr: x.nameAr, assetAccountId: acct(x.code), purchaseDate: x.bought, cost: s(x.cost), residualValue: s(x.residual),
+    usefulLifeMonths: x.life, openingDepreciation: s(opening[i]!), costCentreId: cc(x.centre), serialNo: x.serial }));
+  for (let m = monthEnd(booksStart); m <= previousMonthEnd(today()); m = nextMonthEnd(m)) runM(companyId, m);
+
+  const item = (sku: string, name: string, nameAr: string, unit: string, salePrice: string, reorderLevel: string) => saveItemM(companyId, { sku, name, nameAr, unit, salePrice, reorderLevel });
+  const beam = item('ST-12', 'Steel beam 12m', 'عارضة حديد 12م', 'pcs', '650.00', '10');
+  const rebar = item('RB-16', 'Rebar 16mm', 'حديد تسليح 16مم', 'ton', '2600.00', '3');
+  const angle = item('AI-50', 'Angle iron 50x50', 'زاوية حديد 50×50', 'pcs', '45.00', '50');
+  const note = (type: NoteType, ago: number, contactId: string | null, lines: object[], reference: string, other?: string) =>
+    postNoteM(saveNoteM(companyId, { type, date: daysAgo(ago), contactId, reference, otherAccountId: other ? acct(other) : null, lines }));
+  note('grn', 110, null, [{ itemId: beam, quantity: '30', unitCost: '410.00' }, { itemId: rebar, quantity: '6', unitCost: '2150.00' }, { itemId: angle, quantity: '200', unitCost: '28.50' }], 'Opening stock count', '3000');
+  note('grn', 9, contacts.najd, [{ itemId: beam, quantity: '20', unitCost: '425.00' }, { itemId: angle, quantity: '100', unitCost: '29.00' }], 'NW-DN-5531');
+  note('gdn', 3, contacts.gulf, [{ itemId: beam, quantity: '15', costCentreId: cc('Head office') }, { itemId: angle, quantity: '40', costCentreId: cc('Head office') }], 'PO-4520');
+  note('gdn', 1, contacts.faisal, [{ itemId: rebar, quantity: '4', costCentreId: contacts.fitOut }], 'Warehouse fit-out');
+
+  const bank = banksOf(companyId).find((b) => b.accountId === acct('1000'))!;
+  const sa = c.country === 'SA';
+  saveBankM(companyId, sa ? { kind: 'bank', iban: 'SA03 8000 0000 6080 1016 7519', accountNumber: '608010167519', name: 'Al Rajhi Bank – current account', nameAr: 'مصرف الراجحي – الحساب الجاري' }
+    : { kind: 'bank', iban: 'AE07 0331 2345 6789 0123 456', accountNumber: '1234567890123456', name: 'Mashreq – current account', nameAr: 'بنك المشرق – الحساب الجاري' }, bank.id);
+  const from = daysAgo(45);
+  const inBooks = db.entries.filter((e) => e.companyId === companyId && e.date >= from && e.date < daysAgo(1) && !/Office water|Reversal/.test(e.memo ?? ''))
+    .flatMap((e) => e.lines.filter((l) => l.accountId === bank.accountId).map((l) => ({ date: e.date, amount: l.debit - l.credit,
+      description: String(e.memo ?? 'TRANSFER').replace(/^[A-Z]+-\d+ · /, (m) => (l.debit > 0n ? 'TRF IN ' : 'TRF OUT ') + m).toUpperCase() })));
+  const extras = [
+    { date: daysAgo(30), description: 'STC BUSINESS BILL 0112233', amount: sa ? -34500n : -15750n }, { date: daysAgo(14), description: 'POS PETROMIN STATION 44', amount: -8625n },
+    { date: daysAgo(7), description: 'BANK SERVICE CHARGES', amount: -2500n }, { date: daysAgo(5), description: 'STC BUSINESS BILL 0112233', amount: sa ? -29900n : -13650n },
+  ];
+  let bal = ledgerSum(bank.accountId, daysAgo(46));
+  const statement = [...inBooks, ...extras].sort((a, b) => a.date.localeCompare(b.date)).map((l) => { bal += l.amount; return { date: l.date, description: l.description, reference: null, amount: s(l.amount), balance: s(bal) }; });
+  importM(bank.id, { fileName: 'statement-last-45-days.csv', lines: statement });
+  saveRuleM(companyId, { matchText: 'STC', direction: 'out', accountId: acct('5300'), vatCode: 'standard', label: 'Mobile and internet' });
+  saveRuleM(companyId, { matchText: 'BANK SERVICE CHARGES', direction: 'out', accountId: acct('5400'), vatCode: 'exempt', label: 'Bank charges' });
+  for (const l of linesM(bank.id, 'open')) {
+    if (l.suggestion?.kind === 'match' && l.date < daysAgo(20)) matchToM(odb.lines.find((x) => x.id === l.id)!, (l.suggestion as { journalLineId: string }).journalLineId);
+  }
   session = prev;
 }
 
@@ -891,6 +1353,73 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/documents\/([\w-]+)\/quotation-status$/, (m, b) => { quoteStatusM(m[1]!, String(b?.status)); return { ok: true }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/convert$/, (m) => ({ id: convertM(m[1]!) })],
   ['POST', /^\/api\/documents\/([\w-]+)\/credit$/, (m) => ({ id: creditM(m[1]!) })],
+  // ---------------------------------------------------------------- bank
+  ['GET', /^\/api\/companies\/([\w-]+)\/bank-accounts$/, (m) => banksOf(inCo(m[1]!)).map(bankRow).sort((a, b) => a.status.localeCompare(b.status) || a.code.localeCompare(b.code))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/bank-accounts$/, (m, b) => ({ id: saveBankM(inCo(m[1]!), b ?? {}) })],
+  ['GET', /^\/api\/bank-accounts\/([\w-]+)$/, (m) => bankRow(bankOf(m[1]!))],
+  ['POST', /^\/api\/bank-accounts\/([\w-]+)$/, (m, b) => { const x = bankOf(m[1]!); return { id: saveBankM(x.companyId, b ?? {}, x.id) }; }],
+  ['POST', /^\/api\/bank-accounts\/([\w-]+)\/import$/, (m, b) => importM(m[1]!, b ?? {})],
+  ['GET', /^\/api\/bank-accounts\/([\w-]+)\/imports$/, (m) => { bankOf(m[1]!); return odb.imports.filter((i) => i.bankId === m[1]).reverse().map((i) => ({ ...i,
+    importedBy: db.users.find((u) => u.id === i.importedBy)?.name, remaining: odb.lines.filter((l) => l.importId === i.id).length, matched: odb.lines.filter((l) => l.importId === i.id && l.status === 'matched').length })); }],
+  ['POST', /^\/api\/bank-imports\/([\w-]+)\/undo$/, (m) => { const i = odb.imports.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); canPostIn(i.companyId);
+    const before = odb.lines.length; odb.lines = odb.lines.filter((l) => l.importId !== i.id || l.status === 'matched'); return { removed: before - odb.lines.length }; }],
+  ['GET', /^\/api\/bank-accounts\/([\w-]+)\/lines$/, (m, _b, q) => linesM(m[1]!, q.get('status') ?? 'all')],
+  ['GET', /^\/api\/bank-accounts\/([\w-]+)\/reconciliation$/, (m) => reconM(m[1]!)],
+  ['POST', /^\/api\/bank-accounts\/([\w-]+)\/apply-rules$/, (m) => { const ls = linesM(m[1]!, 'open').filter((l) => l.suggestion?.kind === 'rule');
+    for (const l of ls) { const x = l.suggestion as { accountId: string; costCentreId: string | null; vatCode: string; label: string | null }; bookM(l.id, { ...x, description: x.label }); } return { booked: ls.length }; }],
+  ['GET', /^\/api\/bank-lines\/([\w-]+)\/candidates$/, (m) => { const l = lineOf(m[1]!); const b = odb.banks.find((x) => x.id === l.bankId)!;
+    return unmatchedM(b.accountId).filter((x) => x.amount === l.amount).sort((x, y) => days(x.date, l.date) - days(y.date, l.date)).map((x) => ({ journalLineId: x.id, date: x.date, memo: x.memo, amount: s(x.amount) })); }],
+  ['POST', /^\/api\/bank-lines\/([\w-]+)\/match$/, (m, b) => { matchToM(openLineOf(m[1]!), String(b?.journalLineId ?? '')); return { ok: true }; }],
+  ['POST', /^\/api\/bank-lines\/([\w-]+)\/unmatch$/, (m) => { const l = lineOf(m[1]!); canPostIn(l.companyId); l.status = 'open'; l.journalLineId = null; return { ok: true }; }],
+  ['POST', /^\/api\/bank-lines\/([\w-]+)\/ignore$/, (m) => { openLineOf(m[1]!).status = 'ignored'; return { ok: true }; }],
+  ['POST', /^\/api\/bank-lines\/([\w-]+)\/book$/, (m, b) => ({ entryId: bookM(m[1]!, b ?? {}) })],
+  ['POST', /^\/api\/bank-lines\/([\w-]+)\/pay$/, (m, b) => ({ paymentId: payLineM(m[1]!, String(b?.contactId ?? '')) })],
+  ['GET', /^\/api\/companies\/([\w-]+)\/bank-rules$/, (m) => { const id = inCo(m[1]!); return odb.rules.filter((r) => r.companyId === id).map(ruleRow).sort((a, b) => Number(b.active) - Number(a.active) || a.matchText.localeCompare(b.matchText)); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/bank-rules$/, (m, b) => ({ id: saveRuleM(inCo(m[1]!), b ?? {}) })],
+  ['POST', /^\/api\/bank-rules\/([\w-]+)$/, (m, b) => { const r = odb.rules.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); return { id: saveRuleM(r.companyId, b ?? {}, r.id) }; }],
+  ['POST', /^\/api\/bank-rules\/([\w-]+)\/delete$/, (m) => { const r = odb.rules.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); canPostIn(r.companyId);
+    odb.rules = odb.rules.filter((x) => x.id !== r.id); return { ok: true }; }],
+  // ---------------------------------------------------------------- inventory
+  ['GET', /^\/api\/companies\/([\w-]+)\/items$/, (m, _b, q) => { const id = inCo(m[1]!); const n = (q.get('q') ?? '').trim().toLowerCase();
+    return odb.items.filter((i) => i.companyId === id && (!n || [i.name, i.nameAr, i.sku].join(' ').toLowerCase().includes(n))).sort((a, b) => a.status.localeCompare(b.status) || a.name.localeCompare(b.name)).map(itemRow); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/items$/, (m, b) => ({ id: saveItemM(inCo(m[1]!), b ?? {}) })],
+  ['GET', /^\/api\/items\/([\w-]+)$/, (m) => { const i = itemOf(m[1]!); let q = 0n, v = 0n;
+    const movements = odb.notes.filter((n) => n.status === 'posted').sort((a, b) => a.postedAt!.localeCompare(b.postedAt!)).flatMap((n) => n.lines.filter((l) => l.itemId === i.id).map((l) => {
+      const sign = n.type === 'grn' ? 1n : -1n; q += sign * l.q; v += sign * l.value;
+      return { noteId: n.id, type: n.type, number: n.number, date: n.date, contactName: sdb.contacts.find((c) => c.id === n.contactId)?.name ?? null, quantity: qtyStr(l.q), value: s(l.value), qtyAfter: qtyStr(q), valueAfter: s(v) }; }));
+    return { ...itemRow(i), movements }; }],
+  ['POST', /^\/api\/items\/([\w-]+)$/, (m, b) => { const i = itemOf(m[1]!); return { id: saveItemM(i.companyId, b ?? {}, i.id) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/stock-value$/, (m) => { const id = inCo(m[1]!);
+    const items = odb.items.filter((i) => i.companyId === id && (i.status === 'active' || i.v !== 0n)).sort((a, b) => a.name.localeCompare(b.name)).map(itemRow);
+    const total = odb.items.filter((i) => i.companyId === id).reduce((t, i) => t + i.v, 0n); const books = ledgerSum(acctBy(id, '1300').id);
+    return { items, total: s(total), booksValue: s(books), difference: s(books - total) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/stock-notes$/, (m, _b, q) => { const id = inCo(m[1]!); const n = (q.get('q') ?? '').trim().toLowerCase();
+    return odb.notes.filter((x) => x.companyId === id && x.type === q.get('type')).map(noteRow).filter((x) => !n || [x.number, x.contactName, x.reference].join(' ').toLowerCase().includes(n))
+      .sort((a, b) => Number(b.status === 'draft') - Number(a.status === 'draft') || b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/stock-notes$/, (m, b) => ({ id: saveNoteM(inCo(m[1]!), b ?? {}) })],
+  ['GET', /^\/api\/stock-notes\/([\w-]+)$/, (m) => { const n = noteOf(m[1]!);
+    return { ...noteRow(n), lines: n.lines.map((l, i) => { const it = odb.items.find((x) => x.id === l.itemId)!; const cc = db.costCentres.find((x) => x.id === l.costCentreId);
+      return { id: l.id, lineNo: i + 1, itemId: it.id, sku: it.sku, name: it.name, nameAr: it.nameAr, unit: it.unit, quantity: qtyStr(l.q), unitCost: l.unitCost === null ? null : s(l.unitCost),
+        value: s(l.value), costCentreId: l.costCentreId, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null }; }) }; }],
+  ['POST', /^\/api\/stock-notes\/([\w-]+)$/, (m, b) => { const n = noteOf(m[1]!); return { id: saveNoteM(n.companyId, b ?? {}, n.id) }; }],
+  ['POST', /^\/api\/stock-notes\/([\w-]+)\/post$/, (m) => { postNoteM(m[1]!); return { ok: true }; }],
+  ['POST', /^\/api\/stock-notes\/([\w-]+)\/delete$/, (m) => { const n = noteOf(m[1]!); canPostIn(n.companyId); if (n.status !== 'draft') fail(400, 'Posted goods notes are never changed.', 'err.notePosted');
+    odb.notes = odb.notes.filter((x) => x.id !== n.id); return { ok: true }; }],
+  // ---------------------------------------------------------------- fixed assets
+  ['GET', /^\/api\/companies\/([\w-]+)\/assets$/, (m, _b, q) => { const id = inCo(m[1]!); const n = (q.get('q') ?? '').trim().toLowerCase();
+    return odb.assets.filter((a) => a.companyId === id && (!n || [a.name, a.number, a.serialNo].join(' ').toLowerCase().includes(n))).sort((a, b) => a.status.localeCompare(b.status) || a.number.localeCompare(b.number)).map(assetRow); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/assets$/, (m, b) => ({ id: saveAssetM(inCo(m[1]!), b ?? {}) })],
+  ['GET', /^\/api\/companies\/([\w-]+)\/asset-summary$/, (m) => assetSummaryM(inCo(m[1]!))],
+  ['GET', /^\/api\/assets\/([\w-]+)$/, (m) => { const a = assetOf(m[1]!);
+    return { ...assetRow(a), history: odb.runs.filter((r) => r.lines.some((l) => l.assetId === a.id)).sort((x, y) => x.periodEnd.localeCompare(y.periodEnd))
+      .map((r) => ({ periodEnd: r.periodEnd, amount: s(r.lines.find((l) => l.assetId === a.id)!.amount), journalEntryId: r.journalEntryId })) }; }],
+  ['POST', /^\/api\/assets\/([\w-]+)$/, (m, b) => { const a = assetOf(m[1]!); return { id: saveAssetM(a.companyId, b ?? {}, a.id) }; }],
+  ['POST', /^\/api\/assets\/([\w-]+)\/dispose$/, (m, b) => ({ entryId: disposeM(m[1]!, b ?? {}) })],
+  ['GET', /^\/api\/companies\/([\w-]+)\/depreciation$/, (m) => { const id = inCo(m[1]!);
+    return { next: nextRunM(id), runs: odb.runs.filter((r) => r.companyId === id).sort((a, b) => b.periodEnd.localeCompare(a.periodEnd))
+      .map((r) => ({ id: r.id, periodEnd: r.periodEnd, total: s(r.total), journalEntryId: r.journalEntryId, runAt: r.runAt, runBy: db.users.find((u) => u.id === r.runBy)?.name ?? '', assets: r.lines.length })) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/depreciation\/preview$/, (m, _b, q) => previewM(inCo(m[1]!), q.get('periodEnd') ?? '')],
+  ['POST', /^\/api\/companies\/([\w-]+)\/depreciation\/run$/, (m, b) => runM(inCo(m[1]!), String(b?.periodEnd ?? ''))],
   // ---------------------------------------------------------------- claims, ledgers, projects
   ['POST', /^\/api\/documents\/([\w-]+)\/submit$/, (m) => { submitClaimM(m[1]!); return { ok: true }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/reopen$/, (m) => { reopenM(m[1]!); return { ok: true }; }],

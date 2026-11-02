@@ -24,15 +24,34 @@ export function Loading() {
   return <div className="mut" aria-busy="true">{t('loading')}</div>;
 }
 
-export function TopControls({ who, onSignOut, children }: { who: string; onSignOut: () => void; children?: ReactNode }) {
+export function TopControls({ children }: { children?: ReactNode }) {
   const { t, lang, setLang } = useI18n();
   return (
     <>
       {children}
-      <span className="mut small">{who}</span>
       <button className="b" onClick={() => setLang(lang === 'en' ? 'ar' : 'en')} aria-label={t('lang.toggle')}>{t('lang.toggle')}</button>
       <button className="b" onClick={toggleTheme} title={t('theme.toggle')} aria-label={t('theme.toggle')}>◐</button>
-      <button className="b" onClick={onSignOut}>{t('signOut')}</button>
     </>
+  );
+}
+
+/** Left sidebar: brand at the top, navigation, and the signed-in person with Sign out at the bottom. */
+export function Sidebar({ subtitle, user, roleLabel, onSignOut, children }: {
+  subtitle: string; user: { name: string; email: string }; roleLabel?: string; onSignOut: () => void; children: ReactNode;
+}) {
+  const { t } = useI18n();
+  return (
+    <nav className="side" aria-label={t('app.name')}>
+      <div className="brand"><b>{t('app.name')}</b><span>{subtitle}</span></div>
+      <div className="side-items">{children}</div>
+      <div className="side-user">
+        <div className="who">
+          <b>{user.name}</b>
+          <span className="ltr">{user.email}</span>
+          {roleLabel && <span>{roleLabel}</span>}
+        </div>
+        <button className="b signout" onClick={onSignOut}>{t('signOut')}</button>
+      </div>
+    </nav>
   );
 }

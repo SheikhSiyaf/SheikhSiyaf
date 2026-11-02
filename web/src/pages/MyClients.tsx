@@ -1,7 +1,7 @@
 import type { Me } from '../api.ts';
 import { useI18n, useLocalName } from '../i18n.tsx';
 import { navigate } from '../router.ts';
-import { TopControls } from '../ui.tsx';
+import { Sidebar, TopControls } from '../ui.tsx';
 
 export function MyClients({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const { t } = useI18n();
@@ -9,14 +9,13 @@ export function MyClients({ me, onSignOut }: { me: Me; onSignOut: () => void }) 
   const role = me.user.staffRole ?? me.companies[0]?.role;
   return (
     <div className="app">
-      <nav className="side">
-        <div className="brand"><b>{t('app.name')}</b><span>{me.user.firmName}</span></div>
+      <Sidebar subtitle={me.user.firmName} user={me.user} roleLabel={role ? t(`role.${role}`) : undefined} onSignOut={onSignOut}>
         <button className="on">{t('clients.title')}</button>
-      </nav>
+      </Sidebar>
       <main>
         <div className="top">
           <h1>{t('clients.title')}</h1>
-          <TopControls who={`${me.user.name}${role ? ` · ${t(`role.${role}`)}` : ''}`} onSignOut={onSignOut} />
+          <TopControls />
         </div>
         <div className="card">
           <div className="mut" style={{ marginBottom: 8 }}>{t('clients.hint')}</div>

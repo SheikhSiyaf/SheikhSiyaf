@@ -2,7 +2,7 @@
 import { useApi, type CompanyBooks, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { navigate } from '../router.ts';
-import { ErrorNote, Loading, TopControls } from '../ui.tsx';
+import { ErrorNote, Loading, Sidebar, TopControls } from '../ui.tsx';
 import { Home } from './Home.tsx';
 import { Journal } from './Journal.tsx';
 import { Reports } from './Reports.tsx';
@@ -22,18 +22,17 @@ export function Workspace({ me, companyId, module, onSignOut }: { me: Me; compan
 
   return (
     <div className="app">
-      <nav className="side" aria-label={t('app.name')}>
-        <div className="brand"><b>{t('app.name')}</b><span>{b ? local(b.company.name, b.company.nameAr) : ''}</span></div>
+      <Sidebar subtitle={b ? local(b.company.name, b.company.nameAr) : ''} user={me.user} roleLabel={b ? t(`role.${b.role}`) : undefined} onSignOut={onSignOut}>
         {MODULES.map((m) => (
           <button key={m} className={`${m === mod ? 'on' : ''} ${BUILT.has(m) ? '' : 'soon'}`} onClick={() => go(m)} aria-current={m === mod ? 'page' : undefined}>
             {t(`mod.${m}` as Key)}
           </button>
         ))}
-      </nav>
+      </Sidebar>
       <main>
         <div className="top">
           <h1>{title}</h1>
-          <TopControls who={`${me.user.name}${b ? ` · ${t(`role.${b.role}`)}` : ''}`} onSignOut={onSignOut}>
+          <TopControls>
             {me.user.kind === 'firm_staff' && <button className="b" onClick={() => navigate('/')}>{t('clients.back')}</button>}
             {b && <span className="badge">{local(b.company.name, b.company.nameAr)} · {b.company.currency}</span>}
           </TopControls>

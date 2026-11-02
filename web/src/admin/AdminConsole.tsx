@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { api, useApi, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { navigate } from '../router.ts';
-import { ErrorNote, Loading, TopControls, errorText } from '../ui.tsx';
+import { ErrorNote, Loading, Sidebar, TopControls, errorText } from '../ui.tsx';
 
 interface ClientRow {
   id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; crNumber: string;
@@ -18,16 +18,15 @@ export function AdminConsole({ me, path, onSignOut }: { me: Me; path: string; on
   const title = adding ? t('reg.title') : t(`admin.${tab}` as Key);
   return (
     <div className="app">
-      <nav className="side">
-        <div className="brand"><b>{t('app.name')}</b><span>{t('admin.console')}</span></div>
+      <Sidebar subtitle={t('admin.console')} user={me.user} roleLabel={t('role.admin')} onSignOut={onSignOut}>
         {(['Clients', 'Staff'] as const).map((x) => (
           <button key={x} className={x === tab ? 'on' : ''} onClick={() => navigate(`/admin/${x.toLowerCase()}`)}>{t(`admin.${x}`)}</button>
         ))}
-      </nav>
+      </Sidebar>
       <main>
         <div className="top">
           <h1>{title}</h1>
-          <TopControls who={`${me.user.name} · ${t('role.admin')}`} onSignOut={onSignOut} />
+          <TopControls />
         </div>
         {tab === 'Staff' ? <Staff /> : adding ? <AddClient /> : <Clients />}
       </main>

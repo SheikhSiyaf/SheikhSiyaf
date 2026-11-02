@@ -62,10 +62,11 @@ describe('Roles', () => {
     await expect(add(f.a.clientAccountant, f.b.id, 'client_accountant')).rejects.toThrow(/their own company/);
     await expect(add(f.staff, f.b.id, 'client_accountant')).rejects.toThrow(/Firm staff can only be/);
     await expect(add(f.admin, f.a.id, 'partner')).rejects.toThrow(/Administrators cannot/);
+    await expect(add(f.staff, f.b.id, 'partner')).rejects.toThrow(/same role for every client/);
   });
 
   it('only the Administrator adds clients, staff and users', async () => {
-    const userSql = `INSERT INTO users (firm_id, kind, full_name, email) VALUES ($1, 'firm_staff', 'New', $2)`;
+    const userSql = `INSERT INTO users (firm_id, kind, full_name, email, staff_role) VALUES ($1, 'firm_staff', 'New', $2, 'reviewer')`;
     await expect(as(f.partner, (db) => db.query(userSql, [f.firmId, `new.${Date.now()}@example.com`]))).rejects.toThrow(/row-level security/);
     await expect(as(f.admin, (db) => db.query(userSql, [f.firmId, `new.${Date.now()}@example.com`]))).resolves.toBeTruthy();
     await expect(as(f.partner, (db) => db.query(

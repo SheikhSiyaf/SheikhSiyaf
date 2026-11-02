@@ -44,5 +44,7 @@ Entry settings per client: invoice prefix, payment terms, period lock date.
 - prototype/nusuhbooks.html: clickable UI prototype (browser-only data). Use it as the visual and flow reference, not as production code.
 
 ## Commands
-- `npm run db:up` / `npm run db:migrate` / `npm test` / `npm run typecheck`. See README.md.
+- First run: `npm install`, `cp .env.example .env`, `npm run db:up`, `npm run setup`, `npm start` -> http://localhost:3000. Dev: `npm run dev` -> http://localhost:5173. See README.md.
+- `npm test` (rules, separation, API) and `npm run typecheck` must pass before every commit.
+- Every UI string lives in web/src/i18n.tsx (English and Arabic). Amounts use src/money.ts, never floats.
 - Schema changes go in a new file in `db/migrations/`. Never edit an applied migration. Record each change and the reason for it in docs/SCHEMA_CHANGES.md.

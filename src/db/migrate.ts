@@ -41,12 +41,8 @@ export async function migrate(adminUrl: string, appPassword?: string): Promise<s
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  const url = process.env.DATABASE_ADMIN_URL;
-  if (!url) {
-    console.error('Set DATABASE_ADMIN_URL (see .env.example).');
-    process.exit(1);
-  }
-  migrate(url, process.env.APP_DB_PASSWORD)
+  const { config } = await import('../config.js');   // loads .env
+  migrate(config.databaseAdminUrl, config.appDbPassword)
     .then((applied) => console.log(applied.length ? `Applied: ${applied.join(', ')}` : 'Up to date.'))
     .catch((err) => {
       console.error(err.message);

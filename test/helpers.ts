@@ -35,10 +35,10 @@ export interface Fixture {
   b: Company; // UAE company: partner and reviewer assigned, staff is NOT
 }
 
-async function addUser(c: pg.PoolClient, firmId: string, kind: string, name: string): Promise<string> {
+async function addUser(c: pg.PoolClient, firmId: string, kind: string, name: string, staffRole?: string): Promise<string> {
   const { rows } = await c.query(
-    `INSERT INTO users (firm_id, kind, full_name, email, password_hash) VALUES ($1, $2, $3, $4, 'x') RETURNING id`,
-    [firmId, kind, name, `${name.toLowerCase().replace(/\s+/g, '.')}.${randomUUID().slice(0, 8)}@example.com`],
+    `INSERT INTO users (firm_id, kind, full_name, email, password_hash, staff_role) VALUES ($1, $2, $3, $4, 'x', $5) RETURNING id`,
+    [firmId, kind, name, `${name.toLowerCase().replace(/\s+/g, '.')}.${randomUUID().slice(0, 8)}@example.com`, staffRole ?? null],
   );
   return rows[0].id;
 }
@@ -88,9 +88,9 @@ export async function seed(): Promise<Fixture> {
     await c.query('BEGIN');
     const firmId = (await c.query(`INSERT INTO firms (name) VALUES ('Test firm') RETURNING id`)).rows[0].id;
     const admin = await addUser(c, firmId, 'admin', 'Admin');
-    const partner = await addUser(c, firmId, 'firm_staff', 'Partner');
-    const reviewer = await addUser(c, firmId, 'firm_staff', 'Reviewer');
-    const staff = await addUser(c, firmId, 'firm_staff', 'Staff');
+    const partner = await addUser(c, firmId, 'firm_staff', 'Partner', 'partner');
+    const reviewer = await addUser(c, firmId, 'firm_staff', 'Reviewer', 'reviewer');
+    const staff = await addUser(c, firmId, 'firm_staff', 'Staff', 'staff_accountant');
     const a = await addCompany(c, firmId, 'SA', [[partner, 'partner'], [reviewer, 'reviewer'], [staff, 'staff_accountant']]);
     const b = await addCompany(c, firmId, 'AE', [[partner, 'partner'], [reviewer, 'reviewer']]);
     await c.query('COMMIT');

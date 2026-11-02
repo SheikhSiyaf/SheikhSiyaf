@@ -4,23 +4,39 @@
   "private": true,
   "description": "Nusuh Books: accounting platform for accounting firms and their clients (SA, UAE, later Oman).",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "db:up": "docker compose up -d db",
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"tsx watch src/api/main.ts --api-only\" \"vite --config web/vite.config.ts\"",
+    "build": "vite build --config web/vite.config.ts",
+    "start": "tsx src/api/main.ts",
+    "setup": "npm run db:migrate && npm run db:seed && npm run build",
+    "db:up": "docker compose up -d --wait db",
     "db:down": "docker compose down",
     "db:migrate": "tsx src/db/migrate.ts",
-    "typecheck": "tsc --noEmit",
+    "db:seed": "tsx src/db/seed.ts",
+    "db:reset": "tsx src/db/reset.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "pg": "^8.13.1"
+    "fastify": "^5.12.8",
+    "pg": "^8.13.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/pg": "^8.11.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "vitest": "^3.0.0"
+    "vitest": "^5.0.5",
+    "vite": "^8.3.5",
+    "@vitejs/plugin-react": "^6.2.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "concurrently": "^10.0.6"
   }
 }

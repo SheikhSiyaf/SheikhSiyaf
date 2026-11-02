@@ -10,34 +10,35 @@ import { isLocked, lockedUpTo } from './Workspace.tsx';
 interface Line { accountId: string; costCentreId: string; debit: string; credit: string }
 const blank = (): Line => ({ accountId: '', costCentreId: '', debit: '', credit: '' });
 
-export function Journal({ books, reloadBooks }: { books: CompanyBooks; reloadBooks: () => void }) {
+export function Journal({ books, sub, reloadBooks, go }: { books: CompanyBooks; sub: string; reloadBooks: () => void; go: (sub: string) => void }) {
   const { t } = useI18n();
   const [q, setQ] = useState('');
   const [query, setQuery] = useState('');
-  const entries = useApi<Entry[]>(`/api/companies/${books.company.id}/entries?q=${encodeURIComponent(query)}`);
+  const entries = useApi<Entry[]>(sub === 'entries' ? `/api/companies/${books.company.id}/entries?q=${encodeURIComponent(query)}` : null);
+  if (sub === 'new') {
+    return books.canPost ? <NewEntry books={books} onPosted={() => undefined} onShowEntries={() => go('entries')} /> : <div className="notice warn">{t('viewOnly')}</div>;
+  }
+  if (sub === 'periods') return <Periods books={books} onChanged={reloadBooks} />;
   return (
-    <>
-      {books.canPost && <NewEntry books={books} onPosted={entries.reload} />}
-      <div className="card">
-        <div className="actions" style={{ marginBottom: 10 }}>
-          <h2 style={{ margin: 0 }}>{t('journal.entries')}</h2>
-          <span className="spacer" />
-          <form onSubmit={(e) => { e.preventDefault(); setQuery(q.trim()); }} className="actions">
-            <input type="search" value={q} onChange={(e) => { setQ(e.target.value); if (!e.target.value) setQuery(''); }} placeholder={t('journal.searchPlaceholder')} aria-label={t('search')} style={{ minWidth: 240 }} />
-            <button className="b" type="submit">{t('search')}</button>
-          </form>
-        </div>
-        <div className="mut small" style={{ marginBottom: 8 }}>{t('journal.neverEdited')}</div>
-        {entries.error && <ErrorNote error={entries.error} onRetry={entries.reload} />}
-        {!entries.data ? <Loading /> : entries.data.length === 0 ? <div className="mut">{t('none')}</div> :
-          entries.data.map((e) => <EntryCard key={e.id} entry={e} books={books} onReversed={entries.reload} />)}
+    <div className="card">
+      <div className="actions" style={{ marginBottom: 10 }}>
+        <h2 style={{ margin: 0 }}>{t('journal.entries')}</h2>
+        <span className="spacer" />
+        <form onSubmit={(e) => { e.preventDefault(); setQuery(q.trim()); }} className="actions">
+          <input type="search" value={q} onChange={(e) => { setQ(e.target.value); if (!e.target.value) setQuery(''); }} placeholder={t('journal.searchPlaceholder')} aria-label={t('search')} style={{ minWidth: 220 }} />
+          <button className="b" type="submit">{t('search')}</button>
+        </form>
+        {books.canPost && <button className="b p" onClick={() => go('new')}>{t('journal.new')}</button>}
       </div>
-      <Periods books={books} onChanged={reloadBooks} />
-    </>
+      <div className="mut small" style={{ marginBottom: 8 }}>{t('journal.neverEdited')}</div>
+      {entries.error && <ErrorNote error={entries.error} onRetry={entries.reload} />}
+      {!entries.data ? <Loading /> : entries.data.length === 0 ? <div className="mut">{t('none')}</div> :
+        entries.data.map((e) => <EntryCard key={e.id} entry={e} books={books} onReversed={entries.reload} />)}
+    </div>
   );
 }
 
-function NewEntry({ books, onPosted }: { books: CompanyBooks; onPosted: () => void }) {
+function NewEntry({ books, onPosted, onShowEntries }: { books: CompanyBooks; onPosted: () => void; onShowEntries: () => void }) {
   const { t, has } = useI18n();
   const local = useLocalName();
   const [date, setDate] = useState(today());
@@ -150,7 +151,7 @@ function NewEntry({ books, onPosted }: { books: CompanyBooks; onPosted: () => vo
         </ul>
       )}
       {serverError !== undefined && <div className="notice bad" role="alert">{errorText(t, has, serverError)}</div>}
-      {done && <div className="notice">{t('journal.posted')}</div>}
+      {done && <div className="notice actions"><span>{t('journal.posted')}</span><button className="link" onClick={onShowEntries}>{t('journal.showEntries')}</button></div>}
       <div className="actions" style={{ marginTop: 8 }}>
         <button className="b p" disabled={busy || check.problems.length > 0} onClick={() => void post()}>{t('journal.post')}</button>
         {check.problems.length === 0 && <span className="badge good">{t('journal.balanced')}</span>}

@@ -4,28 +4,31 @@ import { useI18n, useLocalName } from '../i18n.tsx';
 import { fmt, toMinor, fromMinor } from '../money.ts';
 import { today } from '../router.ts';
 import { ErrorNote, Loading } from '../ui.tsx';
+import { Aged } from '../sales/Aged.tsx';
 
 interface TB { asOf: string; rows: { accountId: string; code: string; name: string; nameAr: string | null; debit: string; credit: string }[] }
 interface PnlRow { income: string; expense: string; profit: string }
 interface PNL { from: string; to: string; total: PnlRow; byCostCentre: (PnlRow & { costCentreId: string | null; name: string | null; nameAr: string | null })[] }
 
-export function Reports({ books }: { books: CompanyBooks }) {
+export function Reports({ books, sub }: { books: CompanyBooks; sub: string }) {
   const { t } = useI18n();
   const local = useLocalName();
   const id = books.company.id;
   const [asOf, setAsOf] = useState(today());
   const [from, setFrom] = useState(`${today().slice(0, 4)}-01-01`);
   const [to, setTo] = useState(today());
-  const tb = useApi<TB>(asOf ? `/api/companies/${id}/reports/trial-balance?asOf=${asOf}` : null);
-  const pnl = useApi<PNL>(from && to ? `/api/companies/${id}/reports/profit-and-loss?from=${from}&to=${to}` : null);
+  const tb = useApi<TB>(sub === 'trial-balance' && asOf ? `/api/companies/${id}/reports/trial-balance?asOf=${asOf}` : null);
+  const pnl = useApi<PNL>(sub !== 'trial-balance' && from && to ? `/api/companies/${id}/reports/profit-and-loss?from=${from}&to=${to}` : null);
 
   const dr = tb.data?.rows.reduce((s, r) => s + toMinor(r.debit), 0n) ?? 0n;
   const cr = tb.data?.rows.reduce((s, r) => s + toMinor(r.credit), 0n) ?? 0n;
   const ccSum = pnl.data?.byCostCentre.reduce((s, r) => s + toMinor(r.profit), 0n);
 
+  if (sub === 'aged-receivables' || sub === 'aged-payables') return <Aged books={books} side={sub === 'aged-receivables' ? 'sales' : 'purchases'} />;
+  const byCc = sub === 'cost-centres';
   return (
     <>
-      <div className="card">
+      {sub === 'trial-balance' && <div className="card">
         <div className="actions" style={{ marginBottom: 8 }}>
           <h2 style={{ margin: 0 }}>{t('reports.tb')} ({books.company.currency})</h2>
           <span className="spacer" />
@@ -50,11 +53,11 @@ export function Reports({ books }: { books: CompanyBooks }) {
             <div className={dr === cr ? 'mut small' : 'bad small'}>{dr === cr ? t('reports.balances') : t('reports.outOfBalance')}</div>
           </div>
         )}
-      </div>
+      </div>}
 
-      <div className="card">
+      {sub !== 'trial-balance' && <div className="card">
         <div className="actions" style={{ marginBottom: 8 }}>
-          <h2 style={{ margin: 0 }}>{t('reports.pnl')}</h2>
+          <h2 style={{ margin: 0 }}>{byCc ? t('reports.byCostCentre') : t('reports.pnl')}</h2>
           <span className="spacer" />
           <label className="f">{t('from')}<input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
           <label className="f">{t('to')}<input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
@@ -62,15 +65,14 @@ export function Reports({ books }: { books: CompanyBooks }) {
         {pnl.error && <ErrorNote error={pnl.error} onRetry={pnl.reload} />}
         {!pnl.data ? <Loading /> : (
           <>
-            <table>
+            {!byCc && <table>
               <tbody>
                 <tr><td>{t('reports.income')}</td><td className="num ltr">{fmt(pnl.data.total.income)}</td></tr>
                 <tr><td>{t('reports.expenses')}</td><td className="num ltr">{fmt(pnl.data.total.expense)}</td></tr>
                 <tr className="total"><td>{t('reports.netProfit')}</td><td className="num ltr">{fmt(pnl.data.total.profit)} {books.company.currency}</td></tr>
               </tbody>
-            </table>
-            <h2 style={{ fontSize: 15, margin: '16px 0 6px' }}>{t('reports.byCostCentre')}</h2>
-            {pnl.data.byCostCentre.length === 0 ? <div className="mut">{t('reports.noActivity')}</div> : (
+            </table>}
+            {byCc && (pnl.data.byCostCentre.length === 0 ? <div className="mut">{t('reports.noActivity')}</div> : (
               <div className="wrap">
                 <table>
                   <thead><tr><th>{t('journal.costCentre')}</th><th className="num">{t('reports.income')}</th><th className="num">{t('reports.expenses')}</th><th className="num">{t('reports.netProfit')}</th></tr></thead>
@@ -87,10 +89,10 @@ export function Reports({ books }: { books: CompanyBooks }) {
                 </table>
                 {ccSum === toMinor(pnl.data.total.profit) && <div className="mut small">{t('reports.sumCheck')}</div>}
               </div>
-            )}
+            ))}
           </>
         )}
-      </div>
+      </div>}
     </>
   );
 }

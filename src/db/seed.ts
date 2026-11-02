@@ -10,6 +10,8 @@ import type { Db } from './session.js';
 import { fromMinor } from '../money.js';
 import { vatForLine } from '../vat/vat.js';
 import { CHART_TEMPLATE } from '../books/chartTemplate.js';
+import { createCredit, issueDocument, recordPayment, saveContact, saveDraft, setQuotationStatus } from '../books/documentsService.js';
+import type { DocType } from '../books/documents.js';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_USERS } from './demoData.js';
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
@@ -57,26 +59,62 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       const partner = userIds['omar@firm.example']!;
       const acct = Object.fromEntries((await client.query('SELECT code, id FROM accounts WHERE company_id = $1', [id])).rows.map((r) => [r.code, r.id]));
       const cc = Object.fromEntries((await client.query('SELECT name, id FROM cost_centres WHERE company_id = $1', [id])).rows.map((r) => [r.name, r.id]));
-      const vat = (net: number) => fromMinor(vatForLine(BigInt(net) * 100n, c.vatRate));
       const gross = (net: number) => fromMinor(BigInt(net) * 100n + vatForLine(BigInt(net) * 100n, c.vatRate));
       const L = (code: string, debit?: string | number, credit?: string | number, centre?: string): LineInput => ({
         accountId: acct[code], debit: debit === undefined ? undefined : String(debit), credit: credit === undefined ? undefined : String(credit),
         costCentreId: centre ? cc[centre] : null });
       const post = (date: string, memo: string, lines: LineInput[]) => postEntry(client as unknown as Db, { companyId: id, entryDate: date, memo, lines });
 
+      const db = client as unknown as Db;
       await client.query('BEGIN');
       await asUser(poster);
       await post(daysAgo(120), 'Opening balance', [L('1000', '50000.00'), L('3000', undefined, '50000.00')]);
-      await post(daysAgo(95), `${c.invoicePrefix}0001 · Gulf Steel`, [L('1100', gross(10000)), L('4000', undefined, '10000.00', 'Head office'), L('2100', undefined, vat(10000))]);
-      await post(daysAgo(80), 'Receipt for ' + `${c.invoicePrefix}0001`, [L('1000', gross(10000)), L('1100', undefined, gross(10000))]);
       await post(daysAgo(60), 'Rent · head office', [L('5100', '4000.00', undefined, 'Head office'), L('1000', undefined, '4000.00')]);
-      await post(daysAgo(34), `${c.invoicePrefix}0002 · Al Faisal Contracting`, [L('1100', gross(7250)), L('4000', undefined, '5000.00', 'Head office'), L('4000', undefined, '2250.00', 'Branch 1'), L('2100', undefined, vat(7250))]);
-      await post(daysAgo(30), 'Bill · Riyadh Wholesale', [L('5000', '3200.00', undefined), L('1200', vat(3200)), L('2000', undefined, gross(3200))]);
       await post(daysAgo(25), 'Salaries', [L('5200', '6000.00', undefined, 'Head office'), L('5200', '2500.00', undefined, 'Branch 1'), L('1000', undefined, '8500.00')]);
-      const wrong = await post(daysAgo(12), 'STC bill payment', [L('5300', '420.00'), L('1000', undefined, '420.00')]);
-      await reverseEntry(client as unknown as Db, wrong, daysAgo(11), 'Reversal: STC bill posted twice');
-      await post(daysAgo(6), `${c.invoicePrefix}0003 · Cash sale`, [L('1000', gross(1800)), L('4000', undefined, '1800.00', 'Project A'), L('2100', undefined, vat(1800))]);
-      await post(daysAgo(1), 'Utilities', [L('5300', '650.00'), L('1000', undefined, '650.00')]);
+      const wrong = await post(daysAgo(12), 'Office water delivery', [L('5400', '180.00'), L('1000', undefined, '180.00')]);
+      await reverseEntry(db, wrong, daysAgo(11), 'Reversal: posted twice');
+
+      // Customers and suppliers (fictional).
+      const sa = c.country === 'SA';
+      const vatNo = (n: number) => (sa ? `3${String(n).padStart(13, '0')}3` : String(100000000000000 + n));
+      const cust = async (name: string, nameAr: string, vatN?: number, terms = 30) =>
+        saveContact(db, id, { isCustomer: true, name, nameAr, country: c.country, vatNumber: vatN ? vatNo(vatN) : undefined, paymentTermsDays: terms, city: c.city });
+      const supp = async (name: string, nameAr: string, vatN?: number, terms = 15) =>
+        saveContact(db, id, { isSupplier: true, name, nameAr, country: c.country, vatNumber: vatN ? vatNo(vatN) : undefined, paymentTermsDays: terms, city: c.city });
+      const gulf = await cust('Gulf Steel Trading', 'الخليج للحديد', 1234567);
+      const faisal = await cust('Al Faisal Contracting', 'الفيصل للمقاولات', 7654321, 30);
+      const walkIn = await cust('Walk-in customer', 'عميل نقدي', undefined, 0);
+      const najd = await supp('Najd Wholesale', 'نجد للجملة', 2223334);
+      const telecom = await supp('Desert Telecom', 'الصحراء للاتصالات', 5556667);
+
+      const SL = (description: string, quantity: string, unitPrice: string, centre?: string, code = '4000') =>
+        ({ description, quantity, unitPrice, accountId: acct[code], costCentreId: centre ? cc[centre] : null, vatCode: 'standard' as const });
+      const doc = async (type: DocType, contactId: string, issued: number, dueIn: number | null, lines: ReturnType<typeof SL>[], opts: { reference?: string; issue?: boolean } = {}) => {
+        const did = await saveDraft(db, id, { type, contactId, issueDate: daysAgo(issued), dueDate: dueIn === null ? null : daysAgo(issued - dueIn), reference: opts.reference, lines });
+        if (opts.issue !== false) await issueDocument(db, did);
+        return did;
+      };
+      const pay = (direction: 'received' | 'made', contactId: string, ago: number, amount: string, accountCode: string, allocations: { documentId: string; amount: string }[], method = 'bank_transfer') =>
+        recordPayment(db, id, { direction, contactId, date: daysAgo(ago), amount, accountId: acct[accountCode], method, allocations });
+
+      const inv1 = await doc('invoice', gulf, 95, 30, [SL('Steel beams 12m', '20', '500.00', 'Head office')], { reference: 'PO-4471' });
+      await pay('received', gulf, 80, gross(10000), '1000', [{ documentId: inv1, amount: gross(10000) }]);
+      const inv2 = await doc('invoice', faisal, 34, 30, [SL('Rebar 16mm (tonnes)', '2', '2500.00', 'Head office'), SL('Delivery and offloading', '1', '2250.00', 'Branch 1')]);
+      await pay('received', faisal, 12, '3000.00', '1000', [{ documentId: inv2, amount: '3000.00' }]);
+      const cn = await createCredit(db, inv2);
+      await saveDraft(db, id, { contactId: faisal, issueDate: daysAgo(10), reference: undefined, lines: [SL('Delivery and offloading (partial refund)', '1', '250.00', 'Branch 1')] }, cn);
+      await issueDocument(db, cn);
+      const inv3 = await doc('invoice', walkIn, 6, 0, [SL('Cut-to-size service', '3', '600.00', 'Project A')]);
+      await pay('received', walkIn, 6, gross(1800), '1010', [{ documentId: inv3, amount: gross(1800) }], 'cash');
+      await doc('invoice', gulf, 2, 30, [SL('Steel plates 6mm', '15', '300.00', 'Head office')], { reference: 'PO-4520' });
+      await doc('invoice', gulf, 0, 30, [SL('Angle iron 50x50', '40', '45.00', 'Head office')], { issue: false });
+      const q = await doc('quotation', faisal, 10, 30, [SL('Structural steel package', '1', '12000.00', 'Head office')], { issue: false });
+      await setQuotationStatus(db, q, 'sent');
+
+      const bill1 = await doc('bill', najd, 30, 15, [SL('Steel stock purchase', '1', '3200.00', undefined, '5000')], { reference: 'NW-88102' });
+      await pay('made', najd, 20, gross(3200), '1000', [{ documentId: bill1, amount: gross(3200) }]);
+      await doc('bill', telecom, 10, 15, [SL('Internet and phone lines', '1', '420.00', undefined, '5300')], { reference: 'DT-5531' });
+      await post(daysAgo(1), 'Electricity', [L('5300', '650.00'), L('1000', undefined, '650.00')]);
       await client.query('COMMIT');
 
       // The partner locks every month that ended more than a month ago.

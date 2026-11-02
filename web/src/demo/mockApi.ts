@@ -7,6 +7,10 @@ import { toMinor, fromMinor } from '../../../src/money.ts';
 import { vatForLine } from '../../../src/vat/vat.ts';
 import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../../../src/books/chartTemplate.ts';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_USERS } from '../../../src/db/demoData.ts';
+import {
+  addDays, AGE_BUCKETS, ageBucket, documentTotals, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, sideOf,
+  type AgeBucket, type Direction, type DocType, type LineInput, type PricedLine,
+} from '../../../src/books/documents.ts';
 
 type Role = 'partner' | 'reviewer' | 'staff_accountant' | 'client_accountant' | 'client_viewer';
 interface User {
@@ -19,7 +23,7 @@ interface Company {
   invoicePrefix: string; paymentTermsDays: number; status: 'active' | 'suspended';
   fields: Record<string, string>;   // the rest of the registration form, as entered
 }
-interface Account { id: string; companyId: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean }
+interface Account { id: string; companyId: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank: boolean }
 interface CostCentre { id: string; companyId: string; name: string; nameAr: string | null; kind: string }
 interface Period { companyId: string; startDate: string; endDate: string; lockedAt: string | null }
 interface Line { id: string; accountId: string; costCentreId: string | null; debit: bigint; credit: bigint }
@@ -101,7 +105,7 @@ function reverse(userId: string, entryId: string, date: string): string {
 
 function setupBooks(companyId: string) {
   for (const a of CHART_TEMPLATE) {
-    db.accounts.push({ id: uid(), companyId, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, costCentreRequired: Boolean(a.costCentreRequired) });
+    db.accounts.push({ id: uid(), companyId, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, costCentreRequired: Boolean(a.costCentreRequired), isBank: Boolean(a.bank) });
   }
   db.costCentres.push({ id: uid(), companyId, name: 'Head office', nameAr: 'المكتب الرئيسي', kind: 'branch' });
   const y = new Date().getFullYear();
@@ -130,29 +134,21 @@ function seed() {
     const acct = (code: string) => db.accounts.find((a) => a.companyId === id && a.code === code)!.id;
     const cc = (name: string) => db.costCentres.find((x) => x.companyId === id && x.name === name)!.id;
     const net = (n: number) => BigInt(n) * 100n;
-    const vat = (n: number) => vatForLine(net(n), c.vatRate);
     const L = (code: string, debit: bigint, credit: bigint, centre?: string) => ({ accountId: acct(code), debit, credit, costCentreId: centre ? cc(centre) : null });
     const poster = userByEmail(DEMO_USERS.find((u) => u.companies.includes(c.key) && (u.role === 'client_accountant' || u.role === 'staff_accountant'))!.email).id;
     const p = (days: number, memo: string, lines: Omit<Line, 'id'>[]) => post(poster, id, daysAgo(days), memo, lines);
-    const pre = c.invoicePrefix;
     p(120, 'Opening balance', [L('1000', net(50000), 0n), L('3000', 0n, net(50000))]);
-    p(95, `${pre}0001 · Gulf Steel`, [L('1100', net(10000) + vat(10000), 0n), L('4000', 0n, net(10000), 'Head office'), L('2100', 0n, vat(10000))]);
-    p(80, `Receipt for ${pre}0001`, [L('1000', net(10000) + vat(10000), 0n), L('1100', 0n, net(10000) + vat(10000))]);
     p(60, 'Rent · head office', [L('5100', net(4000), 0n, 'Head office'), L('1000', 0n, net(4000))]);
-    p(34, `${pre}0002 · Al Faisal Contracting`, [L('1100', net(7250) + vat(7250), 0n), L('4000', 0n, net(5000), 'Head office'), L('4000', 0n, net(2250), 'Branch 1'), L('2100', 0n, vat(7250))]);
-    p(30, 'Bill · Riyadh Wholesale', [L('5000', net(3200), 0n), L('1200', vat(3200), 0n), L('2000', 0n, net(3200) + vat(3200))]);
     p(25, 'Salaries', [L('5200', net(6000), 0n, 'Head office'), L('5200', net(2500), 0n, 'Branch 1'), L('1000', 0n, net(8500))]);
-    const wrong = p(12, 'STC bill payment', [L('5300', net(420), 0n), L('1000', 0n, net(420))]);
+    const wrong = p(12, 'Office water delivery', [L('5400', net(180), 0n), L('1000', 0n, net(180))]);
     reverse(poster, wrong, daysAgo(11));
-    db.entries.at(-1)!.memo = 'Reversal: STC bill posted twice';
-    p(6, `${pre}0003 · Cash sale`, [L('1000', net(1800) + vat(1800), 0n), L('4000', 0n, net(1800), 'Project A'), L('2100', 0n, vat(1800))]);
-    p(1, 'Utilities', [L('5300', net(650), 0n), L('1000', 0n, net(650))]);
+    db.entries.at(-1)!.memo = 'Reversal: posted twice';
+    seedSales(id, poster, c);
+    p(1, 'Electricity', [L('5300', net(650), 0n), L('1000', 0n, net(650))]);
     const cutoff = new Date(); cutoff.setDate(1); cutoff.setMonth(cutoff.getMonth() - 1);
     for (const per of db.periods) if (per.companyId === id && per.endDate < iso(cutoff)) per.lockedAt = new Date().toISOString();
   }
 }
-seed();
-db.activity.push({ id: uid(), at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });
 
 // ------------------------------------------------------------------ helpers for responses
 const s = fromMinor;
@@ -187,6 +183,237 @@ function pnl(companyId: string, from: string, to: string) {
   return rows;
 }
 const companyView = (c: Company) => ({ id: c.id, name: c.name, nameAr: c.nameAr, country: c.country, currency: c.currency, vatRate: c.vatRate });
+
+// ------------------------------------------------------------------ sales and purchases (same rules as db/migrations/0005)
+interface MContact {
+  id: string; companyId: string; isCustomer: boolean; isSupplier: boolean; name: string; nameAr: string | null; vatNumber: string | null;
+  crNumber: string | null; email: string | null; phone: string | null; address: string | null; city: string | null; country: string | null;
+  paymentTermsDays: number | null; status: 'active' | 'archived';
+}
+interface MDoc {
+  id: string; companyId: string; type: DocType; status: string; number: string | null; contactId: string; issueDate: string; dueDate: string | null;
+  reference: string | null; notes: string | null; originalId: string | null; journalEntryId: string | null; lines: (PricedLine & { id: string })[]; createdAt: string;
+}
+interface MPayment {
+  id: string; companyId: string; direction: Direction; number: string; contactId: string; date: string; amount: bigint; accountId: string;
+  method: string; reference: string | null; journalEntryId: string; voidedAt: string | null; allocations: { documentId: string; amount: bigint }[]; createdAt: string;
+}
+const sdb = { contacts: [] as MContact[], docs: [] as MDoc[], payments: [] as MPayment[], seqs: new Map<string, number>() };
+
+function canPostIn(companyId: string) {
+  const role = roleOf(session, companyId);
+  if (!role) fail(404, 'Not found.', 'err.notFound');
+  if (!POSTING.includes(role!)) fail(403, 'Your role does not allow this.', 'err.forbidden');
+}
+function nextNo(companyId: string, seq: string, prefix: string) {
+  const k = `${companyId}:${seq}`;
+  const n = sdb.seqs.get(k) ?? 1;
+  sdb.seqs.set(k, n + 1);
+  return formatNumber(prefix, n);
+}
+const sysAccts = (companyId: string) => {
+  const a = (code: string) => db.accounts.find((x) => x.companyId === companyId && x.code === code)!.id;
+  return { receivables: a('1100'), payables: a('2000'), outputVat: a('2100'), inputVat: a('1200') };
+};
+const docTotals = (d: MDoc) => documentTotals(d.lines);
+function amountDue(d: MDoc): bigint {
+  if (!['invoice', 'bill'].includes(d.type) || d.status !== 'issued') return 0n;
+  const paid = sdb.payments.filter((p) => !p.voidedAt).flatMap((p) => p.allocations).filter((a) => a.documentId === d.id).reduce((s, a) => s + a.amount, 0n);
+  const credited = sdb.docs.filter((c) => c.originalId === d.id && isCredit(c.type) && c.status === 'issued').reduce((s, c) => s + docTotals(c).gross, 0n);
+  return docTotals(d).gross - paid - credited;
+}
+function stateOfDoc(d: MDoc): string {
+  if (d.type === 'quotation' || d.status === 'draft' || isCredit(d.type)) return d.status;
+  const due = amountDue(d);
+  if (due < 0n) return 'credit';
+  if (due === 0n) return 'paid';
+  if (d.dueDate && d.dueDate < today()) return 'overdue';
+  return due < docTotals(d).gross ? 'partly_paid' : 'unpaid';
+}
+function docRow(d: MDoc) {
+  const c = sdb.contacts.find((x) => x.id === d.contactId)!;
+  const t = docTotals(d);
+  return { id: d.id, companyId: d.companyId, type: d.type, status: d.status, state: stateOfDoc(d), number: d.number, contactId: d.contactId, contactName: c.name,
+    contactNameAr: c.nameAr, issueDate: d.issueDate, dueDate: d.dueDate, reference: d.reference, notes: d.notes, originalId: d.originalId,
+    journalEntryId: d.journalEntryId, netTotal: s(t.net), vatTotal: s(t.vat), grossTotal: s(t.gross), amountDue: s(amountDue(d)), createdAt: d.createdAt };
+}
+function saveContactM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId);
+  const t = (k: string) => (typeof b[k] === 'string' && (b[k] as string).trim() ? (b[k] as string).trim() : null);
+  if (!t('name')) fail(400, 'Enter the name.', 'err.contactName');
+  if (!b.isCustomer && !b.isSupplier) fail(400, 'Choose customer, supplier or both.', 'err.contactRole');
+  const country = t('country')?.toUpperCase() ?? null, vat = t('vatNumber')?.replace(/\s/g, '') ?? null;
+  if (vat && country === 'SA' && !/^3\d{13}3$/.test(vat)) fail(400, 'A Saudi VAT number has 15 digits, starting and ending with 3.', 'err.saVat');
+  if (vat && country === 'AE' && !/^\d{15}$/.test(vat)) fail(400, 'A UAE TRN has 15 digits.', 'err.aeTrn');
+  const terms = b.paymentTermsDays === '' || b.paymentTermsDays == null ? null : Number(b.paymentTermsDays);
+  const v: Omit<MContact, 'id' | 'companyId'> = { isCustomer: Boolean(b.isCustomer), isSupplier: Boolean(b.isSupplier), name: t('name')!, nameAr: t('nameAr'),
+    vatNumber: vat, crNumber: t('crNumber'), email: t('email'), phone: t('phone'), address: t('address'), city: t('city'), country, paymentTermsDays: terms,
+    status: b.status === 'archived' ? 'archived' : 'active' };
+  if (id) { Object.assign(sdb.contacts.find((x) => x.id === id) ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
+  const nid = uid(); sdb.contacts.push({ id: nid, companyId, ...v }); return nid;
+}
+function priceLinesM(companyId: string, side: 'sales' | 'purchases', lines: LineInput[] = []) {
+  const rate = db.companies.find((c) => c.id === companyId)!.vatRate;
+  return lines.map((l, i) => {
+    const a = db.accounts.find((x) => x.id === l.accountId && x.companyId === companyId);
+    if (!String(l.description ?? '').trim()) fail(400, `Line ${i + 1}: enter a description.`, 'err.lineDescription');
+    if (!a) fail(400, `Line ${i + 1}: choose an account.`, 'err.lineAccount');
+    if (side === 'sales' && a!.type !== 'income') fail(400, 'Sales lines use an income account.', 'err.salesAccount');
+    if (side === 'purchases' && !['expense', 'asset'].includes(a!.type)) fail(400, 'Purchase lines use an expense or asset account.', 'err.purchaseAccount');
+    try { return { ...priceLine({ ...l, description: String(l.description).trim() }, rate), id: uid() }; }
+    catch { return fail(400, `Line ${i + 1}: check the quantity and price.`, 'err.lineNumbers'); }
+  });
+}
+function saveDraftM(companyId: string, b: Record<string, unknown>, id?: string): string {
+  canPostIn(companyId);
+  const existing = id ? sdb.docs.find((d) => d.id === id) ?? fail(404, 'Not found.', 'err.notFound') : undefined;
+  if (existing && existing.status !== 'draft') fail(400, 'Only drafts can be changed.', 'err.notDraft');
+  const type = (existing?.type ?? b.type) as DocType;
+  if (!['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit'].includes(type)) fail(400, 'Choose the document type.', 'err.format');
+  const contact = sdb.contacts.find((c) => c.id === b.contactId && c.companyId === companyId);
+  if (!contact) fail(400, 'Choose the customer or supplier.', 'err.contact');
+  if (sideOf(type) === 'sales' ? !contact!.isCustomer : !contact!.isSupplier) fail(400, 'Choose a customer or supplier of this company.', 'err.contact');
+  const issueDate = String(b.issueDate ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) fail(400, 'Enter the date.', 'err.date');
+  const dueDate = b.dueDate ? String(b.dueDate) : null;
+  if (dueDate && dueDate < issueDate) fail(400, 'The due date cannot be before the document date.', 'err.dueDate');
+  const lines = priceLinesM(companyId, sideOf(type), b.lines as LineInput[]);
+  const head = { contactId: contact!.id, issueDate, dueDate, reference: (b.reference as string)?.trim() || null, notes: (b.notes as string)?.trim() || null, lines };
+  if (existing) { Object.assign(existing, head); return existing.id; }
+  const nid = uid();
+  sdb.docs.push({ id: nid, companyId, type, status: 'draft', number: null, originalId: (b.originalId as string) ?? null, journalEntryId: null, createdAt: new Date().toISOString(), ...head });
+  return nid;
+}
+const docOf = (id: string) => sdb.docs.find((d) => d.id === id && roleOf(session, d.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function issueM(id: string) {
+  const d = docOf(id);
+  canPostIn(d.companyId);
+  if (d.status !== 'draft') fail(400, 'This document has already been issued.', 'err.alreadyIssued');
+  if (!d.lines.length) fail(400, 'Add at least one line.', 'err.noLines');
+  if (d.lines.some((l) => !l.costCentreId && db.accounts.find((a) => a.id === l.accountId)?.costCentreRequired))
+    fail(400, 'A cost centre is required for one of the accounts used.', 'err.costCentreRequired');
+  if (isCredit(d.type)) {
+    const o = sdb.docs.find((x) => x.id === d.originalId)!;
+    const before = sdb.docs.filter((x) => x.originalId === o.id && x.type === d.type && x.status === 'issued').reduce((sum, x) => sum + docTotals(x).gross, 0n);
+    if (before + docTotals(d).gross > docTotals(o).gross) fail(400, 'A credit note cannot be more than what is left on the original.', 'err.creditTooMuch');
+  }
+  const company = db.companies.find((c) => c.id === d.companyId)!;
+  const seqKey = `${d.companyId}:${d.type}`;
+  const savedSeq = sdb.seqs.get(seqKey);
+  const number = nextNo(d.companyId, d.type, numberPrefix(d.type, company.invoicePrefix));
+  try {
+    const c = sdb.contacts.find((x) => x.id === d.contactId)!;
+    d.journalEntryId = post(session!, d.companyId, d.issueDate, `${number} · ${c.name}`,
+      postingFor(d.type, d.lines, sysAccts(d.companyId)).map((l) => ({ accountId: l.accountId, costCentreId: l.costCentreId ?? null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
+  } catch (e) { if (savedSeq === undefined) sdb.seqs.delete(seqKey); else sdb.seqs.set(seqKey, savedSeq); throw e; }   // no gap in numbers
+  d.number = number; d.status = 'issued';
+}
+function quoteStatusM(id: string, status: string) {
+  const d = docOf(id); canPostIn(d.companyId);
+  if (d.type !== 'quotation') fail(400, 'Only quotations have this status.', 'err.format');
+  const ok = [['draft', 'sent'], ['draft', 'accepted'], ['draft', 'declined'], ['sent', 'accepted'], ['sent', 'declined'], ['declined', 'accepted']].some(([a, b]) => a === d.status && b === status);
+  if (!ok) fail(400, 'This quotation cannot move to that status.', 'err.quoteStatus');
+  if (!d.number) d.number = nextNo(d.companyId, 'quotation', 'QT-');
+  d.status = status;
+}
+const copyLines = (d: MDoc) => d.lines.map(({ description, quantity, unitPrice, accountId, costCentreId, vatCode }) => ({ description, quantity, unitPrice, accountId, costCentreId, vatCode }));
+function convertM(id: string) {
+  const q = docOf(id); canPostIn(q.companyId);
+  if (q.type !== 'quotation' || !['sent', 'accepted'].includes(q.status)) fail(400, 'Send or accept the quotation first.', 'err.quoteNotSent');
+  const terms = sdb.contacts.find((c) => c.id === q.contactId)!.paymentTermsDays ?? 30;
+  const nid = saveDraftM(q.companyId, { type: 'invoice', contactId: q.contactId, issueDate: today(), dueDate: addDays(today(), terms), reference: q.number, notes: q.notes, originalId: q.id, lines: copyLines(q) });
+  q.status = 'invoiced';
+  return nid;
+}
+function creditM(id: string) {
+  const o = docOf(id); canPostIn(o.companyId);
+  if (!['invoice', 'bill'].includes(o.type) || o.status !== 'issued') fail(400, 'Only issued invoices and bills can be credited.', 'err.notIssued');
+  return saveDraftM(o.companyId, { type: o.type === 'invoice' ? 'credit_note' : 'supplier_credit', contactId: o.contactId, issueDate: today(), reference: o.number, originalId: o.id, lines: copyLines(o) });
+}
+function payM(companyId: string, b: Record<string, unknown>) {
+  canPostIn(companyId);
+  const direction = b.direction === 'made' ? 'made' : 'received';
+  const contact = sdb.contacts.find((c) => c.id === b.contactId && c.companyId === companyId && (direction === 'received' ? c.isCustomer : c.isSupplier));
+  if (!contact) fail(400, 'Choose the customer or supplier.', 'err.contact');
+  const bank = db.accounts.find((a) => a.id === b.accountId && a.companyId === companyId && a.isBank);
+  if (!bank) fail(400, 'Choose the bank or cash account.', 'err.bankAccount');
+  let amount: bigint; let allocs: { documentId: string; amount: bigint }[];
+  try {
+    amount = toMinor(String(b.amount ?? '').replace(/,/g, ''));
+    allocs = ((b.allocations as { documentId: string; amount: string }[]) ?? []).map((a) => ({ documentId: a.documentId, amount: toMinor(String(a.amount)) }));
+  } catch { return fail(400, 'Amounts must be numbers with at most 2 decimals.', 'err.amountFormat'); }
+  if (amount <= 0n) fail(400, 'Enter the amount.', 'err.amount');
+  if (allocs.reduce((x, a) => x + a.amount, 0n) > amount) fail(400, 'The amounts settled are more than the payment.', 'err.overAllocated');
+  for (const a of allocs) {
+    const d = sdb.docs.find((x) => x.id === a.documentId);
+    if (!d || d.contactId !== contact!.id || d.status !== 'issued' || d.type !== (direction === 'received' ? 'invoice' : 'bill'))
+      fail(400, 'A payment can only settle issued invoices (or bills) of the same customer (or supplier).', 'err.contact');
+    if (a.amount <= 0n || a.amount > amountDue(d!)) fail(400, 'This is more than is due on the invoice.', 'err.overDue');
+  }
+  const date = String(b.date ?? '');
+  const id = uid();
+  const seq = direction === 'received' ? 'receipt' : 'payment';
+  const number = nextNo(companyId, seq, numberPrefix(seq, ''));
+  const entry = postingForPayment(direction, amount, bank!.id, sysAccts(companyId));
+  const je = post(session!, companyId, date, `${number} · ${contact!.name}`, entry.map((l) => ({ accountId: l.accountId, costCentreId: null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
+  sdb.payments.push({ id, companyId, direction, number, contactId: contact!.id, date, amount, accountId: bank!.id, method: String(b.method ?? 'bank_transfer'),
+    reference: (b.reference as string)?.trim() || null, journalEntryId: je, voidedAt: null, allocations: allocs, createdAt: new Date().toISOString() });
+  return id;
+}
+const payOf = (id: string) => sdb.payments.find((p) => p.id === id && roleOf(session, p.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function payRow(p: MPayment) {
+  const a = db.accounts.find((x) => x.id === p.accountId)!;
+  return { id: p.id, direction: p.direction, number: p.number, contactId: p.contactId, contactName: sdb.contacts.find((c) => c.id === p.contactId)!.name,
+    date: p.date, amount: s(p.amount), accountId: a.id, accountName: a.name, accountNameAr: a.nameAr, method: p.method, reference: p.reference,
+    voidedAt: p.voidedAt, unallocated: s(p.amount - p.allocations.reduce((x, y) => x + y.amount, 0n)), createdAt: p.createdAt };
+}
+function contactRow(c: MContact) {
+  const docs = sdb.docs.filter((d) => d.contactId === c.id && d.status === 'issued' && (c.isCustomer ? d.type === 'invoice' : d.type === 'bill'));
+  return { ...c, balanceDue: s(docs.reduce((x, d) => x + amountDue(d), 0n)),
+    overdue: s(docs.filter((d) => d.dueDate && d.dueDate < today() && amountDue(d) > 0n).reduce((x, d) => x + amountDue(d), 0n)) };
+}
+const inCo = (id: string) => { member(id); return id; };
+
+function seedSales(companyId: string, poster: string, c: { country: string; city: string; vatRate: string }) {
+  const prev = session; session = poster;
+  const acct = (code: string) => db.accounts.find((a) => a.companyId === companyId && a.code === code)!.id;
+  const cc = (name: string) => db.costCentres.find((x) => x.companyId === companyId && x.name === name)!.id;
+  const vatNo = (n: number) => (c.country === 'SA' ? `3${String(n).padStart(13, '0')}3` : String(100000000000000 + n));
+  const contact = (cust: boolean, name: string, nameAr: string, vatN?: number, terms = 30) =>
+    saveContactM(companyId, { isCustomer: cust, isSupplier: !cust, name, nameAr, country: c.country, vatNumber: vatN ? vatNo(vatN) : '', paymentTermsDays: terms, city: c.city });
+  const gulf = contact(true, 'Gulf Steel Trading', 'الخليج للحديد', 1234567);
+  const faisal = contact(true, 'Al Faisal Contracting', 'الفيصل للمقاولات', 7654321);
+  const walkIn = contact(true, 'Walk-in customer', 'عميل نقدي', undefined, 0);
+  const najd = contact(false, 'Najd Wholesale', 'نجد للجملة', 2223334, 15);
+  const telecom = contact(false, 'Desert Telecom', 'الصحراء للاتصالات', 5556667, 15);
+  const SL = (description: string, quantity: string, unitPrice: string, centre?: string, code = '4000') =>
+    ({ description, quantity, unitPrice, accountId: acct(code), costCentreId: centre ? cc(centre) : null, vatCode: 'standard' });
+  const doc = (type: DocType, contactId: string, ago: number, dueIn: number | null, lines: object[], reference?: string, issue = true) => {
+    const id = saveDraftM(companyId, { type, contactId, issueDate: daysAgo(ago), dueDate: dueIn === null ? null : daysAgo(ago - dueIn), reference, lines });
+    if (issue) issueM(id);
+    return id;
+  };
+  const grossOf = (id: string) => s(docTotals(sdb.docs.find((d) => d.id === id)!).gross);
+  const pay = (direction: Direction, contactId: string, ago: number, docId: string, amount: string, code = '1000', method = 'bank_transfer') =>
+    payM(companyId, { direction, contactId, date: daysAgo(ago), amount, accountId: acct(code), method, allocations: [{ documentId: docId, amount }] });
+  const inv1 = doc('invoice', gulf, 95, 30, [SL('Steel beams 12m', '20', '500.00', 'Head office')], 'PO-4471');
+  pay('received', gulf, 80, inv1, grossOf(inv1));
+  const inv2 = doc('invoice', faisal, 34, 30, [SL('Rebar 16mm (tonnes)', '2', '2500.00', 'Head office'), SL('Delivery and offloading', '1', '2250.00', 'Branch 1')]);
+  pay('received', faisal, 12, inv2, '3000.00');
+  const cn = creditM(inv2);
+  saveDraftM(companyId, { contactId: faisal, issueDate: daysAgo(10), reference: sdb.docs.find((d) => d.id === inv2)!.number, lines: [SL('Delivery and offloading (partial refund)', '1', '250.00', 'Branch 1')] }, cn);
+  issueM(cn);
+  const inv3 = doc('invoice', walkIn, 6, 0, [SL('Cut-to-size service', '3', '600.00', 'Project A')]);
+  pay('received', walkIn, 6, inv3, grossOf(inv3), '1010', 'cash');
+  doc('invoice', gulf, 2, 30, [SL('Steel plates 6mm', '15', '300.00', 'Head office')], 'PO-4520');
+  doc('invoice', gulf, 0, 30, [SL('Angle iron 50x50', '40', '45.00', 'Head office')], undefined, false);
+  const q = doc('quotation', faisal, 10, 30, [SL('Structural steel package', '1', '12000.00', 'Head office')], undefined, false);
+  quoteStatusM(q, 'sent');
+  const bill1 = doc('bill', najd, 30, 15, [SL('Steel stock purchase', '1', '3200.00', undefined, '5000')], 'NW-88102');
+  pay('made', najd, 20, bill1, grossOf(bill1));
+  doc('bill', telecom, 10, 15, [SL('Internet and phone lines', '1', '420.00', undefined, '5300')], 'DT-5531');
+  session = prev;
+}
 
 // ------------------------------------------------------------------ admin helpers
 const company = (id: string) => db.companies.find((c) => c.id === id) ?? fail(404, 'Not found.', 'err.notFound');
@@ -259,7 +486,7 @@ const routes: [string, RegExp, Handler][] = [
     const { role } = member(m[1]!);
     const c = db.companies.find((x) => x.id === m[1])!;
     return {
-      company: { ...companyView(c), vatStatus: c.vatStatus, vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city },
+      company: { ...companyView(c), vatStatus: c.vatStatus, vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: c.paymentTermsDays },
       role, canPost: POSTING.includes(role), canLock: role === 'partner',
       accounts: db.accounts.filter((a) => a.companyId === c.id).sort((a, b) => a.code.localeCompare(b.code)),
       costCentres: db.costCentres.filter((x) => x.companyId === c.id).sort((a, b) => a.name.localeCompare(b.name)),
@@ -339,6 +566,89 @@ const routes: [string, RegExp, Handler][] = [
     return { from, to, total: { income: s(income), expense: s(expense), profit: s(income - expense) }, byCostCentre };
   }],
   ['GET', /^\/api\/config$/, () => ({ demoLogins: true, demoPassword: DEMO_PASSWORD, minPassword: 10, publicUrl: '' })],
+  // ---------------------------------------------------------------- sales and purchases
+  ['GET', /^\/api\/companies\/([\w-]+)\/contacts$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const role = q.get('role') === 'supplier' ? 'isSupplier' : 'isCustomer'; const needle = (q.get('q') ?? '').trim().toLowerCase();
+    return sdb.contacts.filter((c) => c.companyId === id && c[role] && (!needle || [c.name, c.nameAr, c.vatNumber].join(' ').toLowerCase().includes(needle)))
+      .sort((a, b) => a.status.localeCompare(b.status) || a.name.localeCompare(b.name)).map(contactRow);
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/contacts$/, (m, b) => ({ id: saveContactM(inCo(m[1]!), b ?? {}) })],
+  ['GET', /^\/api\/contacts\/([\w-]+)$/, (m) => { const c = sdb.contacts.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); return { ...contactRow(c) }; }],
+  ['POST', /^\/api\/contacts\/([\w-]+)$/, (m, b) => { const c = sdb.contacts.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); return { id: saveContactM(c.companyId, b ?? {}, c.id) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/documents$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const type = q.get('type'); const st = q.get('status') ?? 'all'; const needle = (q.get('q') ?? '').trim().toLowerCase(); const cid = q.get('contactId');
+    return sdb.docs.filter((d) => d.companyId === id && d.type === type && (!cid || d.contactId === cid)).map(docRow)
+      .filter((d) => !needle || [d.contactName, d.number, d.reference].join(' ').toLowerCase().includes(needle))
+      .filter((d) => st === 'all' || d.state === st || (st === 'unpaid' && ['unpaid', 'partly_paid', 'overdue'].includes(d.state)))
+      .sort((a, b) => Number(b.status === 'draft') - Number(a.status === 'draft') || b.issueDate.localeCompare(a.issueDate) || b.createdAt.localeCompare(a.createdAt));
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/documents$/, (m, b) => {
+    if (b?.type === 'credit_note' || b?.type === 'supplier_credit') fail(400, 'Create credit notes from the invoice or bill.', 'err.format');
+    return { id: saveDraftM(inCo(m[1]!), { ...b, originalId: null }) };
+  }],
+  ['GET', /^\/api\/documents\/([\w-]+)$/, (m) => {
+    const d = docOf(m[1]!); const c = sdb.contacts.find((x) => x.id === d.contactId)!; const co = db.companies.find((x) => x.id === d.companyId)!;
+    return { ...docRow(d), contact: c, seller: { name: co.name, nameAr: co.nameAr, vatNumber: co.vatNumber, crNumber: co.crNumber, address: co.fields.address ?? '', city: co.city, country: co.country, currency: co.currency },
+      lines: d.lines.map((l, i) => { const a = db.accounts.find((x) => x.id === l.accountId)!; const cc = db.costCentres.find((x) => x.id === l.costCentreId);
+        return { id: l.id, lineNo: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, accountId: a.id, accountCode: a.code, accountName: a.name, accountNameAr: a.nameAr,
+          costCentreId: l.costCentreId ?? null, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null, vatCode: l.vatCode, vatRate: l.vatRate, net: s(l.net), vat: s(l.vat) }; }),
+      payments: sdb.payments.filter((p) => p.allocations.some((a) => a.documentId === d.id)).map((p) => ({ id: p.id, number: p.number, date: p.date, amount: s(p.allocations.find((a) => a.documentId === d.id)!.amount), method: p.method, voidedAt: p.voidedAt })),
+      related: sdb.docs.filter((x) => (x.originalId === d.id || x.id === d.originalId) && x.id !== d.id).map((x) => ({ id: x.id, type: x.type, status: x.status, number: x.number, issueDate: x.issueDate, grossTotal: s(docTotals(x).gross) })) };
+  }],
+  ['POST', /^\/api\/documents\/([\w-]+)$/, (m, b) => { const d = docOf(m[1]!); return { id: saveDraftM(d.companyId, { ...b, type: d.type, originalId: d.originalId }, d.id) }; }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/delete$/, (m) => { const d = docOf(m[1]!); canPostIn(d.companyId); if (d.status !== 'draft') fail(400, 'Only drafts can be deleted.', 'err.notDraft'); sdb.docs = sdb.docs.filter((x) => x.id !== d.id); return { ok: true }; }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/issue$/, (m) => { issueM(m[1]!); return { ok: true }; }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/quotation-status$/, (m, b) => { quoteStatusM(m[1]!, String(b?.status)); return { ok: true }; }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/convert$/, (m) => ({ id: convertM(m[1]!) })],
+  ['POST', /^\/api\/documents\/([\w-]+)\/credit$/, (m) => ({ id: creditM(m[1]!) })],
+  ['GET', /^\/api\/companies\/([\w-]+)\/payments$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const dir = q.get('direction'); const needle = (q.get('q') ?? '').trim().toLowerCase(); const cid = q.get('contactId');
+    return sdb.payments.filter((p) => p.companyId === id && p.direction === dir && (!cid || p.contactId === cid)).map(payRow)
+      .filter((p) => !needle || [p.contactName, p.number, p.reference].join(' ').toLowerCase().includes(needle))
+      .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/payments$/, (m, b) => ({ id: payM(inCo(m[1]!), b ?? {}) })],
+  ['GET', /^\/api\/payments\/([\w-]+)$/, (m) => {
+    const p = payOf(m[1]!);
+    return { ...payRow(p), allocations: p.allocations.map((a) => { const d = sdb.docs.find((x) => x.id === a.documentId)!;
+      return { documentId: d.id, number: d.number, type: d.type, issueDate: d.issueDate, grossTotal: s(docTotals(d).gross), amount: s(a.amount) }; }) };
+  }],
+  ['POST', /^\/api\/payments\/([\w-]+)\/void$/, (m, b) => {
+    const p = payOf(m[1]!); canPostIn(p.companyId);
+    if (p.voidedAt) fail(400, 'This payment has already been voided.', 'err.alreadyVoided');
+    reverse(session!, p.journalEntryId, String(b?.date ?? today())); p.voidedAt = new Date().toISOString(); return { ok: true };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/open-documents$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const type = q.get('direction') === 'made' ? 'bill' : 'invoice';
+    return sdb.docs.filter((d) => d.companyId === id && d.contactId === q.get('contactId') && d.type === type && d.status === 'issued' && amountDue(d) > 0n)
+      .sort((a, b) => (a.dueDate ?? a.issueDate).localeCompare(b.dueDate ?? b.issueDate))
+      .map((d) => ({ id: d.id, number: d.number, issueDate: d.issueDate, dueDate: d.dueDate, grossTotal: s(docTotals(d).gross), amountDue: s(amountDue(d)) }));
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/overview$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const sales = q.get('side') !== 'purchases'; const main = sales ? 'invoice' : 'bill'; const credit = sales ? 'credit_note' : 'supplier_credit';
+    const monthStart = `${today().slice(0, 7)}-01`;
+    const open = sdb.docs.filter((d) => d.companyId === id && d.type === main && d.status === 'issued' && amountDue(d) > 0n).map(docRow);
+    const overdue = open.filter((d) => d.state === 'overdue');
+    const sum = (xs: { amountDue: string }[]) => s(xs.reduce((x, d) => x + toMinor(d.amountDue), 0n));
+    const month = sdb.docs.filter((d) => d.companyId === id && d.status === 'issued' && d.issueDate >= monthStart && (d.type === main || d.type === credit))
+      .reduce((x, d) => x + (d.type === main ? 1n : -1n) * docTotals(d).net, 0n);
+    const paid = sdb.payments.filter((p) => p.companyId === id && p.direction === (sales ? 'received' : 'made') && !p.voidedAt && p.date >= monthStart).reduce((x, p) => x + p.amount, 0n);
+    return { outstanding: sum(open), outstandingCount: open.length, overdue: sum(overdue), overdueCount: overdue.length, thisMonthNet: s(month), paidThisMonth: s(paid),
+      drafts: sdb.docs.filter((d) => d.companyId === id && d.type === main && d.status === 'draft').length,
+      oldestOverdue: overdue.sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? '')).slice(0, 6) };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/reports\/aged$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const asOf = q.get('asOf') || today(); const type = q.get('side') === 'purchases' ? 'bill' : 'invoice';
+    const rows = new Map<string, { contactId: string; name: string; nameAr: string | null; b: Record<AgeBucket, bigint> }>();
+    for (const d of sdb.docs.filter((x) => x.companyId === id && x.type === type && x.status === 'issued' && x.issueDate <= asOf)) {
+      const due = amountDue(d); if (due === 0n) continue;
+      const c = sdb.contacts.find((x) => x.id === d.contactId)!;
+      const r = rows.get(c.id) ?? { contactId: c.id, name: c.name, nameAr: c.nameAr, b: Object.fromEntries(AGE_BUCKETS.map((k) => [k, 0n])) as Record<AgeBucket, bigint> };
+      r.b[ageBucket(d.dueDate ?? d.issueDate, asOf)] += due; rows.set(c.id, r);
+    }
+    return { asOf, rows: [...rows.values()].sort((a, b) => a.name.localeCompare(b.name)).map((r) => ({ contactId: r.contactId, name: r.name, nameAr: r.nameAr,
+      ...Object.fromEntries(AGE_BUCKETS.map((k) => [k, s(r.b[k])])), total: s(AGE_BUCKETS.reduce((x, k) => x + r.b[k], 0n)) })) };
+  }],
   ['GET', /^\/api\/admin\/companies$/, () => {
     admin();
     return [...db.companies].sort((a, b) => a.name.localeCompare(b.name)).map((c) => ({
@@ -476,6 +786,10 @@ const routes: [string, RegExp, Handler][] = [
     return { ok: true };
   }],
 ];
+
+// Sample data is created once everything above is defined.
+seed();
+db.activity.push({ id: uid(), at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });
 
 export function handle(method: string, url: string, body: unknown): { status: number; data: unknown } {
   const [path, qs] = url.split('?') as [string, string | undefined];

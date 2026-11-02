@@ -16,6 +16,17 @@ const RAISED: [RegExp, string][] = [
   [/different company/, 'err.otherCompany'],
   [/first client user/, 'err.firstClientUser'],
   [/Only the Administrator/, 'err.adminOnly'],
+  [/Issued documents are never changed/, 'err.docImmutable'],
+  [/A credit note cannot be more/, 'err.creditTooMuch'],
+  [/more than is due on/, 'err.overDue'],
+  [/amounts settled are more than the payment/, 'err.overAllocated'],
+  [/Payments are never changed/, 'err.paymentImmutable'],
+  [/Sales lines use an income account/, 'err.salesAccount'],
+  [/Purchase lines use an expense or asset account/, 'err.purchaseAccount'],
+  [/Choose a customer for this document|Choose a supplier for this document|Choose a customer or supplier/, 'err.contact'],
+  [/bank or cash accounts/, 'err.bankAccount'],
+  [/cannot move from/, 'err.quoteStatus'],
+  [/A sent quotation cannot be changed/, 'err.quoteImmutable'],
   [/same role for every client/, 'err.sameRole'],
   [/only belong to their own company/, 'err.clientOneCompany'],
 ];
@@ -30,6 +41,10 @@ const CONSTRAINTS: Record<string, [string, string]> = {
   vat_number_unique: ['A client with this VAT number already exists.', 'err.vatTaken'],
   users_email_unique: ['A user with this email already exists.', 'err.emailTaken'],
   users_email_check: ['Enter a valid email address.', 'err.email'],
+  contact_sa_vat: ['A Saudi VAT number has 15 digits, starting and ending with 3.', 'err.saVat'],
+  contact_ae_trn: ['A UAE TRN has 15 digits.', 'err.aeTrn'],
+  line_net_is_qty_times_price: ['A line amount does not equal quantity x price.', 'err.lineNumbers'],
+  line_vat_is_net_times_rate: ['A line VAT amount is not right.', 'err.lineNumbers'],
 };
 
 interface PgError { code?: string; message: string; constraint?: string }

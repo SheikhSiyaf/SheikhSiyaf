@@ -58,11 +58,11 @@ export interface Me {
   user: { id: string; name: string; email: string; kind: 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; firmName: string; twoFactor: boolean };
   companies: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; role: Role }[];
 }
-export interface Account { id: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean }
+export interface Account { id: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank?: boolean }
 export interface CostCentre { id: string; name: string; nameAr: string | null; kind: string }
 export interface Period { startDate: string; endDate: string; lockedAt: string | null }
 export interface CompanyBooks {
-  company: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; vatStatus: string };
+  company: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; vatStatus: string; invoicePrefix?: string; paymentTermsDays?: number };
   role: Role; canPost: boolean; canLock: boolean;
   accounts: Account[]; costCentres: CostCentre[]; periods: Period[];
 }

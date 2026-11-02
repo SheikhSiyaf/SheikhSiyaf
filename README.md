@@ -8,7 +8,13 @@ Read `CLAUDE.md` first. It holds the non-negotiable accounting rules.
 - **First screens:** React front end built from `prototype/nusuhbooks.html`, connected to the real database through an API:
   - Sign in (with one-click demo accounts in development)
   - Firm staff: **My clients**, showing only the clients assigned to them
-  - Client books: **Home** dashboard, **Journal** (post, search, reverse, period locks), **Reports** (trial balance, P&L, P&L by cost centre) and **VAT** summary. Sales, Purchases, Bank, Inventory, Assets and Review show what comes next.
+  - Client books, with a sub-menu under each module:
+    - **Sales:** overview of what is owed and what is late; customers; quotations (send, accept, convert to invoice); tax invoices; credit notes; payments received, which settle invoices oldest first.
+    - **Purchases:** overview; suppliers; bills; supplier credits; payments made.
+    - **Journal:** entries, new entry, periods.
+    - **Reports:** trial balance, P&L, P&L by cost centre, aged receivables, aged payables.
+    - **VAT:** summary.
+    - **Bank, Inventory, Assets and Review:** their sub-pages show what comes next.
   - Administrator console:
     - **Clients:** summary (active, suspended, without staff), search, the **Add client** registration page, and a **Manage** page per client. The Manage page lets you edit details and entry settings, add client users, tick which staff handle the client, and suspend or reactivate it.
     - **Staff:** add staff, change the clients each person handles, send a new sign-in link, reset two-factor, and suspend or reactivate.

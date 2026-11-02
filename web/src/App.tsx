@@ -64,7 +64,7 @@ function Screens() {
   const m = /^\/c\/([0-9a-f-]{36})(?:\/(\w+))?/.exec(path);
   if (m) {
     const company = me.data.companies.find((c) => c.id === m[1]);
-    if (company) return <Workspace me={me.data} companyId={company.id} module={m[2] ?? 'Home'} onSignOut={signOut} />;
+    if (company) return <Workspace me={me.data} companyId={company.id} path={path} onSignOut={signOut} />;
   }
   return <MyClients me={me.data} onSignOut={signOut} />;
 }

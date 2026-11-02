@@ -13,6 +13,7 @@ import { HttpError, toHttpError } from './errors.js';
 import { dateParam, today, uuidParam, type Ctx, type ServerOptions } from './context.js';
 import { registerAuthRoutes } from './auth.js';
 import { registerAdminRoutes } from './admin.js';
+import { registerSalesRoutes } from './sales.js';
 
 export type { ServerOptions } from './context.js';
 const POSTING_ROLES = ['partner', 'staff_accountant', 'client_accountant'];
@@ -70,7 +71,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
               payment_terms_days AS "paymentTermsDays"
        FROM companies WHERE id = $1`, [id]);
     const accounts = await db.query(
-      `SELECT id, code, name, name_ar AS "nameAr", type, cost_centre_required AS "costCentreRequired"
+      `SELECT id, code, name, name_ar AS "nameAr", type, cost_centre_required AS "costCentreRequired", is_bank AS "isBank"
        FROM accounts WHERE company_id = $1 ORDER BY code`, [id]);
     const costCentres = await db.query(
       `SELECT id, name, name_ar AS "nameAr", kind FROM cost_centres WHERE company_id = $1 ORDER BY name`, [id]);
@@ -219,6 +220,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   }));
 
   registerAdminRoutes(app, ctx);
+  registerSalesRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });
 

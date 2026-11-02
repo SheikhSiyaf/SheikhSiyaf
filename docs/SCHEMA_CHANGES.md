@@ -75,3 +75,18 @@ Every change below is covered by a test in `test/`.
 | `audit_row()` also strips `invite_token_hash`; new audit trigger on `firms` | Tokens never reach the log, and firm renames are recorded. |
 | `firms_admin_update` policy and `UPDATE (name)` grant | The Administrator can rename the firm. |
 | `admin_activity()` | Lets the Administrator read client, user, access and firm changes for their own firm. It never returns ledger rows. |
+
+## 0005_sales_purchases.sql
+| Change | Why |
+|---|---|
+| `accounts.is_bank`, plus template accounts `1010 Cash on hand` and `5400 Office and general expenses` (added to existing clients too) | Payments go in and out of bank or cash accounts only. Bills need a general expense account. |
+| `contacts` (customers and suppliers, one table, either or both) | One record per business partner, with VAT and CR numbers and payment terms. Saudi and UAE VAT numbers are checked like company ones. |
+| `documents` and `document_lines`, one layout for quotations, invoices, credit notes, bills and supplier credits | CLAUDE.md: the invoice layout is identical for every country; e-invoicing adapters read from it later. |
+| Line checks: `net = round(qty x price, 2)` and `VAT = round(net x rate / 100, 2)`; standard-rated lines must use the company rate; totals must match the lines when a document leaves draft | The database guarantees the VAT maths, not just the screen. `round()` rounds half away from zero, the same as `src/vat/vat.ts`. |
+| VAT treatment per line: standard, zero-rated, exempt, out of scope | VAT returns need zero-rated and exempt supplies kept apart. |
+| Triggers: issued documents never change and can't be deleted; drafts can; an issued document must have a number and its own journal entry; quotation statuses only move forward | Rule 2 applied to documents. A quotation never posts. |
+| `document_sequences` | Gap-free numbers per client and type. The counter rolls back with a failed issue, so no number is skipped. |
+| Credit notes must point to an issued invoice (or bill) of the same contact, and can't exceed what is left on it | A credit note always corrects a specific invoice, and the VAT reverses exactly. |
+| `payments` and `payment_allocations`; payments can't be edited or deleted, only voided with a reversal entry; allocations only at creation, only to issued invoices or bills of the same contact, never more than is due or than the payment | Rule 2 applied to payments, and payments can never over-settle. |
+| `document_amount_due()` (caller's rights) | One definition of "amount due": total minus payments (not voided) minus issued credits. |
+| Audit triggers and row-level security on all new tables; `audit_row()` records `issue`, `status` and `void` actions | Rules 5 and 6. |

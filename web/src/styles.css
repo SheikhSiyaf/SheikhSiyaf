@@ -131,3 +131,62 @@ nav.side .side-user button.security-link { width: auto; padding: 0; border: 0; b
   table.people td:first-child, table.people td:last-child { flex: 1 1 100%; }
   table.people td[data-label]::before { content: attr(data-label) ": "; color: var(--mut); font-size: 12px; }
 }
+
+/* ---- Sub-menus: under the open module in the sidebar; as tabs above the page on phones ---- */
+nav.side .chev { float: inline-end; color: inherit; opacity: .7; font-size: 11px; margin-top: 3px; }
+.subnav { display: flex; flex-direction: column; gap: 1px; margin: 2px 0 6px; padding-inline-start: 10px; border-inline-start: 2px solid var(--tealbg); margin-inline-start: 12px; }
+nav.side .subnav button { padding: 6px 10px; font-size: 14px; border-radius: 8px; }
+nav.side .subnav button.on { background: var(--tealbg); color: var(--teal); font-weight: 600; }
+.subtabs { display: none; }
+@media (max-width: 760px) {
+  .subnav { display: none; }
+  nav.side .chev { display: none; }
+  .subtabs { display: flex; gap: 6px; overflow-x: auto; margin: -4px 0 12px; padding-bottom: 2px; }
+  .subtabs button { flex: none; white-space: nowrap; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 20px; padding: 6px 12px; font: inherit; font-size: 14px; cursor: pointer; }
+  .subtabs button.on { background: var(--teal); border-color: var(--teal); color: var(--onteal); font-weight: 600; }
+  .subtabs button.soon { color: var(--mut); }
+}
+
+/* ---- Clickable figure tiles ---- */
+button.tile { text-align: start; font: inherit; color: inherit; cursor: pointer; }
+button.tile:hover { border-color: var(--teal); }
+
+/* ---- Document "paper" ---- */
+.paper { padding: 18px; }
+.paper-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+.paper-title { font-size: 20px; font-weight: 700; }
+.paper-no { font-size: 15px; color: var(--mut); margin-top: 2px; }
+.paper-parties { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 14px; padding: 12px; border-radius: 10px; background: var(--bg); }
+.paper-parties > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+table.totals { width: auto; min-width: 260px; margin-inline-start: auto; margin-top: 10px; }
+table.totals td { border-bottom: 0; padding: 4px 6px; }
+table.totals tr.total td { border-top: 1px solid var(--line); font-size: 16px; }
+
+/* ---- Document lines editor ---- */
+table.doclines input, table.doclines select { width: 100%; }
+table.doclines td.dl-desc { min-width: 200px; }
+table.doclines td.dl-qty { width: 80px; }
+table.doclines td.dl-price { width: 120px; }
+table.doclines td.dl-vat, table.doclines td.dl-acct, table.doclines td.dl-cc { min-width: 140px; }
+table.doclines td.dl-amt { width: 110px; }
+@media (max-width: 760px) {
+  table.doclines thead { display: none; }
+  table.doclines, table.doclines tbody { display: block; }
+  table.doclines tr { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-block: 10px; border-bottom: 1px solid var(--line); }
+  table.doclines td { border: 0; padding: 0; min-width: 0 !important; width: auto !important; }
+  table.doclines td.dl-desc, table.doclines td.dl-acct, table.doclines td.dl-cc, table.doclines td.dl-vat { grid-column: 1 / -1; }
+  table.doclines td.dl-amt { align-self: center; font-weight: 600; }
+  table.doclines td.dl-x { justify-self: end; }
+}
+
+/* ---- Lists on phones: one block per row, cells labelled ---- */
+@media (max-width: 760px) {
+  table.stack thead { display: none; }
+  table.stack, table.stack tbody { display: block; }
+  table.stack tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding-block: 10px; border-bottom: 1px solid var(--line); }
+  table.stack td { border: 0; padding: 0; }
+  table.stack td:first-child { flex: 1 1 100%; }
+  table.stack td[data-label]::before { content: attr(data-label) ": "; color: var(--mut); font-size: 12px; }
+  table.stack td.num { text-align: start; }
+  table.totals { min-width: 0; width: 100%; }
+}

@@ -9,7 +9,7 @@ interface Summary {
   monthIncome: string; monthExpense: string; monthProfit: string; entries: number; entriesThisMonth: number; lockedUpTo: string | null;
 }
 
-export function Home({ books, go }: { books: CompanyBooks; go: (m: string) => void }) {
+export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?: string) => void }) {
   const { t } = useI18n();
   const s = useApi<Summary>(`/api/companies/${books.company.id}/summary`);
   if (s.error) return <ErrorNote error={s.error} onRetry={s.reload} />;
@@ -47,8 +47,11 @@ export function Home({ books, go }: { books: CompanyBooks; go: (m: string) => vo
       <div className="card">
         <h2>{t('home.quick')}</h2>
         <div className="actions">
-          {books.canPost && <button className="b p" onClick={() => go('Journal')}>{t('home.newEntry')}</button>}
-          <button className="b" onClick={() => go('Reports')}>{t('home.trialBalance')}</button>
+          {books.canPost && <button className="b p" onClick={() => go('Sales', 'invoices/new')}>{t('ov.newInvoice')}</button>}
+          {books.canPost && <button className="b" onClick={() => go('Sales', 'payments-received/new')}>{t('ov.recordReceipt')}</button>}
+          {books.canPost && <button className="b" onClick={() => go('Purchases', 'bills/new')}>{t('ov.newBill')}</button>}
+          {books.canPost && <button className="b" onClick={() => go('Journal', 'new')}>{t('home.newEntry')}</button>}
+          <button className="b" onClick={() => go('Reports', 'trial-balance')}>{t('home.trialBalance')}</button>
           <button className="b" onClick={() => go('VAT')}>{t('home.vatSummary')}</button>
         </div>
       </div>

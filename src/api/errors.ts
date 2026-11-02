@@ -15,6 +15,9 @@ const RAISED: [RegExp, string][] = [
   [/cannot be changed or deleted/, 'err.immutable'],
   [/different company/, 'err.otherCompany'],
   [/first client user/, 'err.firstClientUser'],
+  [/Only the Administrator/, 'err.adminOnly'],
+  [/same role for every client/, 'err.sameRole'],
+  [/only belong to their own company/, 'err.clientOneCompany'],
 ];
 
 const CONSTRAINTS: Record<string, [string, string]> = {

@@ -63,3 +63,15 @@ Every change below is covered by a test in `test/`.
 | Change | Why |
 |---|---|
 | `setup_company_books(company, accounts, year)` | When a client is registered, it copies the chart of accounts template to the client, creates the "Head office" cost centre and creates 12 monthly periods. It runs with elevated rights because the Administrator has no posting role. It checks that the caller is the firm's Administrator and that the books are still empty. |
+
+## 0004_admin_console.sql
+| Change | Why |
+|---|---|
+| `users.status` and `companies.status` (`active` or `suspended`) | Suspend instead of delete, so the audit trail stays whole. |
+| `app_company_ids()`, `app_has_role()` and `app_is_admin()` ignore suspended users and suspended clients | Suspension takes effect in the database itself: a suspended person sees nothing, and staff of a suspended client lose access straight away. The Administrator still lists suspended clients. |
+| `auth_user_by_email()` also returns the status | Sign-in refuses suspended accounts with a clear message. |
+| `users.invite_token_hash`, `invite_expires_at` and `password_set_at`, plus `invite_info()` and `accept_invite()` | One-time sign-in links that expire after 7 days. Only a SHA-256 hash of the token is stored; the link holds the token. The same link is used to reset a forgotten password. |
+| `users.totp_enabled_at` and `set_own_totp()` | Each person turns on two-factor sign-in for themselves. The secret is encrypted by the app (AES-256-GCM) before it is stored. Only the Administrator can reset two-factor (for a lost phone). |
+| `audit_row()` also strips `invite_token_hash`; new audit trigger on `firms` | Tokens never reach the log, and firm renames are recorded. |
+| `firms_admin_update` policy and `UPDATE (name)` grant | The Administrator can rename the firm. |
+| `admin_activity()` | Lets the Administrator read client, user, access and firm changes for their own firm. It never returns ledger rows. |

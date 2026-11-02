@@ -55,7 +55,7 @@ export function useApi<T>(path: string | null): Loaded<T> {
 // ------------------------------------------------------------------ types returned by the API
 export type Role = 'partner' | 'reviewer' | 'staff_accountant' | 'client_accountant' | 'client_viewer';
 export interface Me {
-  user: { id: string; name: string; email: string; kind: 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; firmName: string };
+  user: { id: string; name: string; email: string; kind: 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; firmName: string; twoFactor: boolean };
   companies: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; role: Role }[];
 }
 export interface Account { id: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean }

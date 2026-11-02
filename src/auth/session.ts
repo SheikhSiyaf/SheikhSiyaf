@@ -38,3 +38,21 @@ export function sessionCookie(token: string, secure: boolean): string {
 export function clearedCookie(secure: boolean): string {
   return `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure ? '; Secure' : ''}`;
 }
+
+/** Short-lived signed token for one purpose (e.g. the second sign-in step). Payload must not contain '.'. */
+export function signToken(secret: string, purpose: string, payload: string, ttlSeconds: number, now = Date.now()): string {
+  const exp = Math.floor(now / 1000) + ttlSeconds;
+  const data = Buffer.from(`${purpose}|${payload}|${exp}`).toString('base64url');
+  return `${data}.${createHmac('sha256', secret).update(data).digest('base64url')}`;
+}
+
+export function verifyToken(secret: string, purpose: string, token: string | undefined, now = Date.now()): string | null {
+  const [data, sig] = String(token ?? '').split('.');
+  if (!data || !sig) return null;
+  const good = Buffer.from(createHmac('sha256', secret).update(data).digest('base64url'));
+  const given = Buffer.from(sig);
+  if (good.length !== given.length || !timingSafeEqual(good, given)) return null;
+  const [p, payload, exp] = Buffer.from(data, 'base64url').toString().split('|');
+  if (p !== purpose || !payload || Number(exp) * 1000 < now) return null;
+  return payload;
+}

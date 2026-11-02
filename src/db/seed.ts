@@ -28,7 +28,7 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
     const userIds: Record<string, string> = {};
     for (const u of DEMO_USERS) {
       userIds[u.email] = (await client.query(
-        `INSERT INTO users (firm_id, kind, full_name, email, password_hash, staff_role) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+        `INSERT INTO users (firm_id, kind, full_name, email, password_hash, staff_role, password_set_at) VALUES ($1,$2,$3,$4,$5,$6, now()) RETURNING id`,
         [firmId, u.kind, u.name, u.email, hash, u.kind === 'firm_staff' ? u.role : null])).rows[0].id;
     }
     const admin = userIds['admin@firm.example']!;

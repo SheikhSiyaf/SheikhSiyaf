@@ -9,7 +9,13 @@ Read `CLAUDE.md` first. It holds the non-negotiable accounting rules.
   - Sign in (with one-click demo accounts in development)
   - Firm staff: **My clients**, showing only the clients assigned to them
   - Client books: **Home** dashboard, **Journal** (post, search, reverse, period locks), **Reports** (trial balance, P&L, P&L by cost centre) and **VAT** summary. Sales, Purchases, Bank, Inventory, Assets and Review show what comes next.
-  - Administrator console: **Clients** (total, search, add), the **Add client** registration page and **Staff**
+  - Administrator console:
+    - **Clients:** summary (active, suspended, without staff), search, the **Add client** registration page, and a **Manage** page per client. The Manage page lets you edit details and entry settings, add client users, tick which staff handle the client, and suspend or reactivate it.
+    - **Staff:** add staff, change the clients each person handles, send a new sign-in link, reset two-factor, and suspend or reactivate.
+    - **Activity:** who changed clients, people and access. It never shows the books.
+    - **Settings:** firm name and sign-in security.
+  - **Sign-in links:** new people set their own password from a one-time link that expires after 7 days. The Administrator copies the link and sends it to the person; sending it by email comes later.
+  - **Two-factor sign-in:** each person turns it on from the bottom of the sidebar by scanning a QR code with an authenticator app. After 5 wrong passwords or codes, sign-in for that account is blocked for 15 minutes.
   - English and Arabic (right to left), light and dark mode, and phone layout
 
 ## Run it on your computer
@@ -88,6 +94,12 @@ prototype/          The original clickable prototype (visual and flow reference 
   The database works out which companies the user can see, and their role in each, from `memberships`.
 - Every table has row-level security. Triggers protect the ledger and the audit log so that even the owner role cannot change them.
 
-## Not done yet (needed before real client data)
-- Two-factor sign-in, sign-in rate limiting, invitation emails and password setting for new users.
-- HTTPS and hosting. Set `COOKIE_SECURE=true`, set a real `SESSION_SECRET` and turn off `DEMO_LOGINS`.
+## Before real client data
+- Hosting with HTTPS. In `.env`:
+  - set `COOKIE_SECURE=true`
+  - set real values for `SESSION_SECRET` and `ENCRYPTION_KEY`, and never change `ENCRYPTION_KEY` afterwards
+  - set `PUBLIC_URL` to the address people use
+  - set `DEMO_LOGINS=false`, and do not load the demo data
+- Everyone turns on two-factor sign-in. Settings shows how many have.
+- Sending sign-in links by email (today the Administrator copies the link and sends it).
+- The sign-in attempt limit is kept in server memory. If the app ever runs on more than one server, it should move to the database.

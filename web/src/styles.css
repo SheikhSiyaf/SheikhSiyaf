@@ -113,3 +113,21 @@ tr.total td { font-weight: 700; border-bottom: 0; }
   .demo-banner { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 31px; }
   :root:has(.demo-banner) nav.side { height: calc(100vh - 31px); }
 }
+
+.security-link { text-align: start; margin-top: 4px; font-size: 12px; }
+nav.side .side-user button.security-link { width: auto; padding: 0; border: 0; background: none; color: var(--teal); text-decoration: underline; }
+.notice.invite { background: var(--tealbg); }
+.qr { background: #fff; padding: 8px; border-radius: 10px; width: 196px; height: 196px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.check-list { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.check-list label { display: flex; align-items: center; gap: 6px; }
+
+/* People tables (client users, staff) on phones: one block per person, cells labelled. */
+@media (max-width: 760px) {
+  table.people thead { display: none; }
+  table.people, table.people tbody { display: block; }
+  table.people tr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding-block: 10px; border-bottom: 1px solid var(--line); }
+  table.people td { border: 0; padding: 0; }
+  table.people td:first-child, table.people td:last-child { flex: 1 1 100%; }
+  table.people td[data-label]::before { content: attr(data-label) ": "; color: var(--mut); font-size: 12px; }
+}

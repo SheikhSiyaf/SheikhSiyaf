@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { api, useApi } from '../api.ts';
+import { ApiError, api, useApi } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
 import { ErrorNote } from '../ui.tsx';
 import { toggleTheme } from '../theme.ts';
@@ -15,14 +15,32 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [error, setError] = useState<unknown>();
   const [busy, setBusy] = useState(false);
 
+  const [ticket, setTicket] = useState<string>();
+  const [code, setCode] = useState('');
+
   const signIn = async (e: string, p: string) => {
     setBusy(true);
     setError(undefined);
     try {
-      await api('/api/login', { body: { email: e, password: p } });
+      const r = await api<{ ok?: boolean; twoFactor?: boolean; ticket?: string }>('/api/login', { body: { email: e, password: p } });
+      if (r.twoFactor && r.ticket) { setTicket(r.ticket); setCode(''); }
+      else onSignedIn();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const verify = async (ev: FormEvent) => {
+    ev.preventDefault();
+    setBusy(true);
+    setError(undefined);
+    try {
+      await api('/api/login/two-factor', { body: { ticket, code } });
       onSignedIn();
     } catch (err) {
       setError(err);
+      if (err instanceof ApiError && err.key === 'err.ticket') setTicket(undefined);
     } finally {
       setBusy(false);
     }
@@ -41,22 +59,38 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
           <h1>{t('app.name')}</h1>
           <p className="mut" style={{ marginTop: 0 }}>{t('login.subtitle')}</p>
           {error !== undefined && <ErrorNote error={error} />}
-          <form onSubmit={submit}>
-            <div className="row">
-              <label className="f">{t('login.email')}
-                <input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" />
-              </label>
-            </div>
-            <div className="row">
-              <label className="f">{t('login.password')}
-                <input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} dir="ltr" />
-              </label>
-            </div>
-            <button className="b p" type="submit" disabled={busy || !email || !password}>{t('login.submit')}</button>
-          </form>
-          <p className="mut small">{t('login.twoFactorLater')}</p>
+          {ticket ? (
+            <form onSubmit={verify}>
+              <h2 style={{ fontSize: 17, margin: '6px 0' }}>{t('login.codeTitle')}</h2>
+              <p className="mut small">{t('login.codeHint')}</p>
+              <div className="row">
+                <label className="f">{t('login.code')}
+                  <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} autoFocus
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} dir="ltr" style={{ letterSpacing: 4, fontSize: 20 }} />
+                </label>
+              </div>
+              <div className="actions">
+                <button className="b p" type="submit" disabled={busy || code.length !== 6}>{t('login.verify')}</button>
+                <button className="link" type="button" onClick={() => { setTicket(undefined); setError(undefined); }}>{t('login.back')}</button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={submit}>
+              <div className="row">
+                <label className="f">{t('login.email')}
+                  <input type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" />
+                </label>
+              </div>
+              <div className="row">
+                <label className="f">{t('login.password')}
+                  <input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} dir="ltr" />
+                </label>
+              </div>
+              <button className="b p" type="submit" disabled={busy || !email || !password}>{t('login.submit')}</button>
+            </form>
+          )}
         </div>
-        {demo.data && cfg.data?.demoPassword && (
+        {!ticket && demo.data && cfg.data?.demoPassword && (
           <div className="card demo">
             <h2>{t('login.demo')}</h2>
             <div className="mut small">{t('login.demoHint', { password: cfg.data.demoPassword })}</div>

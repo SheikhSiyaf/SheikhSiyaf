@@ -5,40 +5,18 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
-import type pg from 'pg';
 import { withUser, type Db } from '../db/session.js';
 import { checkEntry, postEntry, reverseEntry, setPeriodLock, trialBalance, type EntryInput } from '../ledger/ledger.js';
-import { verifyPassword } from '../auth/password.js';
-import { SESSION_COOKIE, clearedCookie, readCookie, sessionCookie, signSession, verifySession } from '../auth/session.js';
-import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../books/chartTemplate.js';
+import { SESSION_COOKIE, readCookie, verifySession } from '../auth/session.js';
+import { SYSTEM_ACCOUNTS } from '../books/chartTemplate.js';
 import { HttpError, toHttpError } from './errors.js';
-import { DEMO_PASSWORD, DEMO_USERS } from '../db/demoData.js';
+import { dateParam, today, uuidParam, type Ctx, type ServerOptions } from './context.js';
+import { registerAuthRoutes } from './auth.js';
+import { registerAdminRoutes } from './admin.js';
 
-export interface ServerOptions {
-  pool: pg.Pool;
-  sessionSecret: string;
-  cookieSecure?: boolean;
-  demoLogins?: boolean;
-  /** Folder with the built front end (web/dist). Served with a fallback to index.html. */
-  staticDir?: string;
-  logger?: boolean;
-}
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
+export type { ServerOptions } from './context.js';
 const POSTING_ROLES = ['partner', 'staff_accountant', 'client_accountant'];
 
-
-function uuidParam(v: string): string {
-  if (!UUID.test(v)) throw new HttpError(404, 'Not found.', 'err.notFound');
-  return v;
-}
-function dateParam(v: unknown, fallback: string): string {
-  if (v === undefined || v === '') return fallback;
-  if (typeof v !== 'string' || !DATE.test(v)) throw new HttpError(400, 'Some values are not in the right format.', 'err.format');
-  return v;
-}
-const today = () => new Date().toISOString().slice(0, 10);
 
 declare module 'fastify' {
   interface FastifyRequest { userId: string | null }
@@ -70,48 +48,17 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     if (!req.userId) throw new HttpError(401, 'Please sign in.', 'err.signIn');
     return withUser(pool, req.userId, fn);
   };
+  const ctx: Ctx = { pool, opts, as };
 
   async function companyRole(db: Db, companyId: string): Promise<string> {
     const { rows } = await db.query(
-      'SELECT role FROM memberships WHERE user_id = app_user_id() AND company_id = $1', [companyId]);
+      `SELECT m.role FROM memberships m JOIN companies c ON c.id = m.company_id   -- suspended clients are hidden by RLS
+       WHERE m.user_id = app_user_id() AND m.company_id = $1`, [companyId]);
     if (!rows[0]) throw new HttpError(404, 'Not found.', 'err.notFound');
     return rows[0].role;
   }
 
-  // ---------------------------------------------------------------- auth
-  app.get('/api/config', async () => ({ demoLogins: Boolean(opts.demoLogins), demoPassword: opts.demoLogins ? DEMO_PASSWORD : undefined }));
-
-  app.get('/api/demo-users', async () => {
-    if (!opts.demoLogins) throw new HttpError(404, 'Not found.', 'err.notFound');
-    return DEMO_USERS.map(({ name, email, kind, role, company }) => ({ name, email, kind, role, company }));
-  });
-
-  app.post<{ Body: { email?: string; password?: string } }>('/api/login', async (req, reply) => {
-    const email = String(req.body?.email ?? '').trim();
-    const password = String(req.body?.password ?? '');
-    const { rows } = await pool.query('SELECT id, password_hash FROM auth_user_by_email($1)', [email]);
-    const ok = await verifyPassword(password, rows[0]?.password_hash);
-    if (!ok || !rows[0]) throw new HttpError(401, 'The email or password is not right.', 'err.login');
-    reply.header('set-cookie', sessionCookie(signSession(opts.sessionSecret, rows[0].id), Boolean(opts.cookieSecure)));
-    return { ok: true };
-  });
-
-  app.post('/api/logout', async (_req, reply) => {
-    reply.header('set-cookie', clearedCookie(Boolean(opts.cookieSecure)));
-    return { ok: true };
-  });
-
-  app.get('/api/me', async (req) => as(req, async (db) => {
-    const u = await db.query(
-      `SELECT u.id, u.full_name AS name, u.email, u.kind, u.staff_role AS "staffRole", f.name AS "firmName"
-       FROM users u LEFT JOIN firms f ON f.id = u.firm_id WHERE u.id = app_user_id()`);
-    if (!u.rows[0]) throw new HttpError(401, 'Please sign in.', 'err.signIn');
-    const companies = await db.query(
-      `SELECT c.id, c.name, c.name_ar AS "nameAr", c.country, c.currency, c.vat_rate AS "vatRate", m.role
-       FROM companies c JOIN memberships m ON m.company_id = c.id AND m.user_id = app_user_id()
-       ORDER BY c.name`);
-    return { user: u.rows[0], companies: companies.rows };
-  }));
+  registerAuthRoutes(app, ctx);
 
   // ---------------------------------------------------------------- books
   app.get<{ Params: { id: string } }>('/api/companies/:id', async (req) => as(req, async (db) => {
@@ -271,91 +218,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     return { from, to, total: total.rows[0], byCostCentre: byCc.rows };
   }));
 
-  // ---------------------------------------------------------------- admin console
-  const requireAdmin = async (db: Db) => {
-    const { rows } = await db.query('SELECT app_is_admin() AS a');
-    if (!rows[0].a) throw new HttpError(403, 'Only the Administrator can do this.', 'err.adminOnly');
-  };
-
-  app.get('/api/admin/companies', async (req) => as(req, async (db) => {
-    await requireAdmin(db);
-    const { rows } = await db.query(
-      `SELECT c.id, c.name, c.name_ar AS "nameAr", c.country, c.currency, c.cr_number AS "crNumber",
-              c.vat_status AS "vatStatus", c.vat_number AS "vatNumber", c.vat_rate AS "vatRate", c.city,
-              c.created_at AS "createdAt",
-              (SELECT count(*) FROM memberships m JOIN users u ON u.id = m.user_id
-                 WHERE m.company_id = c.id AND u.kind = 'client')::int AS "clientUsers",
-              (SELECT coalesce(json_agg(u.full_name ORDER BY u.full_name), '[]') FROM memberships m JOIN users u ON u.id = m.user_id
-                 WHERE m.company_id = c.id AND u.kind = 'firm_staff') AS staff
-       FROM companies c WHERE c.firm_id = app_firm_id() ORDER BY c.name`);
-    return rows;
-  }));
-
-  app.get('/api/admin/staff', async (req) => as(req, async (db) => {
-    await requireAdmin(db);
-    const { rows } = await db.query(
-      `SELECT u.id, u.full_name AS name, u.email, u.staff_role AS role,
-              (u.totp_secret_enc IS NOT NULL) AS "twoFactor",
-              (SELECT coalesce(json_agg(c.name ORDER BY c.name), '[]') FROM memberships m JOIN companies c ON c.id = m.company_id
-                 WHERE m.user_id = u.id) AS clients
-       FROM users u WHERE u.firm_id = app_firm_id() AND u.kind = 'firm_staff' ORDER BY u.full_name`);
-    return rows;
-  }));
-
-  interface NewClient {
-    company: Record<string, unknown>;
-    firstUser: { name?: string; email?: string; role?: string };
-    staffIds?: string[];
-  }
-
-  app.post<{ Body: NewClient }>('/api/admin/companies', async (req) => {
-    const b = req.body ?? ({} as NewClient);
-    const c = b.company ?? {};
-    const s = (k: string) => (typeof c[k] === 'string' && (c[k] as string).trim() !== '' ? (c[k] as string).trim() : null);
-    const country = s('country');
-    const defaults: Record<string, { currency: string; vatRate: string }> = {
-      SA: { currency: 'SAR', vatRate: '15.00' }, AE: { currency: 'AED', vatRate: '5.00' }, OM: { currency: 'OMR', vatRate: '5.00' },
-    };
-    const d = defaults[country ?? ''];
-    if (!d) throw new HttpError(400, 'Choose the country.', 'err.country');
-    const registered = s('vatStatus') !== 'unregistered';
-    const fyEnd = s('fyEnd') ?? '12-31';
-    if (!/^\d{2}-\d{2}$/.test(fyEnd)) throw new HttpError(400, 'Some values are not in the right format.', 'err.format');
-    const firstName = String(b.firstUser?.name ?? '').trim();
-    const firstEmail = String(b.firstUser?.email ?? '').trim();
-    if (!firstName || !firstEmail) throw new HttpError(400, 'Add the first client user (name and email).', 'err.firstClientUser');
-    const firstRole = b.firstUser?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant';
-    const staffIds = (b.staffIds ?? []).map((x) => uuidParam(String(x)));
-
-    const id = await as(req, async (db) => {
-      await requireAdmin(db);
-      const { rows } = await db.query(
-        `INSERT INTO companies (firm_id, name, name_ar, trade_name, country, currency, cr_number, cr_expiry, legal_form,
-            vat_status, vat_number, vat_registration_date, vat_rate, address, city, fy_end_month, fy_end_day,
-            phone, email, website, compliance_notes, invoice_prefix, payment_terms_days)
-         VALUES (app_firm_id(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                 coalesce($21, 'INV-'), coalesce($22::int, 30))
-         RETURNING id`,
-        [s('name'), s('nameAr'), s('tradeName'), country, d.currency, s('crNumber'), s('crExpiry'), s('legalForm'),
-         registered ? 'registered' : 'unregistered', registered ? s('vatNumber') : null, registered ? s('vatRegistrationDate') : null,
-         registered ? d.vatRate : '0', s('address'), s('city'), Number(fyEnd.slice(0, 2)), Number(fyEnd.slice(3)),
-         s('phone'), s('email'), s('website'), s('complianceNotes'), s('invoicePrefix'), s('paymentTermsDays')]);
-      const companyId: string = rows[0].id;
-      const u = await db.query(
-        `INSERT INTO users (firm_id, kind, full_name, email) VALUES (app_firm_id(), 'client', $1, $2) RETURNING id`,
-        [firstName, firstEmail]);
-      await db.query('INSERT INTO memberships (user_id, company_id, role) VALUES ($1, $2, $3)', [u.rows[0].id, companyId, firstRole]);
-      for (const staffId of staffIds) {
-        await db.query(
-          `INSERT INTO memberships (user_id, company_id, role)
-           SELECT id, $2, staff_role FROM users WHERE id = $1 AND kind = 'firm_staff'`, [staffId, companyId]);
-      }
-      await db.query('SELECT setup_company_books($1, $2, $3)',
-        [companyId, JSON.stringify(CHART_TEMPLATE), new Date().getFullYear()]);
-      return companyId;
-    });
-    return { id };
-  });
+  registerAdminRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });
 

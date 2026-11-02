@@ -4,6 +4,9 @@ import { config } from '../config.js';
 import { createPool } from '../db/session.js';
 import { buildServer, WEB_DIST } from './server.js';
 
+if (!process.env.ENCRYPTION_KEY) {
+  console.warn('ENCRYPTION_KEY is not set: two-factor secrets are encrypted with SESSION_SECRET. Set ENCRYPTION_KEY before real use.');
+}
 if (!config.sessionSecretFromEnv) {
   console.warn('SESSION_SECRET is not set: using a random one, so everyone is signed out when the server restarts.');
 }
@@ -12,6 +15,8 @@ const serveWeb = !apiOnly && existsSync(WEB_DIST);
 const app = buildServer({
   pool: createPool(config.databaseUrl),
   sessionSecret: config.sessionSecret,
+  encryptionKey: config.encryptionKey || config.sessionSecret,
+  publicUrl: config.publicUrl,
   cookieSecure: config.cookieSecure,
   demoLogins: config.demoLogins,
   staticDir: serveWeb ? WEB_DIST : undefined,

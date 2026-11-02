@@ -18,6 +18,10 @@ export const config = {
   sessionSecret: env.SESSION_SECRET || randomBytes(32).toString('hex'),
   sessionSecretFromEnv: Boolean(env.SESSION_SECRET),
   cookieSecure: env.COOKIE_SECURE === 'true',
+  /** Encrypts two-factor secrets in the database. Falls back to SESSION_SECRET. Never change it once in use. */
+  encryptionKey: env.ENCRYPTION_KEY || env.SESSION_SECRET || '',
+  /** Address used in invitation links, e.g. https://books.example.com. Defaults to the address the Administrator is using. */
+  publicUrl: env.PUBLIC_URL || '',
   /** Show the demo sign-in buttons on the sign-in page. Never turn on for real client data. */
   demoLogins: env.DEMO_LOGINS === 'true',
 };

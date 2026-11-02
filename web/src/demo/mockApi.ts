@@ -9,11 +9,15 @@ import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../../../src/books/chartTemplat
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_USERS } from '../../../src/db/demoData.ts';
 
 type Role = 'partner' | 'reviewer' | 'staff_accountant' | 'client_accountant' | 'client_viewer';
-interface User { id: string; name: string; email: string; kind: 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; twoFactor: boolean }
+interface User {
+  id: string; name: string; email: string; kind: 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; twoFactor: boolean;
+  status: 'active' | 'suspended'; password: string | null; inviteToken: string | null;
+}
 interface Company {
   id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string;
   vatStatus: 'registered' | 'unregistered'; vatNumber: string | null; crNumber: string; city: string;
-  invoicePrefix: string; paymentTermsDays: number;
+  invoicePrefix: string; paymentTermsDays: number; status: 'active' | 'suspended';
+  fields: Record<string, string>;   // the rest of the registration form, as entered
 }
 interface Account { id: string; companyId: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean }
 interface CostCentre { id: string; companyId: string; name: string; nameAr: string | null; kind: string }
@@ -33,6 +37,8 @@ const today = () => iso(new Date());
 const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return iso(d); };
 
 const db = {
+  firmName: DEMO_FIRM,
+  activity: [] as { id: string; at: string; actor: string | null; key: string; params: Record<string, string> }[],
   users: [] as User[], companies: [] as Company[], memberships: [] as Membership[], accounts: [] as Account[],
   costCentres: [] as CostCentre[], periods: [] as Period[], entries: [] as Entry[],
 };
@@ -45,7 +51,18 @@ const fail = (status: number, message: string, key?: string, details?: string[])
 
 // ------------------------------------------------------------------ rules (mirror db/migrations)
 function roleOf(userId: string | null, companyId: string): Role | undefined {
+  const u = db.users.find((x) => x.id === userId);
+  const c = db.companies.find((x) => x.id === companyId);
+  if (!u || u.status !== 'active' || !c || c.status !== 'active') return undefined;   // suspended = no access
   return db.memberships.find((m) => m.userId === userId && m.companyId === companyId)?.role;
+}
+function logActivity(key: string, params: Record<string, string>) {
+  db.activity.unshift({ id: uid(), at: new Date().toISOString(), actor: db.users.find((u) => u.id === session)?.name ?? null, key, params });
+}
+function newInvite(u: User) {
+  u.inviteToken = `demo-${uid().slice(-6)}-${Math.random().toString(36).slice(2, 10)}`;
+  logActivity('act.inviteSent', { name: u.name });
+  return { userId: u.id, name: u.name, email: u.email, token: u.inviteToken };
 }
 function isLocked(companyId: string, date: string) {
   return db.periods.some((p) => p.companyId === companyId && p.lockedAt && date >= p.startDate && date <= p.endDate);
@@ -97,13 +114,15 @@ function setupBooks(companyId: string) {
 // ------------------------------------------------------------------ demo data (same as src/db/seed.ts)
 function seed() {
   for (const u of DEMO_USERS) {
-    db.users.push({ id: uid(), name: u.name, email: u.email, kind: u.kind, staffRole: u.kind === 'firm_staff' ? (u.role as Role) : null, twoFactor: u.kind !== 'client' });
+    db.users.push({ id: uid(), name: u.name, email: u.email, kind: u.kind, staffRole: u.kind === 'firm_staff' ? (u.role as Role) : null,
+      twoFactor: false, status: 'active', password: DEMO_PASSWORD, inviteToken: null });
   }
   const userByEmail = (e: string) => db.users.find((u) => u.email === e)!;
   for (const c of DEMO_COMPANIES) {
     const id = uid();
     db.companies.push({ id, name: c.name, nameAr: c.nameAr, country: c.country, currency: c.currency, vatRate: c.vatRate, vatStatus: 'registered',
-      vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: 30 });
+      vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: 30, status: 'active',
+      fields: { legalForm: c.legalForm, address: c.address, fyEnd: '12-31' } });
     for (const u of DEMO_USERS.filter((x) => x.companies.includes(c.key))) db.memberships.push({ userId: userByEmail(u.email).id, companyId: id, role: u.role as Role });
     setupBooks(id);
     db.costCentres.push({ id: uid(), companyId: id, name: 'Branch 1', nameAr: 'الفرع 1', kind: 'branch' }, { id: uid(), companyId: id, name: 'Project A', nameAr: 'المشروع أ', kind: 'project' });
@@ -133,10 +152,16 @@ function seed() {
   }
 }
 seed();
+db.activity.push({ id: uid(), at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });
 
 // ------------------------------------------------------------------ helpers for responses
 const s = fromMinor;
-const me = () => { if (!session) fail(401, 'Please sign in.', 'err.signIn'); return db.users.find((u) => u.id === session)!; };
+const me = () => {
+  const u = db.users.find((x) => x.id === session);
+  if (!u || u.status !== 'active') return fail(401, 'Please sign in.', 'err.signIn');
+  return u;
+};
+const admin = () => { const u = me(); if (u.kind !== 'admin') fail(403, 'Only the Administrator can do this.', 'err.adminOnly'); return u; };
 function member(companyId: string) {
   const u = me();
   const role = roleOf(u.id, companyId);
@@ -163,24 +188,69 @@ function pnl(companyId: string, from: string, to: string) {
 }
 const companyView = (c: Company) => ({ id: c.id, name: c.name, nameAr: c.nameAr, country: c.country, currency: c.currency, vatRate: c.vatRate });
 
+// ------------------------------------------------------------------ admin helpers
+const company = (id: string) => db.companies.find((c) => c.id === id) ?? fail(404, 'Not found.', 'err.notFound');
+const user = (id: string) => db.users.find((u) => u.id === id) ?? fail(404, 'Not found.', 'err.notFound');
+const staffOf = (companyId: string) => db.memberships.filter((m) => m.companyId === companyId)
+  .map((m) => db.users.find((u) => u.id === m.userId)!).filter((u) => u.kind === 'firm_staff');
+const person = (u: User) => ({ id: u.id, name: u.name, email: u.email, status: u.status, invitePending: Boolean(u.inviteToken), passwordSet: Boolean(u.password), twoFactor: u.twoFactor });
+function emailFree(email: string) {
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) fail(400, 'Enter a valid email address.', 'err.email');
+  if (db.users.some((u) => u.email.toLowerCase() === email.trim().toLowerCase())) fail(400, 'A user with this email already exists.', 'err.emailTaken');
+}
+function addUser(name: string, email: string, kind: User['kind'], staffRole: Role | null): User {
+  const u: User = { id: uid(), name: name.trim(), email: email.trim(), kind, staffRole, twoFactor: false, status: 'active', password: null, inviteToken: null };
+  db.users.push(u);
+  logActivity('act.userAdded', { name: u.name, role: staffRole ?? 'client' });
+  return u;
+}
+function assign(userId: string, companyId: string, on: boolean) {
+  const u = db.users.find((x) => x.id === userId && x.kind === 'firm_staff') ?? fail(404, 'Not found.', 'err.notFound');
+  const c = company(companyId);
+  const has = db.memberships.some((m) => m.userId === u.id && m.companyId === c.id);
+  if (on && !has) { db.memberships.push({ userId: u.id, companyId: c.id, role: u.staffRole! }); logActivity('act.accessGiven', { name: u.name, client: c.name }); }
+  if (!on && has) { db.memberships = db.memberships.filter((m) => !(m.userId === u.id && m.companyId === c.id)); logActivity('act.accessRemoved', { name: u.name, client: c.name }); }
+  return { ok: true };
+}
+/** Same checks as the database (db/migrations) for registration fields. Country never changes here. */
+function applyCompany(co: Company, c: Record<string, string | undefined>) {
+  const v = (k: string) => (c[k] ?? '').trim();
+  const registered = v('vatStatus') !== 'unregistered';
+  if (!v('name') || !v('crNumber') || !v('legalForm') || !v('address') || !v('city')) fail(400, 'Fill in all required fields.', 'err.required');
+  if (co.country === 'SA' && !/^\d{10}$/.test(v('crNumber'))) fail(400, 'A Saudi CR number has 10 digits.', 'err.saCr');
+  if (registered && !v('vatNumber')) fail(400, 'Enter the VAT number, or choose VAT unregistered.', 'err.vatNumber');
+  if (registered && co.country === 'SA' && !/^3\d{13}3$/.test(v('vatNumber'))) fail(400, 'A Saudi VAT number has 15 digits, starting and ending with 3.', 'err.saVat');
+  if (registered && co.country === 'AE' && !/^\d{15}$/.test(v('vatNumber'))) fail(400, 'A UAE TRN has 15 digits.', 'err.aeTrn');
+  if (db.companies.some((x) => x.id !== co.id && x.crNumber === v('crNumber'))) fail(400, 'A client with this registration number already exists.', 'err.crTaken');
+  if (registered && db.companies.some((x) => x.id !== co.id && x.vatNumber === v('vatNumber'))) fail(400, 'A client with this VAT number already exists.', 'err.vatTaken');
+  const rate = { SA: '15.00', AE: '5.00', OM: '5.00' }[co.country];
+  Object.assign(co, {
+    name: v('name'), nameAr: v('nameAr') || null, crNumber: v('crNumber'), city: v('city'),
+    vatStatus: registered ? 'registered' : 'unregistered', vatNumber: registered ? v('vatNumber') : null, vatRate: registered ? rate : '0.00',
+    invoicePrefix: v('invoicePrefix') || 'INV-', paymentTermsDays: Number(v('paymentTermsDays') || 30),
+    fields: { tradeName: v('tradeName'), legalForm: v('legalForm'), crExpiry: v('crExpiry'), vatRegistrationDate: registered ? v('vatRegistrationDate') : '',
+      address: v('address'), fyEnd: v('fyEnd') || '12-31', phone: v('phone'), email: v('email'), website: v('website'), complianceNotes: v('complianceNotes') },
+  });
+}
+
 // ------------------------------------------------------------------ routes
 type Body = Record<string, unknown> | undefined;
 type Handler = (m: RegExpMatchArray, body: Body, query: URLSearchParams) => unknown;
 const routes: [string, RegExp, Handler][] = [
-  ['GET', /^\/api\/config$/, () => ({ demoLogins: true, demoPassword: DEMO_PASSWORD })],
   ['GET', /^\/api\/demo-users$/, () => DEMO_USERS.map(({ name, email, kind, role, company }) => ({ name, email, kind, role, company }))],
   ['POST', /^\/api\/login$/, (_m, b) => {
     const u = db.users.find((x) => x.email.toLowerCase() === String(b?.email ?? '').trim().toLowerCase());
-    if (!u || b?.password !== DEMO_PASSWORD) fail(401, 'The email or password is not right.', 'err.login');
-    session = u!.id;
+    if (!u || !u.password || b?.password !== u.password) return fail(401, 'The email or password is not right.', 'err.login');
+    if (u.status !== 'active') fail(403, 'This account is suspended. Contact the Administrator.', 'err.suspended');
+    session = u.id;
     return { ok: true };
   }],
   ['POST', /^\/api\/logout$/, () => { session = null; return { ok: true }; }],
   ['GET', /^\/api\/me$/, () => {
     const u = me();
     return {
-      user: { id: u.id, name: u.name, email: u.email, kind: u.kind, staffRole: u.staffRole, firmName: DEMO_FIRM },
-      companies: db.memberships.filter((m) => m.userId === u.id)
+      user: { id: u.id, name: u.name, email: u.email, kind: u.kind, staffRole: u.staffRole, firmName: db.firmName, twoFactor: u.twoFactor },
+      companies: db.memberships.filter((m) => m.userId === u.id && roleOf(u.id, m.companyId))
         .map((m) => ({ ...companyView(db.companies.find((c) => c.id === m.companyId)!), role: m.role }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     };
@@ -268,52 +338,142 @@ const routes: [string, RegExp, Handler][] = [
     }).sort((a, b) => (a.name === null ? 1 : b.name === null ? -1 : a.name.localeCompare(b.name)));
     return { from, to, total: { income: s(income), expense: s(expense), profit: s(income - expense) }, byCostCentre };
   }],
+  ['GET', /^\/api\/config$/, () => ({ demoLogins: true, demoPassword: DEMO_PASSWORD, minPassword: 10, publicUrl: '' })],
   ['GET', /^\/api\/admin\/companies$/, () => {
-    if (me().kind !== 'admin') fail(403, 'Only the Administrator can do this.', 'err.adminOnly');
+    admin();
     return [...db.companies].sort((a, b) => a.name.localeCompare(b.name)).map((c) => ({
-      ...companyView(c), crNumber: c.crNumber, vatStatus: c.vatStatus, vatNumber: c.vatNumber, city: c.city,
-      clientUsers: db.memberships.filter((m) => m.companyId === c.id && db.users.find((u) => u.id === m.userId)?.kind === 'client').length,
-      staff: db.memberships.filter((m) => m.companyId === c.id).map((m) => db.users.find((u) => u.id === m.userId)!).filter((u) => u.kind === 'firm_staff').map((u) => u.name).sort(),
+      ...companyView(c), crNumber: c.crNumber, vatStatus: c.vatStatus, vatNumber: c.vatNumber, city: c.city, status: c.status,
+      clientUsers: db.memberships.filter((m) => m.companyId === c.id && db.users.find((u) => u.id === m.userId && u.kind === 'client' && u.status === 'active')).length,
+      staff: staffOf(c.id).filter((u) => u.status === 'active').map((u) => u.name).sort(),
     }));
   }],
-  ['GET', /^\/api\/admin\/staff$/, () => {
-    if (me().kind !== 'admin') fail(403, 'Only the Administrator can do this.', 'err.adminOnly');
-    return db.users.filter((u) => u.kind === 'firm_staff').sort((a, b) => a.name.localeCompare(b.name)).map((u) => ({
-      id: u.id, name: u.name, email: u.email, role: u.staffRole, twoFactor: u.twoFactor,
-      clients: db.memberships.filter((m) => m.userId === u.id).map((m) => db.companies.find((c) => c.id === m.companyId)!.name).sort(),
-    }));
+  ['GET', /^\/api\/admin\/companies\/([\w-]+)$/, (m) => {
+    admin();
+    const c = company(m[1]!);
+    return {
+      company: { ...c.fields, id: c.id, name: c.name, nameAr: c.nameAr ?? '', country: c.country, currency: c.currency, crNumber: c.crNumber,
+        vatStatus: c.vatStatus, vatNumber: c.vatNumber ?? '', vatRate: c.vatRate, city: c.city, invoicePrefix: c.invoicePrefix,
+        paymentTermsDays: String(c.paymentTermsDays), status: c.status },
+      users: db.memberships.filter((x) => x.companyId === c.id).map((x) => ({ x, u: db.users.find((u) => u.id === x.userId)! }))
+        .filter(({ u }) => u.kind === 'client').map(({ x, u }) => ({ ...person(u), role: x.role })),
+      staff: db.users.filter((u) => u.kind === 'firm_staff').map((u) => ({ id: u.id, name: u.name, role: u.staffRole, status: u.status,
+        assigned: db.memberships.some((x) => x.userId === u.id && x.companyId === c.id) })),
+    };
   }],
   ['POST', /^\/api\/admin\/companies$/, (_m, b) => {
-    if (me().kind !== 'admin') fail(403, 'Only the Administrator can do this.', 'err.adminOnly');
+    admin();
     const c = (b?.company ?? {}) as Record<string, string | undefined>;
-    const v = (k: string) => (c[k] ?? '').trim();
-    const country = v('country') as Company['country'];
+    const country = (c.country ?? '').trim() as Company['country'];
     const d = { SA: ['SAR', '15.00'], AE: ['AED', '5.00'], OM: ['OMR', '5.00'] }[country];
     if (!d) fail(400, 'Choose the country.', 'err.country');
-    const registered = v('vatStatus') !== 'unregistered';
     const fu = (b?.firstUser ?? {}) as Record<string, string | undefined>;
-    if (!v('name') || !v('crNumber') || !v('legalForm') || !v('address') || !v('city')) fail(400, 'Fill in all required fields.', 'err.required');
     if (!(fu.name ?? '').trim() || !(fu.email ?? '').trim()) fail(400, 'Add the first client user (name and email).', 'err.firstClientUser');
-    if (country === 'SA' && !/^\d{10}$/.test(v('crNumber'))) fail(400, 'A Saudi CR number has 10 digits.', 'err.saCr');
-    if (registered && !v('vatNumber')) fail(400, 'Enter the VAT number, or choose VAT unregistered.', 'err.vatNumber');
-    if (registered && country === 'SA' && !/^3\d{13}3$/.test(v('vatNumber'))) fail(400, 'A Saudi VAT number has 15 digits, starting and ending with 3.', 'err.saVat');
-    if (registered && country === 'AE' && !/^\d{15}$/.test(v('vatNumber'))) fail(400, 'A UAE TRN has 15 digits.', 'err.aeTrn');
-    if (db.companies.some((x) => x.crNumber === v('crNumber'))) fail(400, 'A client with this registration number already exists.', 'err.crTaken');
-    if (registered && db.companies.some((x) => x.vatNumber === v('vatNumber'))) fail(400, 'A client with this VAT number already exists.', 'err.vatTaken');
-    if (db.users.some((u) => u.email.toLowerCase() === (fu.email ?? '').trim().toLowerCase())) fail(400, 'A user with this email already exists.', 'err.emailTaken');
+    emailFree(fu.email!);
     const id = uid();
-    db.companies.push({ id, name: v('name'), nameAr: v('nameAr') || null, country, currency: d![0]!, vatRate: registered ? d![1]! : '0.00',
-      vatStatus: registered ? 'registered' : 'unregistered', vatNumber: registered ? v('vatNumber') : null, crNumber: v('crNumber'), city: v('city'),
-      invoicePrefix: v('invoicePrefix') || 'INV-', paymentTermsDays: Number(v('paymentTermsDays') || 30) });
-    const user: User = { id: uid(), name: fu.name!.trim(), email: fu.email!.trim(), kind: 'client', staffRole: null, twoFactor: false };
-    db.users.push(user);
+    const co: Company = { id, country, currency: d![0]!, status: 'active', name: '', nameAr: null, vatRate: '0', vatStatus: 'registered', vatNumber: null,
+      crNumber: '', city: '', invoicePrefix: 'INV-', paymentTermsDays: 30, fields: {} };
+    applyCompany(co, c);
+    db.companies.push(co);
+    const user = addUser(fu.name!, fu.email!, 'client', null);
     db.memberships.push({ userId: user.id, companyId: id, role: fu.role === 'client_viewer' ? 'client_viewer' : 'client_accountant' });
-    for (const sid of (b?.staffIds as string[] | undefined) ?? []) {
-      const st = db.users.find((u) => u.id === sid && u.kind === 'firm_staff');
-      if (st) db.memberships.push({ userId: st.id, companyId: id, role: st.staffRole! });
-    }
+    logActivity('act.clientAdded', { client: co.name });
+    for (const sid of (b?.staffIds as string[] | undefined) ?? []) assign(sid, id, true);
     setupBooks(id);
-    return { id };
+    return { id, invite: newInvite(user) };
+  }],
+  ['POST', /^\/api\/admin\/companies\/([\w-]+)$/, (m, b) => {
+    admin();
+    const c = company(m[1]!);
+    applyCompany(c, { ...(b?.company as Record<string, string | undefined>), country: c.country });
+    logActivity('act.clientUpdated', { client: c.name });
+    return { ok: true };
+  }],
+  ['POST', /^\/api\/admin\/companies\/([\w-]+)\/status$/, (m, b) => {
+    admin();
+    const c = company(m[1]!);
+    c.status = b?.active ? 'active' : 'suspended';
+    logActivity(b?.active ? 'act.clientReactivated' : 'act.clientSuspended', { client: c.name });
+    return { ok: true };
+  }],
+  ['POST', /^\/api\/admin\/companies\/([\w-]+)\/users$/, (m, b) => {
+    admin();
+    const c = company(m[1]!);
+    const name = String(b?.name ?? '').trim(), email = String(b?.email ?? '').trim();
+    if (!name || !email) fail(400, 'Enter the name and email.', 'err.nameEmail');
+    emailFree(email);
+    const u = addUser(name, email, 'client', null);
+    db.memberships.push({ userId: u.id, companyId: c.id, role: b?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant' });
+    return { invite: newInvite(u) };
+  }],
+  ['POST', /^\/api\/admin\/companies\/([\w-]+)\/staff$/, (m, b) => { admin(); return assign(String(b?.userId), m[1]!, Boolean(b?.assigned)); }],
+  ['GET', /^\/api\/admin\/staff$/, () => {
+    admin();
+    return db.users.filter((u) => u.kind === 'firm_staff').sort((a, b) => a.name.localeCompare(b.name)).map((u) => {
+      const ms = db.memberships.filter((x) => x.userId === u.id);
+      return { ...person(u), role: u.staffRole, clientIds: ms.map((x) => x.companyId),
+        clients: ms.map((x) => db.companies.find((c) => c.id === x.companyId)!.name).sort() };
+    });
+  }],
+  ['POST', /^\/api\/admin\/staff$/, (_m, b) => {
+    admin();
+    const name = String(b?.name ?? '').trim(), email = String(b?.email ?? '').trim(), role = String(b?.role ?? '') as Role;
+    if (!name || !email) fail(400, 'Enter the name and email.', 'err.nameEmail');
+    if (!['partner', 'reviewer', 'staff_accountant'].includes(role)) fail(400, 'Choose the role.', 'err.role');
+    emailFree(email);
+    const u = addUser(name, email, 'firm_staff', role);
+    for (const cid of (b?.clientIds as string[] | undefined) ?? []) assign(u.id, cid, true);
+    return { invite: newInvite(u) };
+  }],
+  ['POST', /^\/api\/admin\/users\/([\w-]+)\/status$/, (m, b) => {
+    const a = admin();
+    if (m[1] === a.id) fail(400, 'You cannot suspend yourself.', 'err.selfSuspend');
+    const u = user(m[1]!);
+    u.status = b?.active ? 'active' : 'suspended';
+    logActivity(b?.active ? 'act.userReactivated' : 'act.userSuspended', { name: u.name });
+    return { ok: true };
+  }],
+  ['POST', /^\/api\/admin\/users\/([\w-]+)\/invite$/, (m) => {
+    admin();
+    const u = user(m[1]!);
+    if (u.status !== 'active') fail(400, 'Reactivate this person first.', 'err.inviteSuspended');
+    return { invite: newInvite(u) };
+  }],
+  ['POST', /^\/api\/admin\/users\/([\w-]+)\/reset-two-factor$/, (m) => {
+    admin();
+    const u = user(m[1]!);
+    u.twoFactor = false;
+    logActivity('act.twoFactorReset', { name: u.name });
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/admin\/activity$/, () => { admin(); return db.activity.slice(0, 300); }],
+  ['GET', /^\/api\/admin\/settings$/, () => {
+    admin();
+    const active = db.users.filter((u) => u.status === 'active');
+    return { firmName: db.firmName, users: { total: db.users.length, active: active.length, suspended: db.users.length - active.length,
+      twoFactor: active.filter((u) => u.twoFactor).length, invitesPending: active.filter((u) => u.inviteToken).length,
+      neverSignedIn: active.filter((u) => !u.password).length } };
+  }],
+  ['POST', /^\/api\/admin\/settings$/, (_m, b) => {
+    admin();
+    const name = String(b?.firmName ?? '').trim();
+    if (!name) fail(400, 'Enter the firm name.', 'err.firmName');
+    db.firmName = name;
+    logActivity('act.firmRenamed', { name });
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/invite\/([\w-]+)$/, (m) => {
+    const u = db.users.find((x) => x.inviteToken === m[1] && x.status === 'active');
+    if (!u) return fail(404, 'This link has expired or was already used.', 'err.inviteInvalid');
+    return { name: u.name, email: u.email };
+  }],
+  ['POST', /^\/api\/invite\/([\w-]+)$/, (m, b) => {
+    const u = db.users.find((x) => x.inviteToken === m[1] && x.status === 'active');
+    if (!u) return fail(404, 'This link has expired or was already used.', 'err.inviteInvalid');
+    const pw = String(b?.password ?? '');
+    if (pw.length < 10) fail(400, 'Use at least 10 characters.', 'err.passwordShort');
+    u.password = pw; u.inviteToken = null;
+    db.activity.unshift({ id: uid(), at: new Date().toISOString(), actor: u.name, key: 'act.passwordSet', params: { name: u.name } });
+    return { ok: true };
   }],
 ];
 

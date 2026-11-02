@@ -42,3 +42,7 @@ Entry settings per client: invoice prefix, payment terms, period lock date.
 ## Reference
 - docs/PRODUCT_SPEC.md: full feature list. docs/DECISIONS.md: decisions and open questions. docs/ACCOUNTING_RULES.md: tests to write first.
 - prototype/nusuhbooks.html: clickable UI prototype (browser-only data). Use it as the visual and flow reference, not as production code.
+
+## Commands
+- `npm run db:up` / `npm run db:migrate` / `npm test` / `npm run typecheck`. See README.md.
+- Schema changes go in a new file in `db/migrations/`. Never edit an applied migration. Record each change and the reason for it in docs/SCHEMA_CHANGES.md.

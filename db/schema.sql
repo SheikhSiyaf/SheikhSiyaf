@@ -1,3 +1,4 @@
+-- SUPERSEDED: the live schema is db/migrations/. Kept as the original starter-kit draft; see docs/SCHEMA_CHANGES.md.
 -- Nusuh Books foundation schema (PostgreSQL 14+). Untested draft: run it and the rule tests first.
 CREATE TYPE account_type AS ENUM ('asset','liability','equity','income','expense');
 CREATE TYPE user_role AS ENUM ('partner','reviewer','client_accountant','client_viewer');

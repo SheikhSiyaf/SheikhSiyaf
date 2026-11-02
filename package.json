@@ -1,0 +1,26 @@
+{
+  "name": "nusuhbooks",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nusuh Books: accounting platform for accounting firms and their clients (SA, UAE, later Oman).",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

@@ -105,6 +105,7 @@ const en = {
   'journal.searchPlaceholder': 'Search descriptions or exact amounts',
   'journal.reverse': 'Reverse',
   'journal.reverseConfirm': 'Post a reversal of this entry dated today?',
+  'journal.reverseYes': 'Post reversal',
   'journal.reversed': 'Reversed',
   'journal.reversalOf': 'Reversal',
   'journal.reverseLocked': 'Today is in a locked period, so reversals are not possible.',
@@ -265,6 +266,7 @@ const en = {
   'err.adminOnly': 'Only the Administrator can do this.',
   'err.country': 'Choose the country.',
   'err.network': 'Cannot reach the server. Check that it is running.',
+  'demo.banner': 'Demo preview with sample data. Nothing is saved: reloading the page starts again.',
 };
 
 export type Key = keyof typeof en;
@@ -373,6 +375,7 @@ const ar: Record<Key, string> = {
   'journal.searchPlaceholder': 'ابحث في الوصف أو بمبلغ محدد',
   'journal.reverse': 'عكس',
   'journal.reverseConfirm': 'ترحيل قيد عكسي لهذا القيد بتاريخ اليوم؟',
+  'journal.reverseYes': 'ترحيل القيد العكسي',
   'journal.reversed': 'معكوس',
   'journal.reversalOf': 'قيد عكسي',
   'journal.reverseLocked': 'تاريخ اليوم في فترة مقفلة، لذا لا يمكن العكس.',
@@ -533,6 +536,7 @@ const ar: Record<Key, string> = {
   'err.adminOnly': 'مدير النظام وحده يمكنه ذلك.',
   'err.country': 'اختر الدولة.',
   'err.network': 'تعذّر الوصول إلى الخادم. تأكد أنه يعمل.',
+  'demo.banner': 'معاينة تجريبية ببيانات نموذجية. لا يُحفظ شيء: إعادة تحميل الصفحة تبدأ من جديد.',
 };
 
 export type Lang = 'en' | 'ar';

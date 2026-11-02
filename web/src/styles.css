@@ -29,7 +29,7 @@ nav.side .soon { color: var(--mut); }
 .brand { margin: 0 6px 14px; }
 .brand b { display: block; font-size: 18px; color: var(--teal); }
 .brand span { color: var(--mut); font-size: 13px; }
-main { flex: 1; min-width: 0; padding: 14px 16px 40px; }
+main { flex: 1; min-width: 0; padding-block: 14px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
 .top h1 { margin: 0; font-size: 20px; flex: 1 1 160px; }
 input, select, textarea, button.b { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
@@ -77,8 +77,22 @@ tr.total td { font-weight: 700; border-bottom: 0; }
   nav.side { width: 100%; display: flex; overflow-x: auto; gap: 4px; border-inline-end: 0; border-bottom: 1px solid var(--line); padding: 8px; }
   nav.side button { width: auto; white-space: nowrap; }
   .brand { display: none; }
-  main { padding: 12px 16px 40px; }
+  main { padding-block: 12px 40px; }
+  nav.side { padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
 }
 /* Numbers stay left-to-right inside Arabic pages, but line up with the right-to-left layout. */
 [dir="rtl"] .ltr { text-align: right; }
 [dir="rtl"] .num.ltr { text-align: left; }
+
+.demo-banner { background: var(--warnbg); color: var(--warn); font-size: 13px; text-align: center; padding-block: 6px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+/* Journal lines on phones: each line stacks (account, cost centre, then debit | credit | remove). */
+@media (max-width: 760px) {
+  table.lines thead { display: none; }
+  table.lines, table.lines tbody { display: block; }
+  table.lines tr { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; padding-block: 8px; border-bottom: 1px solid var(--line); }
+  table.lines td { border: 0; padding: 0; min-width: 0 !important; }
+  table.lines td:nth-child(1), table.lines td:nth-child(2) { grid-column: 1 / -1; }
+  table.lines tr.total { grid-template-columns: auto 1fr auto auto; align-items: center; border-bottom: 0; }
+  table.lines tr.total td:nth-child(1), table.lines tr.total td:nth-child(2) { grid-column: auto; }
+  table.lines tr.total td:last-child { display: none; }
+}

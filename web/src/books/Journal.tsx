@@ -126,8 +126,8 @@ function NewEntry({ books, onPosted }: { books: CompanyBooks; onPosted: () => vo
                       {books.costCentres.map((c) => <option key={c.id} value={c.id}>{local(c.name, c.nameAr)}</option>)}
                     </select>
                   </td>
-                  <td><input inputMode="decimal" className="num ltr" value={l.debit} onChange={(e) => set(i, { debit: e.target.value, credit: e.target.value ? '' : l.credit })} aria-label={t('debit')} placeholder="0.00" /></td>
-                  <td><input inputMode="decimal" className="num ltr" value={l.credit} onChange={(e) => set(i, { credit: e.target.value, debit: e.target.value ? '' : l.debit })} aria-label={t('credit')} placeholder="0.00" /></td>
+                  <td><input inputMode="decimal" className="num ltr" value={l.debit} onChange={(e) => set(i, { debit: e.target.value, credit: e.target.value ? '' : l.credit })} aria-label={t('debit')} placeholder={t('debit')} /></td>
+                  <td><input inputMode="decimal" className="num ltr" value={l.credit} onChange={(e) => set(i, { credit: e.target.value, debit: e.target.value ? '' : l.debit })} aria-label={t('credit')} placeholder={t('credit')} /></td>
                   <td className="num">
                     <button className="b" disabled={lines.length <= 2} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} aria-label={t('journal.removeLine')} title={t('journal.removeLine')}>×</button>
                   </td>
@@ -164,9 +164,10 @@ function EntryCard({ entry, books, onReversed }: { entry: Entry; books: CompanyB
   const local = useLocalName();
   const [error, setError] = useState<unknown>();
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const todayLocked = isLocked(books, today());
   const reverse = async () => {
-    if (!window.confirm(t('journal.reverseConfirm'))) return;
+    setConfirming(false);
     setBusy(true); setError(undefined);
     try {
       await api(`/api/entries/${entry.id}/reverse`, { body: { date: today() } });
@@ -181,10 +182,18 @@ function EntryCard({ entry, books, onReversed }: { entry: Entry; books: CompanyB
         {entry.reversedById && <span className="badge warn">{t('journal.reversed')}</span>}
         {entry.reversesEntryId && <span className="badge">{t('journal.reversalOf')}</span>}
         <span className="spacer" />
-        {books.canPost && !entry.reversedById && !entry.reversesEntryId && (
-          <button className="b" disabled={busy || todayLocked} title={todayLocked ? t('journal.reverseLocked') : undefined} onClick={() => void reverse()}>{t('journal.reverse')}</button>
+        {books.canPost && !entry.reversedById && !entry.reversesEntryId && !confirming && (
+          <button className="b" disabled={busy || todayLocked} title={todayLocked ? t('journal.reverseLocked') : undefined} onClick={() => setConfirming(true)}>{t('journal.reverse')}</button>
         )}
       </div>
+      {confirming && (
+        <div className="notice warn actions" role="group">
+          <span>{t('journal.reverseConfirm')}</span>
+          <span className="spacer" />
+          <button className="b p" disabled={busy} onClick={() => void reverse()}>{t('journal.reverseYes')}</button>
+          <button className="b" onClick={() => setConfirming(false)}>{t('cancel')}</button>
+        </div>
+      )}
       <div className="wrap">
         <table>
           <tbody>

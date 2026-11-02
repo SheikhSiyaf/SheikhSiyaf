@@ -8,6 +8,16 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
+  if (import.meta.env.VITE_DEMO === '1') {
+    // Demo build: the same rules, run in the browser against sample data (web/src/demo/mockApi.ts).
+    const { handle } = await import('./demo/mockApi.ts');
+    const r = handle(init?.method ?? (init?.body !== undefined ? 'POST' : 'GET'), path, init?.body);
+    if (r.status >= 400) {
+      const e = r.data as { error: string; key?: string; details?: string[] };
+      throw new ApiError(r.status, e.error, e.key, e.details);
+    }
+    return r.data as T;
+  }
   let res: Response;
   try {
     res = await fetch(path, {

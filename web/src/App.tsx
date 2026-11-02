@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { api, useApi, type Me } from './api.ts';
-import { navigate, usePath } from './router.ts';
+import { DEMO, navigate, usePath } from './router.ts';
+import { useI18n } from './i18n.tsx';
 import { Login } from './pages/Login.tsx';
 import { MyClients } from './pages/MyClients.tsx';
 import { Workspace } from './books/Workspace.tsx';
@@ -8,6 +9,20 @@ import { AdminConsole } from './admin/AdminConsole.tsx';
 import { ErrorNote, Loading } from './ui.tsx';
 
 export function App() {
+  return (
+    <>
+      {DEMO && <DemoBanner />}
+      <Screens />
+    </>
+  );
+}
+
+function DemoBanner() {
+  const { t } = useI18n();
+  return <div className="demo-banner" role="note">{t('demo.banner')}</div>;
+}
+
+function Screens() {
   const me = useApi<Me>('/api/me');
   const path = usePath();
 

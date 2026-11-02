@@ -12,5 +12,5 @@
     "allowImportingTsExtensions": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "../src/money.ts"]
+  "include": ["src", "../src/money.ts", "../src/vat/vat.ts", "../src/books/chartTemplate.ts", "../src/db/demoData.ts"]
 }

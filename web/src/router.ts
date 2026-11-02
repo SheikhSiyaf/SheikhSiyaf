@@ -1,19 +1,33 @@
-// Tiny path router on the History API.
+// Tiny path router. Uses the History API; the demo build (VITE_DEMO) keeps the path in memory,
+// because a published preview page cannot change its own URL path.
 import { useEffect, useState } from 'react';
 
+export const DEMO = import.meta.env.VITE_DEMO === '1';
+let memoryPath = '/';
+const current = () => (DEMO ? memoryPath : window.location.pathname);
+
 export function navigate(to: string) {
-  if (to === window.location.pathname) return;
-  window.history.pushState(null, '', to);
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  if (to === current()) return;
+  if (DEMO) {
+    memoryPath = to;
+    window.dispatchEvent(new Event('nb:navigate'));
+  } else {
+    window.history.pushState(null, '', to);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }
   window.scrollTo(0, 0);
 }
 
 export function usePath(): string {
-  const [path, setPath] = useState(window.location.pathname);
+  const [path, setPath] = useState(current());
   useEffect(() => {
-    const on = () => setPath(window.location.pathname);
+    const on = () => setPath(current());
     window.addEventListener('popstate', on);
-    return () => window.removeEventListener('popstate', on);
+    window.addEventListener('nb:navigate', on);
+    return () => {
+      window.removeEventListener('popstate', on);
+      window.removeEventListener('nb:navigate', on);
+    };
   }, []);
   return path;
 }

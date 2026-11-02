@@ -19,7 +19,8 @@
     "db:reset": "tsx src/db/reset.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:demo": "vite build --config web/vite.config.ts --mode demo && node scripts/demo-page.mjs"
   },
   "dependencies": {
     "fastify": "^5.12.8",

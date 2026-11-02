@@ -27,7 +27,7 @@ export function registerSalesRoutes(app: FastifyInstance, { as }: Ctx) {
 
   // ---------------------------------------------------------------- contacts
   app.get<{ Params: P; Querystring: { role?: string; q?: string } }>('/api/companies/:id/contacts', async (req) =>
-    inCompany(req, req.params.id, (db, c) => S.listContacts(db, c, req.query.role === 'supplier' ? 'supplier' : 'customer', req.query.q ?? '')));
+    inCompany(req, req.params.id, (db, c) => S.listContacts(db, c, (['supplier', 'employee', 'payee'] as const).find((r) => r === req.query.role) ?? 'customer', req.query.q ?? '')));
   app.post<{ Params: P; Body: S.ContactInput }>('/api/companies/:id/contacts', async (req) =>
     inCompany(req, req.params.id, async (db, c) => ({ id: await S.saveContact(db, c, req.body ?? {}) })));
   app.get<{ Params: P }>('/api/contacts/:id', async (req) => as(req, (db) => S.getContact(db, uuidParam(req.params.id))));

@@ -5,6 +5,7 @@ import { useI18n, useLocalName } from '../i18n.tsx';
 import { fmt } from '../money.ts';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
 import type { Category } from './Overview.tsx';
+import { ArabicHint, followArabic } from '../arabic.tsx';
 
 export function Categories({ books, onAdded }: { books: CompanyBooks; onAdded: () => void }) {
   const { t, has } = useI18n();
@@ -50,8 +51,8 @@ export function Categories({ books, onAdded }: { books: CompanyBooks; onAdded: (
           {msg.ok && <div className="notice">{msg.ok}</div>}
           {msg.bad && <div className="notice bad">{msg.bad}</div>}
           <div className="row">
-            <label className="f">{t('exp.categoryNameLabel')}<input id="cat-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder={t('exp.categoryPlaceholder')} /></label>
-            <label className="f">{t('reg.nameAr')}<input id="cat-name-ar" dir="rtl" value={f.nameAr} onChange={(e) => setF({ ...f, nameAr: e.target.value })} /></label>
+            <label className="f">{t('exp.categoryNameLabel')}<input id="cat-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value, nameAr: followArabic(f.name, e.target.value, f.nameAr) })} placeholder={t('exp.categoryPlaceholder')} /></label>
+            <label className="f">{t('ar.nameAr')}<input id="cat-name-ar" dir="rtl" value={f.nameAr} onChange={(e) => setF({ ...f, nameAr: e.target.value })} /><ArabicHint english={f.name} arabic={f.nameAr} /></label>
           </div>
           <label className="actions" style={{ marginBottom: 10 }}>
             <input type="checkbox" checked={f.costCentreRequired} onChange={(e) => setF({ ...f, costCentreRequired: e.target.checked })} />

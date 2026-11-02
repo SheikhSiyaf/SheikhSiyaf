@@ -6,6 +6,7 @@ import { api, useApi, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { navigate } from '../router.ts';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
+import { ArabicHint, followArabic } from '../arabic.tsx';
 
 type Country = 'SA' | 'AE' | 'OM';
 interface ClientRow {
@@ -146,8 +147,10 @@ function CompanyForm({ f, set, editing }: { f: Fields; set: (k: string, v: strin
       <div className="card">
         <h2>{t('reg.company')}</h2>
         <div className="row">
-          <label className="f">{t('reg.name')}<input id="reg-name" value={v('name')} onChange={on('name')} /></label>
-          <label className="f">{t('reg.nameAr')}<input id="reg-name-ar" value={v('nameAr')} onChange={on('nameAr')} dir="rtl" /></label>
+          <label className="f">{t('reg.name')}<input id="reg-name" value={v('name')}
+            onChange={(e) => { const ar = followArabic(v('name'), e.target.value, v('nameAr')); set('name', e.target.value); if (ar !== v('nameAr')) set('nameAr', ar); }} /></label>
+          <label className="f">{t('reg.nameAr')}<input id="reg-name-ar" value={v('nameAr')} onChange={on('nameAr')} dir="rtl" />
+            <ArabicHint english={v('name')} arabic={v('nameAr')} /></label>
           <label className="f">{t('reg.tradeName')}<input id="reg-trade" value={v('tradeName')} onChange={on('tradeName')} /></label>
         </div>
         <div className="row">
@@ -413,7 +416,7 @@ function ClientPage({ id }: { id: string }) {
 
       {/* Registration and entry settings */}
       <form onSubmit={save} noValidate>
-        <CompanyForm f={fields} set={(k, v) => setF({ ...fields, [k]: v })} editing />
+        <CompanyForm f={fields} set={(k, v) => setF((cur) => ({ ...(cur ?? fields), [k]: v }))} editing />
         <button className="b p" type="submit" disabled={busy || !f}>{t('admin.saveDetails')}</button>
       </form>
     </>

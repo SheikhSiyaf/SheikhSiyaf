@@ -24,7 +24,8 @@ interface Company {
   fields: Record<string, string>;   // the rest of the registration form, as entered
 }
 interface Account { id: string; companyId: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank: boolean }
-interface CostCentre { id: string; companyId: string; name: string; nameAr: string | null; kind: string }
+interface CostCentre { id: string; companyId: string; name: string; nameAr: string | null; kind: string; status?: string; budget?: string | null; contactId?: string | null;
+  startDate?: string | null; endDate?: string | null; description?: string | null }
 interface Period { companyId: string; startDate: string; endDate: string; lockedAt: string | null }
 interface Line { id: string; accountId: string; costCentreId: string | null; debit: bigint; credit: bigint }
 interface Entry { id: string; companyId: string; date: string; memo: string | null; createdBy: string; createdAt: string; reversesEntryId: string | null; lines: Line[] }
@@ -189,11 +190,13 @@ interface MContact {
   id: string; companyId: string; isCustomer: boolean; isSupplier: boolean; name: string; nameAr: string | null; vatNumber: string | null;
   crNumber: string | null; email: string | null; phone: string | null; address: string | null; city: string | null; country: string | null;
   paymentTermsDays: number | null; status: 'active' | 'archived';
+  isEmployee: boolean; employeeNo: string | null; jobTitle: string | null; defaultCostCentreId: string | null;
 }
 interface MDoc {
   id: string; companyId: string; type: DocType; status: string; number: string | null; contactId: string | null; issueDate: string; dueDate: string | null;
   reference: string | null; notes: string | null; originalId: string | null; journalEntryId: string | null; lines: (PricedLine & { id: string })[]; createdAt: string;
   payee?: string | null; paidFromAccountId?: string | null; recurringId?: string | null; voidedAt?: string | null;
+  submittedBy?: string | null; decidedBy?: string | null; rejectionReason?: string | null;
 }
 interface MPayment {
   id: string; companyId: string; direction: Direction; number: string; contactId: string; date: string; amount: bigint; accountId: string;
@@ -218,17 +221,18 @@ function nextNo(companyId: string, seq: string, prefix: string) {
 }
 const sysAccts = (companyId: string) => {
   const a = (code: string) => db.accounts.find((x) => x.companyId === companyId && x.code === code)!.id;
-  return { receivables: a('1100'), payables: a('2000'), outputVat: a('2100'), inputVat: a('1200') };
+  return { receivables: a('1100'), payables: a('2000'), outputVat: a('2100'), inputVat: a('1200'), claimsPayable: a('2200') };
 };
 const docTotals = (d: MDoc) => documentTotals(d.lines);
 function amountDue(d: MDoc): bigint {
-  if (!['invoice', 'bill'].includes(d.type) || d.status !== 'issued') return 0n;   // expenses are paid at once
+  if (!['invoice', 'bill', 'claim'].includes(d.type) || d.status !== 'issued') return 0n;   // expenses are paid at once
   const paid = sdb.payments.filter((p) => !p.voidedAt).flatMap((p) => p.allocations).filter((a) => a.documentId === d.id).reduce((s, a) => s + a.amount, 0n);
   const credited = sdb.docs.filter((c) => c.originalId === d.id && isCredit(c.type) && c.status === 'issued').reduce((s, c) => s + docTotals(c).gross, 0n);
   return docTotals(d).gross - paid - credited;
 }
 function stateOfDoc(d: MDoc): string {
   if (d.type === 'quotation' || d.type === 'expense' || d.status === 'draft' || isCredit(d.type)) return d.status;
+  if (d.type === 'claim') return d.status !== 'issued' ? d.status : amountDue(d) > 0n ? 'approved' : 'reimbursed';
   const due = amountDue(d);
   if (due < 0n) return 'credit';
   if (due === 0n) return 'paid';
@@ -242,20 +246,26 @@ function docRow(d: MDoc) {
   return { id: d.id, companyId: d.companyId, type: d.type, status: d.status, state: stateOfDoc(d), number: d.number, contactId: d.contactId, contactName: c?.name ?? d.payee ?? '',
     contactNameAr: c?.nameAr ?? null, payee: d.payee ?? null, paidFromAccountId: d.paidFromAccountId ?? null, paidFromName: pa?.name ?? null, paidFromNameAr: pa?.nameAr ?? null,
     recurringId: d.recurringId ?? null, voidedAt: d.voidedAt ?? null, issueDate: d.issueDate, dueDate: d.dueDate, reference: d.reference, notes: d.notes, originalId: d.originalId,
-    journalEntryId: d.journalEntryId, netTotal: s(t.net), vatTotal: s(t.vat), grossTotal: s(t.gross), amountDue: s(amountDue(d)), createdAt: d.createdAt };
+    journalEntryId: d.journalEntryId, netTotal: s(t.net), vatTotal: s(t.vat), grossTotal: s(t.gross), amountDue: s(amountDue(d)), createdAt: d.createdAt,
+    submittedBy: d.submittedBy ?? null, submittedByName: db.users.find((u) => u.id === d.submittedBy)?.name ?? null,
+    decidedByName: db.users.find((u) => u.id === d.decidedBy)?.name ?? null, rejectionReason: d.rejectionReason ?? null };
 }
 function saveContactM(companyId: string, b: Record<string, unknown>, id?: string) {
   canPostIn(companyId);
   const t = (k: string) => (typeof b[k] === 'string' && (b[k] as string).trim() ? (b[k] as string).trim() : null);
   if (!t('name')) fail(400, 'Enter the name.', 'err.contactName');
-  if (!b.isCustomer && !b.isSupplier) fail(400, 'Choose customer, supplier or both.', 'err.contactRole');
+  if (!b.isCustomer && !b.isSupplier && !b.isEmployee) fail(400, 'Choose customer, supplier or both.', 'err.contactRole');
+  if (b.isEmployee && (b.isCustomer || b.isSupplier)) fail(400, 'An employee cannot also be a customer or supplier.', 'err.employeeOnly');
+  if (b.isEmployee && t('employeeNo') && sdb.contacts.some((c) => c.companyId === companyId && c.id !== id && c.employeeNo === t('employeeNo')))
+    fail(400, 'Another employee already has this employee number.', 'err.employeeNoTaken');
   const country = t('country')?.toUpperCase() ?? null, vat = t('vatNumber')?.replace(/\s/g, '') ?? null;
   if (vat && country === 'SA' && !/^3\d{13}3$/.test(vat)) fail(400, 'A Saudi VAT number has 15 digits, starting and ending with 3.', 'err.saVat');
   if (vat && country === 'AE' && !/^\d{15}$/.test(vat)) fail(400, 'A UAE TRN has 15 digits.', 'err.aeTrn');
   const terms = b.paymentTermsDays === '' || b.paymentTermsDays == null ? null : Number(b.paymentTermsDays);
   const v: Omit<MContact, 'id' | 'companyId'> = { isCustomer: Boolean(b.isCustomer), isSupplier: Boolean(b.isSupplier), name: t('name')!, nameAr: t('nameAr'),
     vatNumber: vat, crNumber: t('crNumber'), email: t('email'), phone: t('phone'), address: t('address'), city: t('city'), country, paymentTermsDays: terms,
-    status: b.status === 'archived' ? 'archived' : 'active' };
+    status: b.status === 'archived' ? 'archived' : 'active', isEmployee: Boolean(b.isEmployee), employeeNo: b.isEmployee ? t('employeeNo') : null,
+    jobTitle: b.isEmployee ? t('jobTitle') : null, defaultCostCentreId: b.isEmployee ? (b.defaultCostCentreId as string) || null : null };
   if (id) { Object.assign(sdb.contacts.find((x) => x.id === id) ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
   const nid = uid(); sdb.contacts.push({ id: nid, companyId, ...v }); return nid;
 }
@@ -276,11 +286,12 @@ function saveDraftM(companyId: string, b: Record<string, unknown>, id?: string):
   const existing = id ? sdb.docs.find((d) => d.id === id) ?? fail(404, 'Not found.', 'err.notFound') : undefined;
   if (existing && existing.status !== 'draft') fail(400, 'Only drafts can be changed.', 'err.notDraft');
   const type = (existing?.type ?? b.type) as DocType;
-  if (!['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense'].includes(type)) fail(400, 'Choose the document type.', 'err.format');
+  if (!['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense', 'claim'].includes(type)) fail(400, 'Choose the document type.', 'err.format');
   const isExpense = type === 'expense';
   const contact = b.contactId ? sdb.contacts.find((c) => c.id === b.contactId && c.companyId === companyId) : undefined;
   if (!contact && !(isExpense && !b.contactId)) fail(400, 'Choose the customer or supplier.', 'err.contact');
-  if (contact && (sideOf(type) === 'sales' ? !contact.isCustomer : !contact.isSupplier)) fail(400, 'Choose a customer or supplier of this company.', 'err.contact');
+  if (contact && (type === 'claim' ? !contact.isEmployee : sideOf(type) === 'sales' ? !contact.isCustomer : !contact.isSupplier))
+    fail(400, type === 'claim' ? 'Choose an employee for this claim.' : 'Choose a customer or supplier of this company.', type === 'claim' ? 'err.pickEmployee' : 'err.contact');
   if (isExpense && b.paidFromAccountId && !db.accounts.some((a) => a.id === b.paidFromAccountId && a.companyId === companyId && a.isBank))
     fail(400, 'Choose one of this company\'s bank or cash accounts.', 'err.bankAccount');
   const issueDate = String(b.issueDate ?? '');
@@ -290,7 +301,7 @@ function saveDraftM(companyId: string, b: Record<string, unknown>, id?: string):
   const lines = priceLinesM(companyId, sideOf(type), b.lines as LineInput[]);
   const head = { contactId: contact?.id ?? null, issueDate, dueDate: isExpense ? null : dueDate, reference: (b.reference as string)?.trim() || null, notes: (b.notes as string)?.trim() || null, lines,
     payee: isExpense ? (b.payee as string)?.trim() || null : null, paidFromAccountId: isExpense ? (b.paidFromAccountId as string) || null : null };
-  if (existing) { Object.assign(existing, head); return existing.id; }
+  if (existing) { Object.assign(existing, { ...head, dueDate: type === 'claim' ? null : head.dueDate }); return existing.id; }
   const nid = uid();
   sdb.docs.push({ id: nid, companyId, type, status: 'draft', number: null, originalId: (b.originalId as string) ?? null, journalEntryId: null, createdAt: new Date().toISOString(),
     recurringId: isExpense ? (b.recurringId as string) ?? null : null, ...head });
@@ -301,6 +312,7 @@ function issueM(id: string) {
   const d = docOf(id);
   canPostIn(d.companyId);
   if (d.status !== 'draft') fail(400, 'This document has already been issued.', 'err.alreadyIssued');
+  if (d.type === 'claim') fail(400, 'Claims are submitted and approved, not issued.', 'err.format');
   if (!d.lines.length) fail(400, 'Add at least one line.', 'err.noLines');
   if (d.type === 'expense' && !d.paidFromAccountId) fail(400, 'Choose the bank or cash account the expense was paid from.', 'err.bankAccount');
   if (d.type === 'expense' && !d.contactId && !(d.payee ?? '').trim()) fail(400, 'Enter who was paid (a supplier or a payee name).', 'err.payee');
@@ -344,10 +356,38 @@ function creditM(id: string) {
   if (!['invoice', 'bill'].includes(o.type) || o.status !== 'issued') fail(400, 'Only issued invoices and bills can be credited.', 'err.notIssued');
   return saveDraftM(o.companyId, { type: o.type === 'invoice' ? 'credit_note' : 'supplier_credit', contactId: o.contactId, issueDate: today(), reference: o.number, originalId: o.id, lines: copyLines(o) });
 }
+function submitClaimM(id: string) {
+  const d = docOf(id); canPostIn(d.companyId);
+  if (d.type !== 'claim' || d.status !== 'draft') fail(400, 'Only draft claims can be submitted.', 'err.notDraft');
+  if (!d.lines.length) fail(400, 'Add at least one line.', 'err.noLines');
+  if (!d.number) d.number = nextNo(d.companyId, 'claim', 'CLM-');
+  d.status = 'submitted'; d.submittedBy = session; d.decidedBy = null; d.rejectionReason = null;
+}
+function decideM(id: string, approve: boolean, reason = '') {
+  const d = docOf(id); canPostIn(d.companyId);
+  if (d.type !== 'claim' || d.status !== 'submitted') fail(400, 'Only submitted claims can be approved or rejected.', 'err.claimNotSubmitted');
+  if (d.submittedBy === session) fail(400, 'You submitted this claim, so someone else must approve or reject it.', 'err.selfApprove');
+  if (!approve) {
+    if (!reason.trim()) fail(400, 'Give a reason for rejecting the claim.', 'err.rejectReason');
+    d.status = 'rejected'; d.decidedBy = session; d.rejectionReason = reason.trim(); return;
+  }
+  if (d.lines.some((l) => !l.costCentreId && db.accounts.find((a) => a.id === l.accountId)?.costCentreRequired))
+    fail(400, 'A cost centre is required for one of the accounts used.', 'err.costCentreRequired');
+  const c = sdb.contacts.find((x) => x.id === d.contactId)!;
+  d.journalEntryId = post(session!, d.companyId, d.issueDate, `${d.number} · ${c.name}`,
+    postingFor('claim', d.lines, sysAccts(d.companyId)).map((l) => ({ accountId: l.accountId, costCentreId: l.costCentreId ?? null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
+  d.status = 'issued'; d.decidedBy = session;
+}
+function reopenM(id: string) {
+  const d = docOf(id); canPostIn(d.companyId);
+  if (d.type !== 'claim' || !['submitted', 'rejected'].includes(d.status)) fail(400, 'Only submitted or rejected claims go back to draft.', 'err.format');
+  d.status = 'draft'; d.submittedBy = null; d.decidedBy = null;
+}
+
 function payM(companyId: string, b: Record<string, unknown>) {
   canPostIn(companyId);
   const direction = b.direction === 'made' ? 'made' : 'received';
-  const contact = sdb.contacts.find((c) => c.id === b.contactId && c.companyId === companyId && (direction === 'received' ? c.isCustomer : c.isSupplier));
+  const contact = sdb.contacts.find((c) => c.id === b.contactId && c.companyId === companyId && (direction === 'received' ? c.isCustomer : c.isSupplier || c.isEmployee));
   if (!contact) fail(400, 'Choose the customer or supplier.', 'err.contact');
   const bank = db.accounts.find((a) => a.id === b.accountId && a.companyId === companyId && a.isBank);
   if (!bank) fail(400, 'Choose the bank or cash account.', 'err.bankAccount');
@@ -360,7 +400,7 @@ function payM(companyId: string, b: Record<string, unknown>) {
   if (allocs.reduce((x, a) => x + a.amount, 0n) > amount) fail(400, 'The amounts settled are more than the payment.', 'err.overAllocated');
   for (const a of allocs) {
     const d = sdb.docs.find((x) => x.id === a.documentId);
-    if (!d || d.contactId !== contact!.id || d.status !== 'issued' || d.type !== (direction === 'received' ? 'invoice' : 'bill'))
+    if (!d || d.contactId !== contact!.id || d.status !== 'issued' || d.type !== (direction === 'received' ? 'invoice' : contact!.isEmployee ? 'claim' : 'bill'))
       fail(400, 'A payment can only settle issued invoices (or bills) of the same customer (or supplier).', 'err.contact');
     if (a.amount <= 0n || a.amount > amountDue(d!)) fail(400, 'This is more than is due on the invoice.', 'err.overDue');
   }
@@ -368,7 +408,7 @@ function payM(companyId: string, b: Record<string, unknown>) {
   const id = uid();
   const seq = direction === 'received' ? 'receipt' : 'payment';
   const number = nextNo(companyId, seq, numberPrefix(seq, ''));
-  const entry = postingForPayment(direction, amount, bank!.id, sysAccts(companyId));
+  const entry = postingForPayment(direction, amount, bank!.id, sysAccts(companyId), contact!.isEmployee);
   const je = post(session!, companyId, date, `${number} · ${contact!.name}`, entry.map((l) => ({ accountId: l.accountId, costCentreId: null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
   sdb.payments.push({ id, companyId, direction, number, contactId: contact!.id, date, amount, accountId: bank!.id, method: String(b.method ?? 'bank_transfer'),
     reference: (b.reference as string)?.trim() || null, journalEntryId: je, voidedAt: null, allocations: allocs, createdAt: new Date().toISOString() });
@@ -382,7 +422,7 @@ function payRow(p: MPayment) {
     voidedAt: p.voidedAt, unallocated: s(p.amount - p.allocations.reduce((x, y) => x + y.amount, 0n)), createdAt: p.createdAt };
 }
 function contactRow(c: MContact) {
-  const docs = sdb.docs.filter((d) => d.contactId === c.id && d.status === 'issued' && (c.isCustomer ? d.type === 'invoice' : d.type === 'bill'));
+  const docs = sdb.docs.filter((d) => d.contactId === c.id && d.status === 'issued' && (c.isEmployee ? d.type === 'claim' : c.isCustomer ? d.type === 'invoice' : d.type === 'bill'));
   return { ...c, balanceDue: s(docs.reduce((x, d) => x + amountDue(d), 0n)),
     overdue: s(docs.filter((d) => d.dueDate && d.dueDate < today() && amountDue(d) > 0n).reduce((x, d) => x + amountDue(d), 0n)) };
 }
@@ -439,6 +479,102 @@ function spentByAccount(companyId: string, from: string, to: string) {
   }).sort((x, y) => x.code.localeCompare(y.code));
 }
 
+// ------------------------------------------------------------------ ledgers and projects (same as src/books/ledgerService.ts)
+/** Which document or payment each journal entry came from (reversals point to the same source). */
+function entrySources(companyId: string) {
+  const m = new Map<string, { contactId: string | null; number: string | null; sourceType: string; sourceId: string }>();
+  for (const d of sdb.docs) if (d.companyId === companyId && d.journalEntryId) m.set(d.journalEntryId, { contactId: d.contactId, number: d.number, sourceType: 'document', sourceId: d.id });
+  for (const p of sdb.payments) if (p.companyId === companyId) m.set(p.journalEntryId, { contactId: p.contactId, number: p.number, sourceType: 'payment', sourceId: p.id });
+  for (const e of db.entries) if (e.companyId === companyId && e.reversesEntryId && m.has(e.reversesEntryId)) m.set(e.id, m.get(e.reversesEntryId)!);
+  return m;
+}
+type Src = { contactId: string | null; number: string | null; sourceType: string; sourceId: string };
+function lineRow(e: Entry, l: Line, src?: Src) {
+  const a = db.accounts.find((x) => x.id === l.accountId)!; const cc = db.costCentres.find((x) => x.id === l.costCentreId);
+  return { date: e.date, entryId: e.id, memo: e.memo, sourceType: src?.sourceType ?? null, sourceId: src?.sourceId ?? null, number: src?.number ?? null,
+    accountCode: a.code, accountName: a.name, accountNameAr: a.nameAr, accountType: a.type, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null,
+    debit: s(l.debit), credit: s(l.credit), d: l.debit, c: l.credit, at: e.createdAt };
+}
+type LRow = ReturnType<typeof lineRow>;
+const strip = ({ d: _d, c: _c, at: _at, ...r }: LRow) => r;
+function running(opening: bigint, rows: LRow[], sign: 1n | -1n) {
+  let bal = opening; let td = 0n, tc = 0n;
+  const out = rows.map((r) => { bal += sign * (r.d - r.c); td += r.d; tc += r.c; return { ...strip(r), balance: s(bal) }; });
+  return { opening: s(opening), rows: out, closing: s(bal), totalDebit: s(td), totalCredit: s(tc) };
+}
+const byDate = (a: LRow, b: LRow) => a.date.localeCompare(b.date) || a.at.localeCompare(b.at);
+function rangeOf(q: URLSearchParams) { const to = q.get('to') || today(); return { from: q.get('from') || `${to.slice(0, 4)}-01-01`, to }; }
+function accountLedgerM(companyId: string, accountId: string, from: string, to: string) {
+  const acct = db.accounts.find((a) => a.id === accountId && a.companyId === companyId) ?? fail(404, 'Not found.', 'err.notFound');
+  const sign: 1n | -1n = ['asset', 'expense'].includes(acct.type) ? 1n : -1n;
+  const src = entrySources(companyId); let open = 0n; const rows: LRow[] = [];
+  for (const e of db.entries) if (e.companyId === companyId) for (const l of e.lines) if (l.accountId === accountId) {
+    if (e.date < from) open += l.debit - l.credit; else if (e.date <= to) rows.push(lineRow(e, l, src.get(e.id)));
+  }
+  return { account: { id: acct.id, code: acct.code, name: acct.name, nameAr: acct.nameAr, type: acct.type }, from, to, ...running(sign * open, rows.sort(byDate), sign) };
+}
+function costCentreLedgerM(companyId: string, ccId: string, from: string, to: string) {
+  const cc = db.costCentres.find((x) => x.id === ccId && x.companyId === companyId) ?? fail(404, 'Not found.', 'err.notFound');
+  const src = entrySources(companyId); const rows: LRow[] = []; let income = 0n, expense = 0n;
+  for (const e of db.entries) if (e.companyId === companyId && e.date >= from && e.date <= to) for (const l of e.lines) if (l.costCentreId === ccId) {
+    const r = lineRow(e, l, src.get(e.id)); rows.push(r);
+    if (r.accountType === 'income') income += l.credit - l.debit;
+    if (r.accountType === 'expense') expense += l.debit - l.credit;
+  }
+  rows.sort((a, b) => byDate(a, b) || a.accountCode.localeCompare(b.accountCode));
+  return { costCentre: { id: cc.id, name: cc.name, nameAr: cc.nameAr, kind: cc.kind, budget: cc.budget ?? null }, from, to,
+    rows: rows.map(strip), income: s(income), expense: s(expense), profit: s(income - expense) };
+}
+const controlFor = (c: MContact) => (c.isEmployee ? SYSTEM_ACCOUNTS.claimsPayable : c.isCustomer ? SYSTEM_ACCOUNTS.receivables : SYSTEM_ACCOUNTS.payables);
+function contactLines(companyId: string, c: MContact) {
+  const control = db.accounts.find((a) => a.companyId === companyId && a.code === controlFor(c))!.id; const src = entrySources(companyId);
+  const out: { e: Entry; l: Line; src: Src }[] = [];
+  for (const e of db.entries) { const x = src.get(e.id); if (e.companyId === companyId && x?.contactId === c.id) for (const l of e.lines) if (l.accountId === control) out.push({ e, l, src: x }); }
+  return out;
+}
+function contactLedgerM(companyId: string, contactId: string, from: string, to: string) {
+  const c = sdb.contacts.find((x) => x.id === contactId && x.companyId === companyId) ?? fail(404, 'Not found.', 'err.notFound');
+  const sign: 1n | -1n = c.isCustomer && !c.isEmployee ? 1n : -1n; let open = 0n; const rows: LRow[] = [];
+  for (const { e, l, src } of contactLines(companyId, c)) { if (e.date < from) open += l.debit - l.credit; else if (e.date <= to) rows.push(lineRow(e, l, src)); }
+  return { contact: { id: c.id, name: c.name, nameAr: c.nameAr, isCustomer: c.isCustomer, isSupplier: c.isSupplier, isEmployee: c.isEmployee }, from, to, ...running(sign * open, rows.sort(byDate), sign) };
+}
+function contactBalancesM(companyId: string, role: string, asOf: string) {
+  const flag = role === 'employee' ? 'isEmployee' : role === 'customer' ? 'isCustomer' : role === 'supplier' ? 'isSupplier' : fail(404, 'Not found.', 'err.notFound');
+  return sdb.contacts.filter((c) => c.companyId === companyId && c[flag]).sort((a, b) => a.status.localeCompare(b.status) || a.name.localeCompare(b.name)).map((c) => {
+    const v = contactLines(companyId, c).filter((x) => x.e.date <= asOf).reduce((t, x) => t + x.l.debit - x.l.credit, 0n);
+    return { id: c.id, name: c.name, nameAr: c.nameAr, employeeNo: c.employeeNo, status: c.status, balance: s(role === 'customer' ? v : -v) };
+  });
+}
+function projectRow(cc: CostCentre, from?: string | null, to?: string | null) {
+  let income = 0n, expense = 0n;
+  for (const e of db.entries) if (e.companyId === cc.companyId && (!from || e.date >= from) && (!to || e.date <= to)) for (const l of e.lines) if (l.costCentreId === cc.id) {
+    const t = db.accounts.find((a) => a.id === l.accountId)!.type;
+    if (t === 'income') income += l.credit - l.debit;
+    if (t === 'expense') expense += l.debit - l.credit;
+  }
+  const c = sdb.contacts.find((x) => x.id === cc.contactId); const budget = cc.budget ? toMinor(cc.budget) : 0n;
+  return { id: cc.id, companyId: cc.companyId, name: cc.name, nameAr: cc.nameAr, status: cc.status ?? 'active', budget: cc.budget ?? null, startDate: cc.startDate ?? null,
+    endDate: cc.endDate ?? null, contactId: cc.contactId ?? null, description: cc.description ?? null, customerName: c?.name ?? null, customerNameAr: c?.nameAr ?? null,
+    income: s(income), expense: s(expense), profit: s(income - expense), budgetUsed: budget > 0n ? Number((expense * 1000n) / budget) / 10 : null };
+}
+function saveProjectM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId);
+  const t = (k: string) => (typeof b[k] === 'string' && (b[k] as string).trim() ? (b[k] as string).trim() : null);
+  if (!t('name')) fail(400, 'Enter the project name.', 'err.projectName');
+  let budget: string | null = null;
+  if (t('budget')) {
+    try { budget = s(toMinor(t('budget')!.replace(/,/g, ''))); } catch { fail(400, 'The budget must be a number with up to 2 decimals.', 'err.amountFormat'); }
+    if (toMinor(budget!) < 0n) fail(400, 'The budget cannot be negative.', 'err.amountFormat');
+  }
+  if (t('startDate') && t('endDate') && t('endDate')! < t('startDate')!) fail(400, 'The end date cannot be before the start date.', 'err.endDate');
+  const contactId = t('contactId');
+  if (contactId && !sdb.contacts.some((c) => c.id === contactId && c.companyId === companyId && c.isCustomer)) fail(400, 'The project customer must be a customer of this company.', 'err.projectCustomer');
+  const v = { name: t('name')!, nameAr: t('nameAr'), contactId, budget, startDate: t('startDate'), endDate: t('endDate'), status: b.status === 'closed' ? 'closed' : 'active', description: t('description') };
+  if (id) { Object.assign(db.costCentres.find((x) => x.id === id && x.kind === 'project') ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
+  const nid = uid(); db.costCentres.push({ id: nid, companyId, kind: 'project', ...v }); return nid;
+}
+const projectOf = (id: string) => db.costCentres.find((x) => x.id === id && x.kind === 'project' && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+
 function seedSales(companyId: string, poster: string, c: { country: string; city: string; vatRate: string }) {
   const prev = session; session = poster;
   const acct = (code: string) => db.accounts.find((a) => a.companyId === companyId && a.code === code)!.id;
@@ -487,6 +623,25 @@ function seedSales(companyId: string, poster: string, c: { country: string; city
     lines: [{ ...SL('Monthly office rent', '1', '4000.00', 'Head office', '5100'), vatCode: 'exempt' }] });
   saveRecurringM(companyId, { name: 'Internet and phones', contactId: telecom, paidFromAccountId: acct('1000'), frequency: 'monthly', nextDate: daysAgo(2),
     lines: [{ ...SL('Fibre internet and 5 mobile lines', '1', '299.00', undefined, '5300'), vatCode: 'standard' }] });
+  // Projects: Project A gets a customer and budget; a second project with its own invoice and costs.
+  Object.assign(db.costCentres.find((x) => x.companyId === companyId && x.name === 'Project A')!, { budget: '5000.00', contactId: walkIn, startDate: daysAgo(40), status: 'active' });
+  const fitOut = saveProjectM(companyId, { name: 'Warehouse fit-out', nameAr: 'تجهيز المستودع', contactId: faisal, budget: '8000.00', startDate: daysAgo(30) });
+  issueM(saveDraftM(companyId, { type: 'invoice', contactId: faisal, issueDate: daysAgo(15), dueDate: daysAgo(-15), lines: [{ ...SL('Fit-out works, stage 1', '1', '9500.00'), costCentreId: fitOut }] }));
+  issueM(saveDraftM(companyId, { type: 'bill', contactId: najd, issueDate: daysAgo(14), dueDate: daysAgo(-1), reference: 'NW-88190', lines: [{ ...SL('Shelving and racks', '1', '5200.00', undefined, '5000'), costCentreId: fitOut }] }));
+  // Employees and their expense claims: one reimbursed, one waiting for approval, one rejected.
+  const yusuf = saveContactM(companyId, { isEmployee: true, name: 'Yusuf Karim', nameAr: 'يوسف كريم', employeeNo: 'E-001', jobTitle: 'Driver', defaultCostCentreId: cc('Branch 1') });
+  const mona = saveContactM(companyId, { isEmployee: true, name: 'Mona Saeed', nameAr: 'منى سعيد', employeeNo: 'E-002', jobTitle: 'Site engineer', defaultCostCentreId: fitOut });
+  const claim = (who: string, ago: number, desc: string, amount: string, code: string, centre: string | null, vatCode = 'standard') => {
+    const id = saveDraftM(companyId, { type: 'claim', contactId: who, issueDate: daysAgo(ago), reference: `R-${ago}`, lines: [{ ...SL(desc, '1', amount, undefined, code), costCentreId: centre, vatCode }] });
+    submitClaimM(id); return id;
+  };
+  const c1 = claim(yusuf, 20, 'Fuel and tolls for deliveries', '230.00', '5400', cc('Branch 1'));
+  claim(mona, 8, 'Site materials bought on the spot', '640.00', '5000', fitOut);
+  const c3 = claim(yusuf, 5, 'Lunch with customer', '180.00', '5400', null, 'zero');
+  session = db.memberships.find((m) => m.companyId === companyId && m.role === 'partner')!.userId;   // someone other than the submitter decides
+  decideM(c1, true); decideM(c3, false, 'Customer lunches need a pre-approval form');
+  session = poster;
+  pay('made', yusuf, 16, c1, s(amountDue(sdb.docs.find((d) => d.id === c1)!)), '1010', 'cash');
   session = prev;
 }
 
@@ -703,8 +858,8 @@ const routes: [string, RegExp, Handler][] = [
   }],
   // ---------------------------------------------------------------- sales and purchases
   ['GET', /^\/api\/companies\/([\w-]+)\/contacts$/, (m, _b, q) => {
-    const id = inCo(m[1]!); const role = q.get('role') === 'supplier' ? 'isSupplier' : 'isCustomer'; const needle = (q.get('q') ?? '').trim().toLowerCase();
-    return sdb.contacts.filter((c) => c.companyId === id && c[role] && (!needle || [c.name, c.nameAr, c.vatNumber].join(' ').toLowerCase().includes(needle)))
+    const id = inCo(m[1]!); const r = q.get('role'); const role = r === 'supplier' ? 'isSupplier' : r === 'employee' ? 'isEmployee' : 'isCustomer'; const needle = (q.get('q') ?? '').trim().toLowerCase();
+    return sdb.contacts.filter((c) => c.companyId === id && (r === 'payee' ? c.isSupplier || c.isEmployee : c[role]) && (!needle || [c.name, c.nameAr, c.vatNumber].join(' ').toLowerCase().includes(needle)))
       .sort((a, b) => a.status.localeCompare(b.status) || a.name.localeCompare(b.name)).map(contactRow);
   }],
   ['POST', /^\/api\/companies\/([\w-]+)\/contacts$/, (m, b) => ({ id: saveContactM(inCo(m[1]!), b ?? {}) })],
@@ -736,6 +891,21 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/documents\/([\w-]+)\/quotation-status$/, (m, b) => { quoteStatusM(m[1]!, String(b?.status)); return { ok: true }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/convert$/, (m) => ({ id: convertM(m[1]!) })],
   ['POST', /^\/api\/documents\/([\w-]+)\/credit$/, (m) => ({ id: creditM(m[1]!) })],
+  // ---------------------------------------------------------------- claims, ledgers, projects
+  ['POST', /^\/api\/documents\/([\w-]+)\/submit$/, (m) => { submitClaimM(m[1]!); return { ok: true }; }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/reopen$/, (m) => { reopenM(m[1]!); return { ok: true }; }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/approve$/, (m) => { decideM(m[1]!, true); return { ok: true }; }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/reject$/, (m, b) => { decideM(m[1]!, false, String(b?.reason ?? '')); return { ok: true }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/ledger\/account\/([\w-]+)$/, (m, _b, q) => { const r = rangeOf(q); return accountLedgerM(inCo(m[1]!), m[2]!, r.from, r.to); }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/ledger\/cost-centre\/([\w-]+)$/, (m, _b, q) => { const r = rangeOf(q); return costCentreLedgerM(inCo(m[1]!), m[2]!, r.from, r.to); }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/ledger\/contact\/([\w-]+)$/, (m, _b, q) => { const r = rangeOf(q); return contactLedgerM(inCo(m[1]!), m[2]!, r.from, r.to); }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/ledger\/balances\/(\w+)$/, (m, _b, q) => contactBalancesM(inCo(m[1]!), m[2]!, q.get('asOf') || today())],
+  ['GET', /^\/api\/companies\/([\w-]+)\/projects$/, (m, _b, q) => { const id = inCo(m[1]!);
+    return db.costCentres.filter((x) => x.companyId === id && x.kind === 'project').map((x) => projectRow(x, q.get('from'), q.get('to')))
+      .sort((a, b) => a.status.localeCompare(b.status) || a.name.localeCompare(b.name)); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/projects$/, (m, b) => ({ id: saveProjectM(inCo(m[1]!), b ?? {}) })],
+  ['GET', /^\/api\/projects\/([\w-]+)$/, (m) => projectRow(projectOf(m[1]!))],
+  ['POST', /^\/api\/projects\/([\w-]+)$/, (m, b) => { const p = projectOf(m[1]!); return { id: saveProjectM(p.companyId, b ?? {}, p.id) }; }],
   ['GET', /^\/api\/companies\/([\w-]+)\/payments$/, (m, _b, q) => {
     const id = inCo(m[1]!); const dir = q.get('direction'); const needle = (q.get('q') ?? '').trim().toLowerCase(); const cid = q.get('contactId');
     return sdb.payments.filter((p) => p.companyId === id && p.direction === dir && (!cid || p.contactId === cid)).map(payRow)
@@ -754,7 +924,7 @@ const routes: [string, RegExp, Handler][] = [
     reverse(session!, p.journalEntryId, String(b?.date ?? today())); p.voidedAt = new Date().toISOString(); return { ok: true };
   }],
   ['GET', /^\/api\/companies\/([\w-]+)\/open-documents$/, (m, _b, q) => {
-    const id = inCo(m[1]!); const type = q.get('direction') === 'made' ? 'bill' : 'invoice';
+    const id = inCo(m[1]!); const emp = sdb.contacts.find((c) => c.id === q.get('contactId'))?.isEmployee; const type = q.get('direction') === 'made' ? (emp ? 'claim' : 'bill') : 'invoice';
     return sdb.docs.filter((d) => d.companyId === id && d.contactId === q.get('contactId') && d.type === type && d.status === 'issued' && amountDue(d) > 0n)
       .sort((a, b) => (a.dueDate ?? a.issueDate).localeCompare(b.dueDate ?? b.issueDate))
       .map((d) => ({ id: d.id, number: d.number, issueDate: d.issueDate, dueDate: d.dueDate, grossTotal: s(docTotals(d).gross), amountDue: s(amountDue(d)) }));

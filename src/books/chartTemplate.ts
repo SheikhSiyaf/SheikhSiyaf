@@ -16,6 +16,7 @@ export const SYSTEM_ACCOUNTS = {
   inputVat: '1200',
   payables: '2000',
   outputVat: '2100',
+  claimsPayable: '2200',
   sales: '4000',
   costOfSales: '5000',
 } as const;
@@ -28,6 +29,7 @@ export const CHART_TEMPLATE: TemplateAccount[] = [
   { code: '1500', name: 'Equipment', nameAr: 'المعدات', type: 'asset' },
   { code: '2000', name: 'Accounts payable', nameAr: 'الذمم الدائنة', type: 'liability' },
   { code: '2100', name: 'Output VAT', nameAr: 'ضريبة المخرجات', type: 'liability' },
+  { code: '2200', name: 'Employee claims payable', nameAr: 'مطالبات الموظفين المستحقة', type: 'liability' },
   { code: '3000', name: "Owner's equity", nameAr: 'حقوق الملكية', type: 'equity' },
   { code: '4000', name: 'Sales', nameAr: 'المبيعات', type: 'income' },
   { code: '5000', name: 'Cost of sales', nameAr: 'تكلفة المبيعات', type: 'expense' },

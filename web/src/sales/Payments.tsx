@@ -59,7 +59,7 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
   const local = useLocalName();
   const go = useGo(books.company.id);
   const m = moduleOfSide(sideOfDir(direction));
-  const contacts = useApi<Contact[]>(`/api/companies/${books.company.id}/contacts?role=${direction === 'received' ? 'customer' : 'supplier'}`);
+  const contacts = useApi<Contact[]>(`/api/companies/${books.company.id}/contacts?role=${direction === 'received' ? 'customer' : 'payee'}`);
   const banks = bankAccounts(books);
   const [contactId, setContactId] = useState(presetContactId ?? '');
   const open = useApi<OpenDoc[]>(contactId ? `/api/companies/${books.company.id}/open-documents?contactId=${contactId}&direction=${direction}` : null);
@@ -90,6 +90,7 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
   const onAmount = (v: string) => { setAmount(v); if (!manual) autoFill(v); };
   const onContact = (id: string) => { setContactId(id); setAlloc({}); setManual(false); setAmount(''); };
 
+  const toEmployee = Boolean(contacts.data?.find((c) => c.id === contactId)?.isEmployee);
   const amt = isAmount(amount) ? toMinor(normalise(amount)) : null;
   const allocated = Object.values(alloc).reduce((s, v) => s + (isAmount(v) ? toMinor(normalise(v)) : 0n), 0n);
   const problems: string[] = [];
@@ -156,11 +157,11 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
       {contactId && (
         <div className="card">
           <div className="actions" style={{ marginBottom: 8 }}>
-            <h2 style={{ margin: 0 }}>{t(direction === 'received' ? 'pay.whichInvoices' : 'pay.whichBills')}</h2>
+            <h2 style={{ margin: 0 }}>{t(direction === 'received' ? 'pay.whichInvoices' : toEmployee ? 'pay.whichClaims' : 'pay.whichBills')}</h2>
             <span className="spacer" />
             {open.data && open.data.length > 0 && <button className="link small" onClick={() => { setManual(false); autoFill(amount); }}>{t('pay.oldestFirst')}</button>}
           </div>
-          {!open.data ? <Loading /> : open.data.length === 0 ? <div className="mut">{t(direction === 'received' ? 'pay.nothingOpenSales' : 'pay.nothingOpenPurchases')}</div> : (
+          {!open.data ? <Loading /> : open.data.length === 0 ? <div className="mut">{t(direction === 'received' ? 'pay.nothingOpenSales' : toEmployee ? 'pay.nothingOpenClaims' : 'pay.nothingOpenPurchases')}</div> : (
             <div className="wrap">
               <table className="stack">
                 <thead><tr><th>{t('doc.number')}</th><th>{t('doc.dueDate')}</th><th className="num">{t('doc.amountDue')}</th><th className="num">{t('pay.settle')}</th></tr></thead>
@@ -239,7 +240,7 @@ export function PaymentView({ books, direction, id }: { books: CompanyBooks; dir
         </div>
         <table>
           <tbody>
-            <tr><td className="mut">{t(direction === 'received' ? 'pay.from' : 'pay.to')}</td><td><button className="link" onClick={() => go(m, direction === 'received' ? 'customers' : 'suppliers', x.contactId)}>{x.contactName}</button></td></tr>
+            <tr><td className="mut">{t(direction === 'received' ? 'pay.from' : 'pay.to')}</td><td><button className="link" onClick={() => (x.allocations.some((a) => a.type === 'claim') ? go('Ledger', 'employee-ledger', x.contactId) : go(m, direction === 'received' ? 'customers' : 'suppliers', x.contactId))}>{x.contactName}</button></td></tr>
             <tr><td className="mut">{t('doc.date')}</td><td>{x.date}</td></tr>
             <tr><td className="mut">{t('pay.amount')}</td><td className="ltr"><b>{fmt(x.amount)} {books.company.currency}</b></td></tr>
             <tr><td className="mut">{t(direction === 'received' ? 'pay.intoAccount' : 'pay.fromAccount')}</td><td>{local(x.accountName, x.accountNameAr)} · {t(`method.${x.method}` as Key)}</td></tr>
@@ -249,11 +250,11 @@ export function PaymentView({ books, direction, id }: { books: CompanyBooks; dir
         </table>
         {x.allocations.length > 0 && (
           <>
-            <h2 style={{ fontSize: 15, marginTop: 14 }}>{t(direction === 'received' ? 'pay.settledInvoices' : 'pay.settledBills')}</h2>
+            <h2 style={{ fontSize: 15, marginTop: 14 }}>{t(direction === 'received' ? 'pay.settledInvoices' : x.allocations.some((a) => a.type === 'claim') ? 'pay.settledClaims' : 'pay.settledBills')}</h2>
             <table className="stack"><tbody>
               {x.allocations.map((a) => (
                 <tr key={a.documentId}>
-                  <td><button className="link" onClick={() => go(m, direction === 'received' ? 'invoices' : 'bills', a.documentId)}>{a.number}</button></td>
+                  <td><button className="link" onClick={() => (a.type === 'claim' ? go('Expenses', 'claims', a.documentId) : go(m, direction === 'received' ? 'invoices' : 'bills', a.documentId))}>{a.number}</button></td>
                   <td>{a.issueDate}</td>
                   <td className="num ltr">{fmt(a.amount)}</td>
                 </tr>

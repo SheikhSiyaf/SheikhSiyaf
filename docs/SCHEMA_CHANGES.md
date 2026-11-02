@@ -99,3 +99,14 @@ Every change below is covered by a test in `test/`.
 | Recording an expense needs a bank/cash account of the same company and either a supplier or a payee | The database refuses an expense that does not say where the money went or where it came from. |
 | `documents.voided_at`, `void_entry_id`, status `voided` (expenses only) | A recorded expense never changes. A mistake is voided: the reversing entry is posted, and only the void fields change. |
 | `recurring_expenses` (templates with frequency, next date, anchor day, end date and lines), with row-level security and audit | Rent, internet and subscriptions create **draft** expenses on their dates. Nothing posts automatically; a person checks and records each one. `anchor_day` keeps a 31st-of-the-month expense at month end every month. |
+
+## 0008_claim_type.sql and 0009_employees_claims_projects.sql
+| Change | Why |
+|---|---|
+| New document type `claim` (in its own migration) | PostgreSQL can only use a new enum value after the transaction that adds it has committed. |
+| `contacts.is_employee`, `employee_no` (unique per client), `job_title`, `default_cost_centre_id`; an employee is never also a customer or supplier | Employees are paid back for what they spend. Keeping them apart from customers and suppliers keeps their ledger separate. |
+| Template account `2200 Employee claims payable` (added to existing clients too) | An approved claim is owed to the employee until it is paid back: Dr expense, Dr input VAT, Cr 2200. Reimbursing is Dr 2200, Cr bank or cash. |
+| Claim statuses `draft` → `submitted` → `issued` (approved and posted) or `rejected` → back to `draft`. The number is given on submit and kept. `submitted_by`, `submitted_at`, `decided_by`, `decided_at`, `rejection_reason` | Approval before posting. A submitted claim can't be changed, so the approver sees exactly what was asked for. |
+| The person who submitted a claim cannot approve or reject it; rejecting needs a reason | Separation of duties, enforced in the database rather than only on screen. |
+| Payments made can go to a supplier (settling bills) or an employee (settling approved claims); `document_amount_due()` covers claims | One payment screen for both; a claim can never be over-paid. |
+| `cost_centres.status`, `budget`, `contact_id`, `start_date`, `end_date`, `description`; a project's customer must be a customer of the same client | Projects are cost centres of kind `project`, so every invoice, bill, expense and claim line can be tagged with one. Project income, costs, profit and budget used come straight from the ledger. |

@@ -30,6 +30,7 @@ async function systemAccounts(db: Db, companyId: string) {
   return {
     receivables: need(SYSTEM_ACCOUNTS.receivables), payables: need(SYSTEM_ACCOUNTS.payables),
     outputVat: need(SYSTEM_ACCOUNTS.outputVat), inputVat: need(SYSTEM_ACCOUNTS.inputVat),
+    claimsPayable: byCode.get(SYSTEM_ACCOUNTS.claimsPayable) as string | undefined,
   };
 }
 
@@ -44,25 +45,29 @@ async function nextNumber(db: Db, companyId: string, seq: string, prefix: string
 
 // ------------------------------------------------------------------ contacts
 export interface ContactInput {
-  isCustomer?: boolean; isSupplier?: boolean; name?: string; nameAr?: string; vatNumber?: string; crNumber?: string;
+  isCustomer?: boolean; isSupplier?: boolean; isEmployee?: boolean; employeeNo?: string; jobTitle?: string; defaultCostCentreId?: string | null;
+  name?: string; nameAr?: string; vatNumber?: string; crNumber?: string;
   email?: string; phone?: string; address?: string; city?: string; country?: string; paymentTermsDays?: string | number | null;
   status?: 'active' | 'archived';
 }
 const CONTACT_COLS = `c.id, c.is_customer AS "isCustomer", c.is_supplier AS "isSupplier", c.name, c.name_ar AS "nameAr",
   c.vat_number AS "vatNumber", c.cr_number AS "crNumber", c.email, c.phone, c.address, c.city, c.country,
-  c.payment_terms_days AS "paymentTermsDays", c.status`;
+  c.payment_terms_days AS "paymentTermsDays", c.status, c.is_employee AS "isEmployee", c.employee_no AS "employeeNo",
+  c.job_title AS "jobTitle", c.default_cost_centre_id AS "defaultCostCentreId"`;
 
 function contactValues(c: ContactInput) {
   const t = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
   if (!t(c.name)) bad('Enter the name.', 'err.contactName');
-  if (!c.isCustomer && !c.isSupplier) bad('Choose customer, supplier or both.', 'err.contactRole');
+  if (!c.isCustomer && !c.isSupplier && !c.isEmployee) bad('Choose customer, supplier or both.', 'err.contactRole');
+  if (c.isEmployee && (c.isCustomer || c.isSupplier)) bad('An employee cannot also be a customer or supplier.', 'err.employeeOnly');
   const email = t(c.email);
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) bad('Enter a valid email address.', 'err.email');
   const terms = c.paymentTermsDays === null || c.paymentTermsDays === undefined || c.paymentTermsDays === '' ? null : Number(c.paymentTermsDays);
   if (terms !== null && (!Number.isInteger(terms) || terms < 0 || terms > 365)) bad('Payment terms are 0 to 365 days.', 'err.terms');
   const country = t(c.country)?.toUpperCase() ?? null;
   return [Boolean(c.isCustomer), Boolean(c.isSupplier), t(c.name), t(c.nameAr), t(c.vatNumber)?.replace(/\s/g, '') ?? null, t(c.crNumber),
-    email, t(c.phone), t(c.address), t(c.city), country, terms, c.status === 'archived' ? 'archived' : 'active'];
+    email, t(c.phone), t(c.address), t(c.city), country, terms, c.status === 'archived' ? 'archived' : 'active',
+    Boolean(c.isEmployee), c.isEmployee ? t(c.employeeNo) : null, c.isEmployee ? t(c.jobTitle) : null, c.isEmployee ? c.defaultCostCentreId || null : null];
 }
 
 export async function saveContact(db: Db, companyId: string, c: ContactInput, id?: string): Promise<string> {
@@ -70,19 +75,22 @@ export async function saveContact(db: Db, companyId: string, c: ContactInput, id
   if (id) {
     const { rowCount } = await db.query(
       `UPDATE contacts SET is_customer=$2, is_supplier=$3, name=$4, name_ar=$5, vat_number=$6, cr_number=$7, email=$8, phone=$9,
-         address=$10, city=$11, country=$12, payment_terms_days=$13, status=$14 WHERE id = $1 AND company_id = $15`, [id, ...v, companyId]);
+         address=$10, city=$11, country=$12, payment_terms_days=$13, status=$14, is_employee=$15, employee_no=$16, job_title=$17,
+         default_cost_centre_id=$18 WHERE id = $1 AND company_id = $19`, [id, ...v, companyId]);
     if (!rowCount) notFound();
     return id;
   }
   const { rows } = await db.query(
     `INSERT INTO contacts (company_id, is_customer, is_supplier, name, name_ar, vat_number, cr_number, email, phone, address, city, country,
-       payment_terms_days, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`, [companyId, ...v]);
+       payment_terms_days, status, is_employee, employee_no, job_title, default_cost_centre_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, [companyId, ...v]);
   return rows[0].id;
 }
 
-export async function listContacts(db: Db, companyId: string, role: 'customer' | 'supplier', q = '') {
-  const flag = role === 'customer' ? 'is_customer' : 'is_supplier';
-  const types = role === 'customer' ? `('invoice')` : `('bill')`;
+/** role 'payee' = anyone money can be paid to: suppliers and employees. */
+export async function listContacts(db: Db, companyId: string, role: 'customer' | 'supplier' | 'employee' | 'payee', q = '') {
+  const flag = { customer: 'c.is_customer', supplier: 'c.is_supplier', employee: 'c.is_employee', payee: '(c.is_supplier OR c.is_employee)' }[role];
+  const types = { customer: `('invoice')`, supplier: `('bill')`, employee: `('claim')`, payee: `('bill', 'claim')` }[role];
   const { rows } = await db.query(
     `SELECT ${CONTACT_COLS},
        coalesce((SELECT sum(document_amount_due(d.id)) FROM documents d
@@ -91,7 +99,7 @@ export async function listContacts(db: Db, companyId: string, role: 'customer' |
                  WHERE d.contact_id = c.id AND d.type IN ${types} AND d.status = 'issued' AND d.due_date < current_date
                    AND document_amount_due(d.id) > 0), 0)::numeric(18,2)::text AS overdue
      FROM contacts c
-     WHERE c.company_id = $1 AND c.${flag}
+     WHERE c.company_id = $1 AND ${flag}
        AND ($2 = '' OR c.name ILIKE '%' || $2 || '%' OR coalesce(c.name_ar, '') ILIKE '%' || $2 || '%' OR coalesce(c.vat_number, '') LIKE $2 || '%')
      ORDER BY c.status, c.name`, [companyId, q.trim()]);
   return rows;
@@ -146,7 +154,7 @@ export async function saveDraft(db: Db, companyId: string, d: DocumentInput, id?
     if (!rowCount) bad('Only drafts can be changed.', 'err.notDraft');
     await db.query('DELETE FROM document_lines WHERE document_id = $1', [docId]);
   } else {
-    if (!d.type || !['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense'].includes(d.type)) bad('Choose the document type.', 'err.format');
+    if (!d.type || !['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense', 'claim'].includes(d.type)) bad('Choose the document type.', 'err.format');
     const { rows } = await db.query(
       `INSERT INTO documents (company_id, type, contact_id, issue_date, due_date, reference, notes, net_total, vat_total, gross_total,
          payee, paid_from_account_id, original_id, recurring_id, created_by)
@@ -183,6 +191,7 @@ export async function issueDocument(db: Db, id: string): Promise<void> {
   const d = await lockDoc(db, id);
   if (d.status !== 'draft') bad('This document has already been issued.', 'err.alreadyIssued');
   if (d.type === 'quotation') bad('Quotations are sent, not issued.', 'err.format');
+  if (d.type === 'claim') bad('Claims are submitted and approved, not issued.', 'err.format');
   const lines = await storedLines(db, id);
   if (!lines.length) bad('Add at least one line.', 'err.noLines');
   if (d.type === 'expense' && !d.paid_from_account_id) bad('Choose the bank or cash account the expense was paid from.', 'err.bankAccount');
@@ -245,7 +254,9 @@ export async function deleteDraft(db: Db, id: string): Promise<void> {
 
 const DOC_COLS = `d.id, d.company_id AS "companyId", d.type, d.status, d.number, d.contact_id AS "contactId", coalesce(c.name, d.payee) AS "contactName",
   c.name_ar AS "contactNameAr", d.payee, d.paid_from_account_id AS "paidFromAccountId", pa.name AS "paidFromName", pa.name_ar AS "paidFromNameAr",
-  d.recurring_id AS "recurringId", d.voided_at AS "voidedAt", d.issue_date::text AS "issueDate", d.due_date::text AS "dueDate", d.reference, d.notes,
+  d.recurring_id AS "recurringId", d.voided_at AS "voidedAt", d.submitted_by AS "submittedBy", d.submitted_at AS "submittedAt",
+  d.decided_by AS "decidedBy", d.decided_at AS "decidedAt", d.rejection_reason AS "rejectionReason",
+  (SELECT full_name FROM users WHERE id = d.submitted_by) AS "submittedByName", (SELECT full_name FROM users WHERE id = d.decided_by) AS "decidedByName", d.issue_date::text AS "issueDate", d.due_date::text AS "dueDate", d.reference, d.notes,
   d.original_id AS "originalId", d.journal_entry_id AS "journalEntryId",
   d.net_total::text AS "netTotal", d.vat_total::text AS "vatTotal", d.gross_total::text AS "grossTotal",
   document_amount_due(d.id)::numeric(18,2)::text AS "amountDue", d.created_at AS "createdAt", d.issued_at AS "issuedAt"`;
@@ -266,6 +277,7 @@ export async function listDocuments(db: Db, companyId: string, type: DocType, f:
 /** draft | issued | paid | partly_paid | unpaid | overdue | credit, or a quotation's own status */
 function stateOf(r: { type: DocType; status: string; amountDue: string; grossTotal: string; dueDate: string | null }, t: string): string {
   if (r.type === 'quotation' || r.type === 'expense' || r.status === 'draft' || isCredit(r.type)) return r.status;
+  if (r.type === 'claim') return r.status !== 'issued' ? r.status : toMinor(r.amountDue) > 0n ? 'approved' : 'reimbursed';
   const due = toMinor(r.amountDue);
   if (due < 0n) return 'credit';
   if (due === 0n) return 'paid';
@@ -294,6 +306,44 @@ export async function getDocument(db: Db, id: string) {
     `SELECT name, name_ar AS "nameAr", vat_number AS "vatNumber", cr_number AS "crNumber", address, city, country, currency
      FROM companies WHERE id = $1`, [d.companyId]);
   return { ...d, state: stateOf(d, today()), lines: lines.rows, payments: payments.rows, related: related.rows, contact, seller: seller.rows[0] };
+}
+
+// ------------------------------------------------------------------ employee claims
+/** Sends a draft claim for approval; it gets its number now and can no longer be edited. */
+export async function submitClaim(db: Db, id: string): Promise<void> {
+  const d = await lockDoc(db, id);
+  if (d.type !== 'claim') bad('Only claims are submitted for approval.', 'err.format');
+  if (d.status !== 'draft') bad('Only draft claims can be submitted.', 'err.notDraft');
+  if (!(await storedLines(db, id)).length) bad('Add at least one line.', 'err.noLines');
+  const number = d.number ?? await nextNumber(db, d.company_id, 'claim', numberPrefix('claim', ''));
+  await db.query(`UPDATE documents SET status = 'submitted', number = $2 WHERE id = $1`, [id, number]);
+}
+
+/** Back to draft: a submitted claim withdrawn, or a rejected one to be corrected. */
+export async function reopenClaim(db: Db, id: string): Promise<void> {
+  const d = await lockDoc(db, id);
+  if (d.type !== 'claim' || !['submitted', 'rejected'].includes(d.status)) bad('Only submitted or rejected claims go back to draft.', 'err.format');
+  await db.query(`UPDATE documents SET status = 'draft' WHERE id = $1`, [id]);
+}
+
+/** Approves a submitted claim and posts it: Dr expenses, Dr input VAT, Cr employee claims payable. */
+export async function approveClaim(db: Db, id: string): Promise<void> {
+  const d = await lockDoc(db, id);
+  if (d.type !== 'claim' || d.status !== 'submitted') bad('Only submitted claims can be approved.', 'err.claimNotSubmitted');
+  const sys = await systemAccounts(db, d.company_id);
+  if (!sys.claimsPayable) bad('This client\'s chart of accounts has no employee claims payable account (2200).', 'err.chart');
+  const entryId = await postEntry(db, {
+    companyId: d.company_id, entryDate: d.issue_day, memo: `${d.number} · ${d.contact_name}`, sourceType: 'claim', sourceId: d.id,
+    lines: postingFor('claim', await storedLines(db, id), sys),
+  });
+  await db.query(`UPDATE documents SET status = 'issued', journal_entry_id = $2 WHERE id = $1`, [id, entryId]);
+}
+
+export async function rejectClaim(db: Db, id: string, reason: string): Promise<void> {
+  const d = await lockDoc(db, id);
+  if (d.type !== 'claim' || d.status !== 'submitted') bad('Only submitted claims can be rejected.', 'err.claimNotSubmitted');
+  if (!reason.trim()) bad('Give a reason for rejecting the claim.', 'err.rejectReason');
+  await db.query(`UPDATE documents SET status = 'rejected', rejection_reason = $2 WHERE id = $1`, [id, reason.trim().slice(0, 500)]);
 }
 
 // ------------------------------------------------------------------ payments
@@ -326,7 +376,7 @@ export async function recordPayment(db: Db, companyId: string, p: PaymentInput):
   const contact = await getContact(db, p.contactId!);
   const entryId = await postEntry(db, {
     companyId, entryDate: p.date!, memo: `${number} · ${contact.name}`, sourceType: direction === 'received' ? 'payment_received' : 'payment_made', sourceId: id,
-    lines: postingForPayment(direction, amount, p.accountId!, await systemAccounts(db, companyId)),
+    lines: postingForPayment(direction, amount, p.accountId!, await systemAccounts(db, companyId), Boolean(contact.isEmployee)),
   });
   await db.query(
     `INSERT INTO payments (id, company_id, direction, number, contact_id, payment_date, amount, account_id, method, reference, journal_entry_id, created_by)
@@ -379,7 +429,7 @@ export async function openDocuments(db: Db, companyId: string, contactId: string
             document_amount_due(d.id)::numeric(18,2)::text AS "amountDue"
      FROM documents d WHERE d.company_id = $1 AND d.contact_id = $2 AND d.type = $3 AND d.status = 'issued'
        AND document_amount_due(d.id) > 0
-     ORDER BY coalesce(d.due_date, d.issue_date), d.issue_date`, [companyId, contactId, direction === 'received' ? 'invoice' : 'bill']);
+     ORDER BY coalesce(d.due_date, d.issue_date), d.issue_date`, [companyId, contactId, direction === 'received' ? 'invoice' : (await getContact(db, contactId)).isEmployee ? 'claim' : 'bill']);
   return rows;
 }
 

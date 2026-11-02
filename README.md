@@ -12,9 +12,15 @@ Read `CLAUDE.md` first. It holds the non-negotiable accounting rules.
     - **Sales:** overview of what is owed and what is late; customers; quotations (send, accept, convert to invoice); tax invoices; credit notes; payments received, which settle invoices oldest first.
     - **Purchases:** overview; suppliers; bills; supplier credits; payments made.
     - **Expenses:** overview (this month against last month, biggest categories, recurring expenses due); expenses paid at once by cash, card or bank, with a supplier or just a payee name, and voided if wrong; recurring expenses that create drafts to check; categories, which are expense accounts.
+      - **Employee claims:** an employee's out-of-pocket spending is entered as a claim and submitted. Someone other than the person who submitted it approves it (it then posts to `2200 Employee claims payable`) or rejects it with a reason (it goes back to draft to be corrected). **Approvals** lists the claims waiting. Approved claims are paid back with **Reimburse employee**.
+    - **Projects:** every project with income, costs, profit and budget used, from lines tagged with the project; a project page with its transactions; a comparison report. Projects are cost centres, so any invoice, bill, expense or claim line can be tagged.
+    - **HRM:** employees (number, job title, default cost centre). Payroll, leave, attendance, end of service, and iqama and documents describe what they will do.
     - **Journal:** entries, new entry, periods.
+    - **Ledger:** general ledger for any account and cost centre ledger, with opening, running and closing balances; customer, supplier and employee ledgers. The employee ledger shows claims approved and paid back.
     - **Reports:** trial balance, P&L, P&L by cost centre, expenses by category, expenses by supplier, aged receivables, aged payables, VAT summary. The VAT return comes later.
-    - **Bank, Inventory, Assets, HRM, CRM and Review:** their sub-pages describe what each will do. HRM covers employees, payroll, leave, attendance, end of service, and iqama and documents. CRM covers leads, pipeline, activities and campaigns.
+    - **Bank, Inventory, Assets, CRM and Review:** their sub-pages describe what each will do. CRM covers leads, pipeline, activities and campaigns.
+  - **Sidebar:** pressing a module opens its sub-menu; pressing it again closes it.
+  - **Arabic names:** when you type an English name for a customer, supplier, employee, project, category or client, the Arabic name is filled in as a suggestion (common business words are translated, names are written in Arabic letters). It is worked out inside the app, so no names are sent anywhere. Change it if needed; once you edit it, it is not overwritten.
   - Administrator console:
     - **Clients:** summary (active, suspended, without staff), search, the **Add client** registration page, and a **Manage** page per client. The Manage page lets you edit details and entry settings, add client users, tick which staff handle the client, and suspend or reactivate it.
     - **Staff:** add staff, change the clients each person handles, send a new sign-in link, reset two-factor, and suspend or reactivate.
@@ -64,7 +70,7 @@ Then open **http://localhost:5173**. Edits to the screens appear straight away. 
 | `npm test` | Runs every accounting-rule, data-separation and API test against a throwaway `nusuh_test` database. |
 | `npm run typecheck` | Type-checks the server and the web app. |
 | `npm run build` | Rebuilds the web app into `web/dist` (needed after changing screens before `npm start`). |
-| `npm run db:migrate` | Applies new database migrations. |
+| `npm run db:migrate` | Applies new database migrations. Run it after pulling new changes, then `npm run build`. |
 | `npm run db:seed` | Loads the demo firm, if it is not there yet. |
 | `npm run db:reset` | Development only: deletes the database and starts again with fresh demo data. |
 

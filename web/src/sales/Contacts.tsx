@@ -4,6 +4,7 @@ import { api, useApi, type CompanyBooks } from '../api.ts';
 import { useI18n, useLocalName } from '../i18n.tsx';
 import { fmt, fromMinor, toMinor } from '../money.ts';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
+import { ArabicHint, followArabic } from '../arabic.tsx';
 import { StateBadge, moduleOfSide, useGo, type Contact, type DocRow, type PaymentRow, type Side } from './common.tsx';
 
 const pageOf = (side: Side) => (side === 'sales' ? 'customers' : 'suppliers');
@@ -121,8 +122,10 @@ export function ContactPage({ books, side, id }: { books: CompanyBooks; side: Si
         <h2>{isNew ? t(side === 'sales' ? 'contact.newCustomerTitle' : 'contact.newSupplierTitle') : t('contact.details')}</h2>
         <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0 }}>
           <div className="row">
-            <label className="f">{t('contact.name')}<input id="ct-name" value={v('name')} onChange={(e) => set('name', e.target.value)} /></label>
-            <label className="f">{t('reg.nameAr')}<input id="ct-name-ar" dir="rtl" value={v('nameAr')} onChange={(e) => set('nameAr', e.target.value)} /></label>
+            <label className="f">{t('contact.name')}<input id="ct-name" value={v('name')}
+              onChange={(e) => setF({ ...form, name: e.target.value, nameAr: followArabic(v('name'), e.target.value, v('nameAr')) })} /></label>
+            <label className="f">{t('ar.nameAr')}<input id="ct-name-ar" dir="rtl" value={v('nameAr')} onChange={(e) => set('nameAr', e.target.value)} />
+              <ArabicHint english={v('name')} arabic={v('nameAr')} /></label>
           </div>
           <div className="check-list" style={{ marginBottom: 10 }}>
             <label><input type="checkbox" checked={Boolean(form.isCustomer)} onChange={(e) => set('isCustomer', e.target.checked)} />{t('contact.customer')}</label>

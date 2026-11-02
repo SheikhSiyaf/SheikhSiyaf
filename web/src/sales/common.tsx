@@ -3,14 +3,14 @@ import type { CompanyBooks } from '../api.ts';
 import { useI18n, type Key } from '../i18n.tsx';
 import { navigate } from '../router.ts';
 
-export type DocType = 'quotation' | 'invoice' | 'credit_note' | 'bill' | 'supplier_credit' | 'expense';
+export type DocType = 'quotation' | 'invoice' | 'credit_note' | 'bill' | 'supplier_credit' | 'expense' | 'claim';
 export type Side = 'sales' | 'purchases';
 export type Direction = 'received' | 'made';
 
 export interface Contact {
   id: string; isCustomer: boolean; isSupplier: boolean; name: string; nameAr: string | null; vatNumber: string | null; crNumber: string | null;
   email: string | null; phone: string | null; address: string | null; city: string | null; country: string | null;
-  paymentTermsDays: number | null; status: string; balanceDue?: string; overdue?: string;
+  paymentTermsDays: number | null; status: string; balanceDue?: string; overdue?: string; isEmployee?: boolean;
 }
 export interface DocRow {
   id: string; type: DocType; status: string; state: string; number: string | null; contactId: string; contactName: string; contactNameAr: string | null;
@@ -51,6 +51,7 @@ export function useGo(companyId: string) {
 const STATE_CLASS: Record<string, string> = {
   draft: '', sent: '', accepted: 'good', declined: 'bad', invoiced: 'good', issued: 'good',
   paid: 'good', partly_paid: 'warn', unpaid: 'warn', overdue: 'bad', credit: 'good', voided: 'bad', recorded: 'good',
+  submitted: 'warn', approved: 'good', rejected: 'bad', reimbursed: 'good',
 };
 
 export function StateBadge({ state }: { state: string }) {

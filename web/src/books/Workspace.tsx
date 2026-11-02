@@ -1,6 +1,6 @@
 // A client's books: left sidebar of modules (the open one shows its sub-pages), top bar, and the page.
 // Address: /c/<company>/<Module>/<sub-page>/<item>/<extra>
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useApi, type CompanyBooks, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { navigate } from '../router.ts';
@@ -18,6 +18,10 @@ import { ExpensesOverview } from '../expenses/Overview.tsx';
 import { RecurringForm, RecurringList } from '../expenses/Recurring.tsx';
 import { Categories } from '../expenses/Categories.tsx';
 import { ExpensesByCategory, ExpensesByPayee } from '../expenses/Reports.tsx';
+import { Approvals } from '../expenses/Approvals.tsx';
+import { ContactLedgers, CostCentreLedger, GeneralLedger } from '../ledger/Ledger.tsx';
+import { ProjectList, ProjectPage, ProjectReport } from '../projects/Projects.tsx';
+import { EmployeeList, EmployeePage } from '../hrm/Employees.tsx';
 
 export const MODULES = NAV.map((m) => m.key);
 
@@ -34,11 +38,22 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
   const title = mod.key === 'Home' ? t('home.greeting', { name: me.user.name.split(' ')[0]! })
     : sub ? t(`sub.${sub.key}` as Key) : t(`mod.${mod.key}` as Key);
 
-  const subMenu = (where: 'side' | 'top') => mod.subs.length > 0 && (
-    <div className={where === 'side' ? 'subnav' : 'subtabs'} role="navigation" aria-label={t(`mod.${mod.key}` as Key)}>
-      {mod.subs.map((s) => (
-        <button key={s.key} className={`${s.key === sub?.key ? 'on' : ''} ${s.built ? '' : 'soon'}`} aria-current={s.key === sub?.key ? 'page' : undefined}
-          onClick={() => goModule(mod.key, s.key)}>
+  // Which module's sub-menu is open in the sidebar. Opening a module shows its pages; pressing it again closes it.
+  const [open, setOpen] = useState<string | null>(mod.key);
+  useEffect(() => { setOpen(mod.key); }, [mod.key]);
+  const onModule = (m: (typeof NAV)[number]) => {
+    if (m.subs.length === 0) { goModule(m.key); return; }
+    if (open === m.key) { setOpen(null); return; }        // second press closes it
+    setOpen(m.key);
+    if (m.key !== mod.key) goModule(m.key);               // a different module: open it and go to its first page
+  };
+
+  const subMenu = (m: (typeof NAV)[number], where: 'side' | 'top') => m.subs.length > 0 && (
+    <div className={where === 'side' ? 'subnav' : 'subtabs'} role="navigation" aria-label={t(`mod.${m.key}` as Key)}>
+      {m.subs.map((s) => (
+        <button key={s.key} className={`${m.key === mod.key && s.key === sub?.key ? 'on' : ''} ${s.built ? '' : 'soon'}`}
+          aria-current={m.key === mod.key && s.key === sub?.key ? 'page' : undefined}
+          onClick={() => goModule(m.key, s.key)}>
           {t(`sub.${s.key}` as Key)}
         </button>
       ))}
@@ -51,10 +66,10 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
         {NAV.map((m) => (
           <div key={m.key}>
             <button className={`${m.key === mod.key ? 'on' : ''} ${isModuleBuilt(m) ? '' : 'soon'}`} aria-current={m.key === mod.key && !sub ? 'page' : undefined}
-              aria-expanded={m.subs.length ? m.key === mod.key : undefined} onClick={() => goModule(m.key)}>
-              {t(`mod.${m.key}` as Key)}{m.subs.length > 0 && <span className="chev" aria-hidden="true">{m.key === mod.key ? '▾' : '▸'}</span>}
+              aria-expanded={m.subs.length ? open === m.key : undefined} onClick={() => onModule(m)}>
+              {t(`mod.${m.key}` as Key)}{m.subs.length > 0 && <span className="chev" aria-hidden="true">{open === m.key ? '▾' : '▸'}</span>}
             </button>
-            {m.key === mod.key && subMenu('side')}
+            {open === m.key && subMenu(m, 'side')}
           </div>
         ))}
       </Sidebar>
@@ -66,7 +81,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
             {b && <span className="badge">{local(b.company.name, b.company.nameAr)} · {b.company.currency}</span>}
           </TopControls>
         </div>
-        {subMenu('top')}
+        {subMenu(mod, 'top')}
         {books.error && <ErrorNote error={books.error} onRetry={books.reload} />}
         {!b ? <Loading /> : (
           <>
@@ -100,10 +115,26 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
       if (sub === 'expenses-by-category') return <ExpensesByCategory books={books} />;
       if (sub === 'expenses-by-payee') return <ExpensesByPayee books={books} />;
       return <Reports books={books} sub={sub} />;
+    case 'Ledger':
+      if (sub === 'general-ledger') return <GeneralLedger books={books} />;
+      if (sub === 'cost-centre-ledger') return <CostCentreLedger books={books} />;
+      return <ContactLedgers key={`${sub}-${item ?? ''}`} books={books} role={sub.replace('-ledger', '') as 'customer' | 'supplier' | 'employee'} contactId={item} />;
+    case 'Projects':
+      if (sub === 'project-report') return <ProjectReport books={books} />;
+      return item ? <ProjectPage key={item} books={books} id={item} /> : <ProjectList books={books} />;
+    case 'HRM':
+      if (sub === 'employees') return item ? <EmployeePage key={item} books={books} id={item} /> : <EmployeeList books={books} />;
+      return null;
     case 'Expenses':
       if (sub === 'overview') return <ExpensesOverview books={books} />;
       if (sub === 'recurring') return item ? <RecurringForm key={item} books={books} id={item} /> : <RecurringList books={books} />;
       if (sub === 'categories') return <Categories books={books} onAdded={reloadBooks} />;
+      if (sub === 'approvals') return <Approvals books={books} />;
+      if (sub === 'claims') {
+        if (item === 'new') return <DocEditor key={`new-claim-${extra ?? ''}`} books={books} type="claim" presetContactId={extra} />;
+        if (item) return <DocView key={item} books={books} id={item} />;
+        return <DocList key={`claim-${extra ?? ''}`} books={books} type="claim" filter={extra} />;
+      }
       if (sub === 'expenses') {
         if (item === 'new') return <DocEditor key="new-expense" books={books} type="expense" presetContactId={extra} />;
         if (item) return <DocView key={item} books={books} id={item} />;

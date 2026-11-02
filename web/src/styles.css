@@ -202,3 +202,13 @@ table.doclines td.dl-amt { width: 110px; }
   .bar-row { grid-template-columns: 1fr auto; }
   .bar-track { grid-column: 1 / -1; grid-row: 2; }
 }
+
+/* ---- Projects ---- */
+.grid.projects { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+button.project { display: flex; flex-direction: column; gap: 6px; }
+table.mini td { padding: 3px 0; border-bottom: 0; font-size: 14px; }
+table.mini tr.total td { border-top: 1px solid var(--line); font-weight: 700; }
+.budget { display: flex; flex-direction: column; gap: 3px; min-width: 140px; }
+.bar-fill.near { background: var(--warn); }
+.bar-fill.over { background: var(--bad); }
+table.ledger td { vertical-align: top; }

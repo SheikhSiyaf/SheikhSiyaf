@@ -10,7 +10,8 @@ import type { Db } from './session.js';
 import { fromMinor } from '../money.js';
 import { vatForLine } from '../vat/vat.js';
 import { CHART_TEMPLATE } from '../books/chartTemplate.js';
-import { createCredit, issueDocument, recordPayment, saveContact, saveDraft, setQuotationStatus } from '../books/documentsService.js';
+import { approveClaim, createCredit, issueDocument, recordPayment, rejectClaim, saveContact, saveDraft, setQuotationStatus, submitClaim } from '../books/documentsService.js';
+import { saveProject } from '../books/ledgerService.js';
 import type { DocType } from '../books/documents.js';
 import { saveRecurring } from '../books/expensesService.js';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_USERS } from './demoData.js';
@@ -132,6 +133,36 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
         nextDate: firstOfNextMonth(), lines: [{ ...SL('Monthly office rent', '1', '4000.00', 'Head office', '5100'), vatCode: 'exempt' }] });
       await saveRecurring(db, id, { name: 'Internet and phones', contactId: telecom, paidFromAccountId: acct['1000'], frequency: 'monthly',
         nextDate: daysAgo(2), lines: [{ ...SL('Fibre internet and 5 mobile lines', '1', '299.00', undefined, '5300'), vatCode: 'standard' }] });
+
+      // Projects: Project A gets a customer and budget; a second project with its own invoice and costs.
+      await client.query(`UPDATE cost_centres SET budget = 5000, contact_id = $2, start_date = $3 WHERE company_id = $1 AND name = 'Project A'`, [id, walkIn, daysAgo(40)]);
+      const fitOut = await saveProject(db, id, { name: 'Warehouse fit-out', nameAr: 'تجهيز المستودع', contactId: faisal, budget: '8000.00', startDate: daysAgo(30) });
+      const pInv = await saveDraft(db, id, { type: 'invoice', contactId: faisal, issueDate: daysAgo(15), dueDate: daysAgo(-15),
+        lines: [{ ...SL('Fit-out works, stage 1', '1', '9500.00', undefined), costCentreId: fitOut }] });
+      await issueDocument(db, pInv);
+      const pBill = await saveDraft(db, id, { type: 'bill', contactId: najd, issueDate: daysAgo(14), dueDate: daysAgo(-1), reference: 'NW-88190',
+        lines: [{ ...SL('Shelving and racks', '1', '5200.00', undefined, '5000'), costCentreId: fitOut }] });
+      await issueDocument(db, pBill);
+
+      // Employees and their expense claims: one reimbursed, one waiting for approval, one rejected.
+      const yusuf = await saveContact(db, id, { isEmployee: true, name: 'Yusuf Karim', nameAr: 'يوسف كريم', employeeNo: 'E-001', jobTitle: 'Driver', defaultCostCentreId: cc['Branch 1'] });
+      const mona = await saveContact(db, id, { isEmployee: true, name: 'Mona Saeed', nameAr: 'منى سعيد', employeeNo: 'E-002', jobTitle: 'Site engineer', defaultCostCentreId: fitOut });
+      const claim = (who: string, ago: number, desc: string, amount: string, code: string, centre: string | null, vatCode: 'standard' | 'zero' = 'standard') =>
+        saveDraft(db, id, { type: 'claim', contactId: who, issueDate: daysAgo(ago), reference: `R-${ago}`, lines: [{ ...SL(desc, '1', amount, undefined, code), costCentreId: centre, vatCode }] });
+      const c1 = await claim(yusuf, 20, 'Fuel and tolls for deliveries', '230.00', '5400', cc['Branch 1']);
+      await submitClaim(db, c1);
+      const c2 = await claim(mona, 8, 'Site materials bought on the spot', '640.00', '5000', fitOut);
+      await submitClaim(db, c2);
+      const c3 = await claim(yusuf, 5, 'Lunch with customer', '180.00', '5400', null, 'zero');
+      await submitClaim(db, c3);
+      await asUser(partner);   // someone other than the person who submitted decides
+      await approveClaim(db, c1);
+      await rejectClaim(db, c3, 'Customer lunches need a pre-approval form');
+      await asUser(poster);
+      const owed = (await client.query('SELECT document_amount_due($1)::text AS d', [c1])).rows[0].d;
+      await recordPayment(db, id, { direction: 'made', contactId: yusuf, date: daysAgo(16), amount: owed, accountId: acct['1010'], method: 'cash',
+        allocations: [{ documentId: c1, amount: owed }] });
+      void c2;
       await client.query('COMMIT');
 
       // The partner locks every month that ended more than a month ago.

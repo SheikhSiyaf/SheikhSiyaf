@@ -1,6 +1,6 @@
 // Quotations, invoices, credit notes, bills and supplier credits: list, editor (drafts) and view.
 import { useMemo, useState } from 'react';
-import { api, useApi, type CompanyBooks } from '../api.ts';
+import { api, useApi, type CompanyBooks, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { fmt, fromMinor, isAmount, normalise, toMinor } from '../money.ts';
 import { today } from '../router.ts';
@@ -16,6 +16,7 @@ const FILTERS: Record<string, string[]> = {
   bill: ['all', 'draft', 'unpaid', 'overdue', 'paid'],
   credit_note: ['all', 'draft', 'issued'],
   expense: ['all', 'draft', 'issued', 'voided'],
+  claim: ['all', 'draft', 'submitted', 'approved', 'rejected', 'reimbursed'],
   supplier_credit: ['all', 'draft', 'issued'],
 };
 
@@ -30,8 +31,9 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
   const m = moduleForType(type);
   const page = pageForType(type);
   const list = useApi<DocRow[]>(`/api/companies/${books.company.id}/documents?type=${type}&status=${status}&q=${encodeURIComponent(q)}`);
-  const canCreate = books.canPost && (type === 'invoice' || type === 'quotation' || type === 'bill' || type === 'expense');
+  const canCreate = books.canPost && (type === 'invoice' || type === 'quotation' || type === 'bill' || type === 'expense' || type === 'claim');
   const hasDueCol = type === 'invoice' || type === 'bill';
+  const hasAmountDue = hasDueCol || type === 'claim';
   return (
     <>
       <div className="top" style={{ marginBottom: 10 }}>
@@ -51,9 +53,9 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
         {!list.data ? <Loading /> : list.data.length === 0 ? <div className="mut">{t('doc.noneYet')}</div> : (
           <div className="wrap">
             <table className="stack">
-              <thead><tr><th>{t('doc.number')}</th><th>{t(side === 'sales' ? 'contact.customer' : type === 'expense' ? 'exp.paidTo' : 'contact.supplier')}</th><th>{t('doc.date')}</th>
+              <thead><tr><th>{t('doc.number')}</th><th>{t(side === 'sales' ? 'contact.customer' : type === 'expense' ? 'exp.paidTo' : type === 'claim' ? 'claim.employee' : 'contact.supplier')}</th><th>{t('doc.date')}</th>
                 {hasDueCol && <th>{t('doc.dueDate')}</th>}<th className="num">{t('doc.total')}</th>
-                {(type === 'invoice' || type === 'bill') && <th className="num">{t('doc.amountDue')}</th>}<th>{t('journal.status')}</th></tr></thead>
+                {hasAmountDue && <th className="num">{t(type === 'claim' ? 'claim.toReimburse' : 'doc.amountDue')}</th>}<th>{t('journal.status')}</th></tr></thead>
               <tbody>
                 {list.data.map((d) => (
                   <tr key={d.id}>
@@ -62,7 +64,7 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
                     <td data-label={t('doc.date')}>{d.issueDate}</td>
                     {hasDueCol && <td data-label={t('doc.dueDate')}>{d.dueDate ?? '—'}</td>}
                     <td className="num ltr" data-label={t('doc.total')}>{fmt(d.grossTotal)}</td>
-                    {(type === 'invoice' || type === 'bill') && <td className="num ltr" data-label={t('doc.amountDue')}>{d.status === 'issued' ? fmt(d.amountDue) : ''}</td>}
+                    {hasAmountDue && <td className="num ltr" data-label={t(type === 'claim' ? 'claim.toReimburse' : 'doc.amountDue')}>{d.status === 'issued' ? fmt(d.amountDue) : ''}</td>}
                     <td><StateBadge state={type === 'expense' && d.state === 'issued' ? 'recorded' : d.state} /></td>
                   </tr>
                 ))}
@@ -86,9 +88,10 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
   const m = moduleForType(type);
   const page = pageForType(type);
   const isExpense = type === 'expense';
+  const isClaim = type === 'claim';
   const banks = bankAccounts(books);
   const existing = useApi<DocDetail>(id ? `/api/documents/${id}` : null);
-  const contacts = useApi<Contact[]>(`/api/companies/${books.company.id}/contacts?role=${side === 'sales' ? 'customer' : 'supplier'}`);
+  const contacts = useApi<(Contact & { defaultCostCentreId?: string | null })[]>(`/api/companies/${books.company.id}/contacts?role=${side === 'sales' ? 'customer' : isClaim ? 'employee' : 'supplier'}`);
   const accounts = lineAccounts(books, side);
   const defaultAccount = accounts.find((a) => a.code === (side === 'sales' ? '4000' : '5400'))?.id ?? accounts[0]?.id ?? '';
   const registered = books.company.vatStatus !== 'unregistered';
@@ -132,7 +135,12 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
 
   const set = (patch: Partial<typeof form>) => setForm({ ...form, ...patch });
   const setLine = (i: number, patch: Partial<EditLine>) => set({ lines: form.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) });
-  const setContact = (contactId: string) => set({ contactId, ...(form.dueTouched || !hasDue ? {} : { dueDate: addDays(form.issueDate, termsFor(contactId)) }) });
+  const setContact = (contactId: string) => {
+    // A claim takes the employee's usual cost centre on lines that have none yet.
+    const cc = isClaim ? contacts.data?.find((c) => c.id === contactId)?.defaultCostCentreId ?? '' : '';
+    set({ contactId, ...(form.dueTouched || !hasDue ? {} : { dueDate: addDays(form.issueDate, termsFor(contactId)) }),
+      ...(cc ? { lines: form.lines.map((l) => (l.costCentreId ? l : { ...l, costCentreId: cc })) } : {}) });
+  };
   const setIssueDate = (issueDate: string) => set({ issueDate, ...(form.dueTouched || !hasDue ? {} : { dueDate: addDays(issueDate, termsFor(form.contactId)) }) });
 
   // Everything the database would refuse, said first in plain words.
@@ -140,7 +148,7 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
   if (isExpense) {
     if (!form.contactId && !form.payee.trim()) problems.push(t('exp.needPayee'));
     if (!form.paidFrom) problems.push(t('err.bankAccount'));
-  } else if (!form.contactId) problems.push(t(side === 'sales' ? 'doc.pickCustomer' : 'doc.pickSupplier'));
+  } else if (!form.contactId) problems.push(t(side === 'sales' ? 'doc.pickCustomer' : isClaim ? 'claim.pickEmployee' : 'doc.pickSupplier'));
   if (!form.issueDate) problems.push(t('err.date'));
   if (form.dueDate && form.issueDate && form.dueDate < form.issueDate) problems.push(t('err.dueDate'));
   if (form.lines.length === 0) problems.push(t('err.noLines'));
@@ -170,6 +178,7 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
         : await api<{ id: string }>(`/api/companies/${books.company.id}/documents`, { body: body() });
       if (andIssue) {
         if (type === 'quotation') await api(`/api/documents/${saved.id}/quotation-status`, { body: { status: 'sent' } });
+        else if (isClaim) await api(`/api/documents/${saved.id}/submit`, { body: {} });
         else await api(`/api/documents/${saved.id}/issue`, { body: {} });
       }
       go(m, page, saved.id);
@@ -195,10 +204,10 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
 
       <div className="card">
         <div className="row">
-          <label className="f" style={{ flex: '2 1 240px' }}>{t(side === 'sales' ? 'contact.customer' : isExpense ? 'exp.supplierOptional' : 'contact.supplier')}
+          <label className="f" style={{ flex: '2 1 240px' }}>{t(side === 'sales' ? 'contact.customer' : isExpense ? 'exp.supplierOptional' : isClaim ? 'claim.employee' : 'contact.supplier')}
             <select id="doc-contact" value={form.contactId} onChange={(e) => setContact(e.target.value)} disabled={isCreditDoc}
               style={tried && !form.contactId && !isExpense ? { borderColor: 'var(--bad)' } : undefined}>
-              <option value="">{isExpense ? t('exp.noSupplier') : t(side === 'sales' ? 'doc.pickCustomer' : 'doc.pickSupplier')}</option>
+              <option value="">{isExpense ? t('exp.noSupplier') : t(side === 'sales' ? 'doc.pickCustomer' : isClaim ? 'claim.pickEmployee' : 'doc.pickSupplier')}</option>
               {(contacts.data ?? []).filter((c) => c.status === 'active' || c.id === form.contactId).map((c) => <option key={c.id} value={c.id}>{local(c.name, c.nameAr)}</option>)}
             </select>
           </label>
@@ -221,13 +230,13 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
               <input id="doc-due" type="date" value={form.dueDate} onChange={(e) => set({ dueDate: e.target.value, dueTouched: true })} />
             </label>
           )}
-          <label className="f">{t(side === 'sales' ? 'doc.referenceSales' : isExpense ? 'exp.receiptNo' : 'doc.referencePurchases')}
+          <label className="f">{t(side === 'sales' ? 'doc.referenceSales' : isExpense ? 'exp.receiptNo' : isClaim ? 'claim.receipts' : 'doc.referencePurchases')}
             <input id="doc-ref" value={form.reference} onChange={(e) => set({ reference: e.target.value })} dir="ltr" disabled={isCreditDoc} />
           </label>
         </div>
         {!isCreditDoc && books.canPost && (
-          <button type="button" className="link small" onClick={() => go(m, side === 'sales' ? 'customers' : 'suppliers', 'new')}>
-            {t(side === 'sales' ? 'doc.addCustomer' : 'doc.addSupplier')}
+          <button type="button" className="link small" onClick={() => (isClaim ? go('HRM', 'employees', 'new') : go(m, side === 'sales' ? 'customers' : 'suppliers', 'new'))}>
+            {t(side === 'sales' ? 'doc.addCustomer' : isClaim ? 'claim.addEmployee' : 'doc.addSupplier')}
           </button>
         )}
       </div>
@@ -284,7 +293,7 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
         <button className="b p" disabled={busy || (tried && problems.length > 0)} onClick={() => void save(true)}>{t(`doc.issue.${type}` as Key)}</button>
         <button className="b" disabled={busy} onClick={() => void save(false)}>{t('doc.saveDraft')}</button>
         {id && <button className="b" disabled={busy} onClick={() => setConfirmDelete(true)}>{t('doc.deleteDraft')}</button>}
-        <span className="mut small">{t(willPost ? 'doc.issueHint' : 'doc.quoteHint')}</span>
+        <span className="mut small">{t(isClaim ? 'claim.submitHint' : willPost ? 'doc.issueHint' : 'doc.quoteHint')}</span>
       </div>
     </>
   );
@@ -309,10 +318,13 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
   const { t, has, lang } = useI18n();
   const local = useLocalName();
   const go = useGo(books.company.id);
-  const d = useApi<DocDetail>(`/api/documents/${id}`);
+  const d = useApi<DocDetail & { submittedBy?: string | null; submittedByName?: string | null; decidedByName?: string | null; rejectionReason?: string | null }>(`/api/documents/${id}`);
+  const me = useApi<Me>('/api/me');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [confirmVoid, setConfirmVoid] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState('');
   if (d.error) return <ErrorNote error={d.error} onRetry={d.reload} />;
   if (!d.data) return <Loading />;
   const x = d.data;
@@ -321,6 +333,8 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
   const m = moduleForType(x.type);
   const cur = books.company.currency;
   const isExpense = x.type === 'expense';
+  const isClaim = x.type === 'claim';
+  const mine = isClaim && x.submittedBy && me.data?.user.id === x.submittedBy;
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError(undefined);
     try { await fn(); d.reload(); } catch (e) { setError(errorText(t, has, e)); } finally { setBusy(false); }
@@ -342,6 +356,19 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
           <button className="b" disabled={busy || isLocked(books, today())} title={isLocked(books, today()) ? t('journal.reverseLocked') : undefined}
             onClick={() => setConfirmVoid(true)}>{t('exp.void')}</button>
         )}
+        {books.canPost && isClaim && x.status === 'submitted' && !rejecting && (
+          <>
+            {!mine && <button className="b p" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/approve`, { body: {} }))}>{t('appr.approve')}</button>}
+            {!mine && <button className="b" disabled={busy} onClick={() => setRejecting(true)}>{t('appr.reject')}</button>}
+            <button className="b" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/reopen`, { body: {} }))}>{t('claim.withdraw')}</button>
+          </>
+        )}
+        {books.canPost && isClaim && x.status === 'rejected' && (
+          <button className="b p" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/reopen`, { body: {} }))}>{t('claim.correct')}</button>
+        )}
+        {books.canPost && isClaim && x.status === 'issued' && toMinor(x.amountDue) > 0n && (
+          <button className="b p" onClick={() => go('Purchases', 'payments-made', 'new', x.contactId!, x.id)}>{t('claim.reimburse')}</button>
+        )}
         {books.canPost && x.type === 'quotation' && (
           <>
             {x.status === 'draft' && <button className="b p" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/quotation-status`, { body: { status: 'sent' } }))}>{t('doc.markSent')}</button>}
@@ -355,6 +382,17 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
         )}
       </div>
       {error && <div className="notice bad" role="alert">{error}</div>}
+      {isClaim && x.status === 'submitted' && mine && <div className="notice">{t('appr.yoursNotice')}</div>}
+      {isClaim && x.status === 'rejected' && <div className="notice warn">{t('claim.rejectedBecause', { reason: x.rejectionReason ?? '', name: x.decidedByName ?? '' })}</div>}
+      {rejecting && (
+        <div className="notice warn">
+          <label className="f">{t('appr.reason')}<textarea id="reject-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
+          <div className="actions" style={{ marginTop: 8 }}>
+            <button className="b p" disabled={busy || !reason.trim()} onClick={() => { setRejecting(false); void run(() => api(`/api/documents/${x.id}/reject`, { body: { reason } })); }}>{t('appr.reject')}</button>
+            <button className="b" onClick={() => setRejecting(false)}>{t('cancel')}</button>
+          </div>
+        </div>
+      )}
       {confirmVoid && <ConfirmBar message={t('exp.voidConfirm')} busy={busy} onNo={() => setConfirmVoid(false)}
         onYes={() => { setConfirmVoid(false); void run(() => api(`/api/documents/${x.id}/void`, { body: { date: today() } })); }} />}
 
@@ -366,7 +404,22 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
           </div>
           <StateBadge state={isExpense && x.state === 'issued' ? 'recorded' : x.state} />
         </div>
-        {isExpense ? (
+        {isClaim ? (
+          <div className="paper-parties">
+            <div>
+              <small className="mut">{t('claim.employee')}</small>
+              <b><button className="link" onClick={() => go('HRM', 'employees', x.contactId!)}>{x.contact ? local(x.contact.name, x.contact.nameAr) : ''}</button></b>
+            </div>
+            <div className="small">
+              {x.submittedByName && <div>{t('appr.submittedBy')}: <b>{x.submittedByName}</b></div>}
+              {x.decidedByName && <div>{t(x.status === 'rejected' ? 'appr.rejectedBy' : 'appr.approvedBy')}: <b>{x.decidedByName}</b></div>}
+            </div>
+            <div className="small">
+              <div>{t('doc.date')}: <b>{x.issueDate}</b></div>
+              {x.reference && <div>{t('claim.receipts')}: <b className="ltr">{x.reference}</b></div>}
+            </div>
+          </div>
+        ) : isExpense ? (
           <div className="paper-parties">
             <div>
               <small className="mut">{t('exp.paidTo')}</small>
@@ -427,7 +480,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
             </tbody>
           </table>
         </div>
-        <Totals net={x.netTotal} vat={x.vatTotal} gross={x.grossTotal} cur={cur} due={due ? x.amountDue : undefined} />
+        <Totals net={x.netTotal} vat={x.vatTotal} gross={x.grossTotal} cur={cur} due={due || (isClaim && x.status === 'issued') ? x.amountDue : undefined} />
         {x.notes && <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{x.notes}</p>}
         {x.status === 'issued' && <p className="mut small">{t('doc.postedNote')}</p>}
         {x.type === 'invoice' && x.status === 'issued' && <p className="mut small">{t('doc.einvoiceLater', { einv: t(`einv.${books.company.country}`) })}</p>}

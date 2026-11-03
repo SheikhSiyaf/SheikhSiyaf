@@ -1,5 +1,6 @@
 // A client's books: left sidebar of modules (the open one shows its sub-pages), top bar, and the page.
 // Address: /c/<company>/<Module>/<sub-page>/<item>/<extra>
+import { BalanceSheet, CashFlow, OwnerSummary, VatReturnSheet } from './Statements.tsx';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useApi, type CompanyBooks, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
@@ -127,7 +128,9 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Home': return <Home books={books} go={goModule} />;
     case 'Journal': return <Journal books={books} sub={sub} reloadBooks={reloadBooks} go={(s) => goModule('Journal', s)} />;
     case 'Reports': {
-      const page = sub === 'vat-summary' ? <Vat books={books} /> : sub === 'expenses-by-category' ? <ExpensesByCategory books={books} />
+      const page = sub === 'owner-summary' ? <OwnerSummary books={books} /> : sub === 'balance-sheet' ? <BalanceSheet books={books} /> : sub === 'cash-flow' ? <CashFlow books={books} />
+        : sub === 'vat-return' ? <VatReturnSheet books={books} />
+        : sub === 'vat-summary' ? <Vat books={books} /> : sub === 'expenses-by-category' ? <ExpensesByCategory books={books} />
         : sub === 'expenses-by-payee' ? <ExpensesByPayee books={books} /> : <Reports books={books} sub={sub} />;
       return <ReportFrame key={sub} books={books} title={t(`sub.${sub}` as Key)}>{page}</ReportFrame>;
     }

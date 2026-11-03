@@ -25,6 +25,7 @@
 
 - Reports show account names, not account codes. The profit and loss reads: Sales, less Cost of sales = Gross profit, less Indirect expenses, add Indirect income = Net profit. Each income and expense account has its line (set automatically, changeable in Ledger > Chart of accounts).
 - Client roles: the Administrator defines job titles for client users in Roles and permissions, each with None, View or View and enter per module, and whether it may approve expense claims. Every role is editable: Client accountant (everything) and Client management (view everything) are created for each firm as ordinary roles, and every client user has a role. Firm staff keep their fixed roles. A role in use cannot be archived.
+- Reports added: owner summary with ratios (gross and net margin, current and quick ratio, debtor and creditor days, working capital), balance sheet (non-current and current assets and liabilities; this year's profit shown in equity until the year is closed), cash flow by the direct method (bank movements grouped as operating, investing and financing by the other side of each entry), P&L comparisons and monthly columns, and the VAT return worksheet laid out by the return boxes from the books. The worksheet is for checking before filing; box layout to be confirmed with ZATCA and the FTA. Every account in a report opens its ledger.
 
 ## Open
 - Restaurant POS integration (importing sales from the restaurant's own POS instead of entering them in Nusuh Books): which POS systems.

@@ -22,6 +22,7 @@ import { registerHrmRoutes } from './hrm.js';
 import { registerCrmRoutes } from './crm.js';
 import { registerReviewRoutes } from './review.js';
 import { registerOwnerRoutes } from './owner.js';
+import { registerReportRoutes } from './reports.js';
 import { reviewedUpTo } from '../books/reviewService.js';
 import { registerSetupRoutes } from './setup.js';
 import { profitAndLoss } from '../books/reportsService.js';
@@ -246,6 +247,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerCrmRoutes(app, ctx);
   registerReviewRoutes(app, ctx);
   registerOwnerRoutes(app, ctx);
+  registerReportRoutes(app, ctx);
   registerSetupRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });

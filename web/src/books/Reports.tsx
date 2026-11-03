@@ -5,6 +5,7 @@ import { fmt, toMinor, fromMinor } from '../money.ts';
 import { today } from '../router.ts';
 import { ErrorNote, Loading } from '../ui.tsx';
 import { Aged } from '../sales/Aged.tsx';
+import { AccountLink, PnlStatement } from './Statements.tsx';
 
 interface TB { asOf: string; rows: { accountId: string; code: string; name: string; nameAr: string | null; debit: string; credit: string }[] }
 interface PnlRow { income: string; expense: string; profit: string }
@@ -45,7 +46,7 @@ export function Reports({ books, sub }: { books: CompanyBooks; sub: string }) {
               <tbody>
                 {tb.data.rows.map((r) => (
                   <tr key={r.accountId}>
-                    <td>{local(r.name, r.nameAr)}</td>
+                    <td><AccountLink books={books} l={r} /></td>
                     <td className="num ltr">{toMinor(r.debit) ? fmt(r.debit) : ''}</td>
                     <td className="num ltr">{toMinor(r.credit) ? fmt(r.credit) : ''}</td>
                   </tr>
@@ -68,32 +69,7 @@ export function Reports({ books, sub }: { books: CompanyBooks; sub: string }) {
         {pnl.error && <ErrorNote error={pnl.error} onRetry={pnl.reload} />}
         {!pnl.data ? <Loading /> : (
           <>
-            {!byCc && (() => {
-              // Sales - Cost of sales = Gross profit; Gross profit - Indirect expenses + Indirect income = Net profit.
-              const st = pnl.data!.statement;
-              const lines = (g: Group) => st.lines.filter((l) => l.group === g).map((l) => (
-                <tr key={l.accountId}><td className="indent">{local(l.name, l.nameAr)}</td><td className="num ltr">{fmt(l.amount)}</td><td /></tr>
-              ));
-              const head = (k: Key) => <tr className="section"><td colSpan={3}><b>{t(k)}</b></td></tr>;
-              const sub = (k: Key, v: string, cls = 'total') => <tr className={cls}><td>{t(k)}</td><td /><td className="num ltr">{fmt(v)}</td></tr>;
-              // A loss is named as one and shown in brackets.
-              const result = (profit: Key, loss: Key, v: string, cls: string) => toMinor(v) < 0n
-                ? <tr className={cls}><td>{t(loss)}</td><td /><td className="num ltr bad">({fmt(fromMinor(-toMinor(v)))})</td></tr>
-                : sub(profit, v, cls);
-              return (
-                <div className="wrap"><table className="pnl">
-                  <thead><tr><th>{t('reports.particulars')}</th><th className="num">{t('reports.amount')}</th><th className="num">{t('reports.total')} ({books.company.currency})</th></tr></thead>
-                  <tbody>
-                    {head('reports.sales')}{lines('revenue')}{sub('reports.totalSales', st.revenue, 'subtotal')}
-                    {head('reports.costOfSales')}{lines('cost_of_sales')}{sub('reports.totalCostOfSales', st.costOfSales, 'subtotal')}
-                    {result('reports.grossProfit', 'reports.grossLoss', st.grossProfit, 'total')}
-                    {head('reports.indirectExpenses')}{lines('indirect_expense')}{sub('reports.totalIndirectExpenses', st.indirectExpenses, 'subtotal')}
-                    {head('reports.indirectIncome')}{lines('other_income')}{sub('reports.totalIndirectIncome', st.otherIncome, 'subtotal')}
-                    {result('reports.netProfit', 'reports.netLoss', st.netProfit, 'total grand')}
-                  </tbody>
-                </table></div>
-              );
-            })()}
+            {!byCc && <PnlStatement books={books} from={from} to={to} />}
             {byCc && (() => {
               // Branches and departments here; projects have their own report, shown as one line so the total still agrees.
               const rows = pnl.data!.byCostCentre.filter((r) => r.kind !== 'project');

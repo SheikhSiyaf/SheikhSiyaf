@@ -234,7 +234,8 @@ table.ledger td { vertical-align: top; }
 
 /* Bank statement lines: date, description and amount on one line; the suggestion and actions below. */
 .good { color: var(--good); }
-.grid.two { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); }
+.grid > * { min-width: 0; }
 .bankline { padding: 10px 0; border-bottom: 1px solid var(--line); }
 .bankline:last-child { border-bottom: 0; }
 .bl-main { display: grid; grid-template-columns: 96px 1fr auto; gap: 10px; align-items: baseline; }
@@ -408,3 +409,4 @@ table.checklist tr.done b { color: var(--mut); }
 button.card.fig { text-align: start; font: inherit; color: inherit; cursor: pointer; }
 button.card.fig:hover { border-color: var(--teal); }
 .owner-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: var(--tealbg); }
+.good-text { color: var(--good); } button.link.drill { text-align: start; color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }

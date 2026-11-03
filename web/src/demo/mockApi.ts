@@ -6,6 +6,7 @@
 import { toMinor, fromMinor, divRoundHalfUp } from '../../../src/money.ts';
 import { vatForLine } from '../../../src/vat/vat.ts';
 import * as Pay from '../../../src/books/payroll.ts';
+import { periodsFor, pct as rpct } from '../../../src/books/reportsService.ts';
 import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../../../src/books/chartTemplate.ts';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_SELF, DEMO_SELF_ROLES, DEMO_USERS } from '../../../src/db/demoData.ts';
 import { accessTo, cleanModules, DEFAULT_MODULES, isIndustry, ROLE_MODULES, type AccessLevel, type Industry } from '../../../src/books/modules.ts';
@@ -2839,6 +2840,113 @@ routes.push(
     f.name = String(b!.name).trim(); f.status = b!.status as Firm['status'];
     return { ok: true };
   }],
+);
+
+// ---------------------------------------------------------------- statements (same rules as src/books/reportsService.ts)
+function pnlStatementM(id: string, from: string, to: string) {
+  const sums: Record<string, bigint> = { revenue: 0n, other_income: 0n, cost_of_sales: 0n, indirect_expense: 0n };
+  const lines = db.accounts.filter((a) => a.companyId === id && (a.type === 'income' || a.type === 'expense')).sort((a, b) => a.code.localeCompare(b.code)).map((a) => {
+    let v = 0n;
+    for (const e of db.entries) if (e.companyId === id && e.date >= from && e.date <= to) for (const l of e.lines) if (l.accountId === a.id) v += a.type === 'income' ? l.credit - l.debit : l.debit - l.credit;
+    const group = pnlGroupOf(a)!; sums[group]! += v;
+    return { accountId: a.id, name: a.name, nameAr: a.nameAr, group, amount: s(v), v };
+  }).filter((a) => a.v !== 0n).map(({ v: _v, ...a }) => a);
+  const gross = sums.revenue! - sums.cost_of_sales!;
+  return { from, to, lines, revenue: s(sums.revenue!), costOfSales: s(sums.cost_of_sales!), grossProfit: s(gross), indirectExpenses: s(sums.indirect_expense!),
+    otherIncome: s(sums.other_income!), netProfit: s(gross - sums.indirect_expense! + sums.other_income!) };
+}
+const fyStartM = (companyId: string, asOf: string) => {
+  const fy = db.companies.find((c) => c.id === companyId)!.fields.fyEnd || '12-31';
+  const y = +asOf.slice(0, 4); const end = `${y}-${fy}`; const last = end < asOf ? end : `${y - 1}-${fy}`;
+  return addD(last, 1);
+};
+function balanceSheetM(id: string, asOf: string) {
+  const start = fyStartM(id, asOf);
+  const sec: Record<string, { accountId: string; code: string; name: string; nameAr: string | null; amount: string }[]> = { nonCurrentAssets: [], currentAssets: [], currentLiabilities: [], nonCurrentLiabilities: [], equity: [] };
+  let earlier = 0n, thisYear = 0n;
+  for (const a of db.accounts.filter((x) => x.companyId === id).sort((x, y) => x.code.localeCompare(y.code))) {
+    let dr = 0n, before = 0n;
+    for (const e of db.entries) if (e.companyId === id && e.date <= asOf) for (const l of e.lines) if (l.accountId === a.id) { dr += l.debit - l.credit; if (e.date < start) before += l.debit - l.credit; }
+    if (a.type === 'income' || a.type === 'expense') { earlier += -before; thisYear += -(dr - before); continue; }
+    const k = a.type === 'asset' ? (a.code >= '1500' && a.code <= '1599' ? 'nonCurrentAssets' : 'currentAssets') : a.type === 'liability' ? (a.code === '2230' || a.code >= '2500' ? 'nonCurrentLiabilities' : 'currentLiabilities') : 'equity';
+    const amt = k.endsWith('Assets') ? dr : -dr;
+    if (amt !== 0n) sec[k]!.push({ accountId: a.id, code: a.code, name: a.name, nameAr: a.nameAr, amount: s(amt) });
+  }
+  const tot = (k: string) => sec[k]!.reduce((t, l) => t + toMinor(l.amount), 0n);
+  const assets = tot('nonCurrentAssets') + tot('currentAssets'), liabilities = tot('currentLiabilities') + tot('nonCurrentLiabilities'), equity = tot('equity') + earlier + thisYear;
+  return { asOf, fyStart: start, sections: sec, balances: assets === liabilities + equity,
+    totals: { nonCurrentAssets: s(tot('nonCurrentAssets')), currentAssets: s(tot('currentAssets')), assets: s(assets), currentLiabilities: s(tot('currentLiabilities')),
+      nonCurrentLiabilities: s(tot('nonCurrentLiabilities')), liabilities: s(liabilities), capital: s(tot('equity')), earlierYears: s(earlier), thisYear: s(thisYear), equity: s(equity),
+      liabilitiesAndEquity: s(liabilities + equity) } };
+}
+function cashFlowM(id: string, from: string, to: string) {
+  const bank = new Set(db.accounts.filter((a) => a.companyId === id && a.isBank).map((a) => a.id));
+  const bal = (d: string) => db.entries.filter((e) => e.companyId === id && e.date <= d).flatMap((e) => e.lines).filter((l) => bank.has(l.accountId)).reduce((t, l) => t + l.debit - l.credit, 0n);
+  const per = new Map<string, bigint>();
+  for (const e of db.entries) if (e.companyId === id && e.date >= from && e.date <= to && e.lines.some((l) => bank.has(l.accountId)))
+    for (const l of e.lines) if (!bank.has(l.accountId)) per.set(l.accountId, (per.get(l.accountId) ?? 0n) + l.credit - l.debit);
+  const sec: Record<string, { accountId: string; code: string; name: string; nameAr: string | null; amount: string }[]> = { operating: [], investing: [], financing: [] };
+  for (const a of db.accounts.filter((x) => per.get(x.id)).sort((x, y) => x.code.localeCompare(y.code))) {
+    const k = (a.type === 'asset' && a.code >= '1500' && a.code <= '1599') || a.code === '4900' ? 'investing' : a.type === 'equity' || (a.type === 'liability' && a.code >= '2500' && a.code !== '2230') ? 'financing' : 'operating';
+    sec[k]!.push({ accountId: a.id, code: a.code, name: a.name, nameAr: a.nameAr, amount: s(per.get(a.id)!) });
+  }
+  const tot = (k: string) => sec[k]!.reduce((t, l) => t + toMinor(l.amount), 0n);
+  const opening = bal(addD(from, -1)), closing = bal(to), net = tot('operating') + tot('investing') + tot('financing');
+  return { from, to, sections: sec, totals: { operating: s(tot('operating')), investing: s(tot('investing')), financing: s(tot('financing')), net: s(net) }, opening: s(opening), closing: s(closing), agrees: opening + net === closing };
+}
+function ownerSummaryM(id: string, asOf: string) {
+  const monthStart = `${asOf.slice(0, 7)}-01`, lastEnd = addD(monthStart, -1), lastStart = `${lastEnd.slice(0, 7)}-01`, yStart = fyStartM(id, asOf);
+  const [month, last, ytd] = [pnlStatementM(id, monthStart, asOf), pnlStatementM(id, lastStart, lastEnd), pnlStatementM(id, yStart, asOf)];
+  const bs = balanceSheetM(id, asOf); const b = balances(id, asOf);
+  const byCode = (code: string) => b.get(db.accounts.find((a) => a.companyId === id && a.code === code)?.id ?? '') ?? 0n;
+  const cash = db.accounts.filter((a) => a.companyId === id && a.isBank).reduce((t, a) => t + (b.get(a.id) ?? 0n), 0n);
+  const receivables = byCode('1100'), payables = -byCode('2000'), inventory = byCode('1300'), vatDue = -byCode('2100') - byCode('1200');
+  const docs = sdb.docs.filter((d) => d.companyId === id && d.status === 'issued');
+  const overdue = docs.filter((d) => d.type === 'invoice' && d.dueDate && d.dueDate < asOf).reduce((t, d) => t + amountDue(d), 0n);
+  const since = addD(asOf, -89);
+  const gross = (d: MDoc) => d.lines.reduce((t, l) => t + l.net + l.vat, 0n);
+  const sales90 = docs.filter((d) => d.type === 'invoice' && d.issueDate >= since && d.issueDate <= asOf).reduce((t, d) => t + gross(d), 0n);
+  const purch90 = docs.filter((d) => ['bill', 'expense'].includes(d.type) && d.issueDate >= since && d.issueDate <= asOf).reduce((t, d) => t + gross(d), 0n);
+  const ca = toMinor(bs.totals.currentAssets), cl = toMinor(bs.totals.currentLiabilities);
+  const custTotals = new Map<string, bigint>();
+  for (const d of docs.filter((x) => x.type === 'invoice' && x.issueDate >= yStart && x.issueDate <= asOf)) custTotals.set(d.contactId!, (custTotals.get(d.contactId!) ?? 0n) + d.lines.reduce((t, l) => t + l.net, 0n));
+  return { asOf, monthStart, lastStart, lastEnd, yearStart: yStart,
+    month: { revenue: month.revenue, grossProfit: month.grossProfit, netProfit: month.netProfit }, lastMonth: { revenue: last.revenue, grossProfit: last.grossProfit, netProfit: last.netProfit },
+    yearToDate: { revenue: ytd.revenue, grossProfit: ytd.grossProfit, netProfit: ytd.netProfit },
+    position: { cash: s(cash), receivables: s(receivables), overdue: s(overdue), payables: s(payables), inventory: s(inventory), vatDue: s(vatDue), workingCapital: s(ca - cl) },
+    ratios: { grossMargin: rpct(toMinor(ytd.grossProfit), toMinor(ytd.revenue)), netMargin: rpct(toMinor(ytd.netProfit), toMinor(ytd.revenue)),
+      currentRatio: cl > 0n ? Number((ca * 100n) / cl) / 100 : null, quickRatio: cl > 0n ? Number(((ca - inventory) * 100n) / cl) / 100 : null,
+      debtorDays: sales90 ? Number((receivables * 90n) / sales90) : null, creditorDays: purch90 ? Number((payables * 90n) / purch90) : null },
+    topCustomers: [...custTotals.entries()].sort((x, y) => (y[1] > x[1] ? 1 : -1)).slice(0, 5).map(([cid, v]) => { const c = sdb.contacts.find((x) => x.id === cid)!; return { id: cid, name: c.name, nameAr: c.nameAr, amount: s(v) }; }),
+    topExpenses: ytd.lines.filter((l) => l.group === 'indirect_expense' || l.group === 'cost_of_sales').sort((x, y) => (toMinor(y.amount) > toMinor(x.amount) ? 1 : -1)).slice(0, 5) };
+}
+function vatReturnM(id: string, from: string, to: string) {
+  const empty = () => ({ net: 0n, vat: 0n, adjust: 0n });
+  const side = () => ({ standard: empty(), zero: empty(), exempt: empty(), out_of_scope: empty() } as Record<string, { net: bigint; vat: bigint; adjust: bigint }>);
+  const sales = side(), purchases = side();
+  for (const d of sdb.docs.filter((x) => x.companyId === id && x.status === 'issued' && x.issueDate >= from && x.issueDate <= to && ['invoice', 'credit_note', 'bill', 'supplier_credit', 'expense', 'claim'].includes(x.type))) {
+    const sign = d.type === 'credit_note' || d.type === 'supplier_credit' ? -1n : 1n;
+    const t = d.type === 'invoice' || d.type === 'credit_note' ? sales : purchases;
+    for (const l of d.lines) { const r = t[l.vatCode]!; r.net += sign * l.net; r.vat += sign * l.vat; if (sign < 0n) r.adjust += -l.net; }
+  }
+  const out = (o: typeof sales) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, { net: s(v.net), vat: s(v.vat), adjust: s(v.adjust) }]));
+  const books = (code: string) => { const a = db.accounts.find((x) => x.companyId === id && x.code === code); return db.entries.filter((e) => e.companyId === id && e.date >= from && e.date <= to).flatMap((e) => e.lines).filter((l) => l.accountId === a?.id).reduce((t, l) => t + l.credit - l.debit, 0n); };
+  const ov = Object.values(sales).reduce((t, x) => t + x.vat, 0n), iv = Object.values(purchases).reduce((t, x) => t + x.vat, 0n);
+  const ob = books('2100'), ib = -books('1200');
+  return { from, to, country: db.companies.find((c) => c.id === id)!.country, sales: out(sales), purchases: out(purchases), outputVat: s(ov), inputVat: s(iv), netVat: s(ov - iv),
+    books: { outputVat: s(ob), inputVat: s(ib), netVat: s(ob - ib) }, agreesWithBooks: ov === ob && iv === ib };
+}
+routes.push(
+  ['GET', /^\/api\/companies\/([\w-]+)\/reports\/pnl-columns$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const to = q.get('to') || today(), from = q.get('from') || `${to.slice(0, 4)}-01-01`;
+    const compare = (['none', 'previous', 'lastYear', 'monthly'] as const).find((x) => x === q.get('compare')) ?? 'none';
+    return { compare, columns: periodsFor(from, to, compare).map((p) => pnlStatementM(id, p.from, p.to)) };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/reports\/balance-sheet$/, (m, _b, q) => { const id = inCo(m[1]!); const asOf = q.get('asOf') || today();
+    return { current: balanceSheetM(id, asOf), compare: q.get('compareTo') ? balanceSheetM(id, q.get('compareTo')!) : null }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/reports\/cash-flow$/, (m, _b, q) => { const to = q.get('to') || today(); return cashFlowM(inCo(m[1]!), q.get('from') || `${to.slice(0, 4)}-01-01`, to); }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/reports\/owner-summary$/, (m, _b, q) => ownerSummaryM(inCo(m[1]!), q.get('asOf') || today())],
+  ['GET', /^\/api\/companies\/([\w-]+)\/reports\/vat-return$/, (m, _b, q) => { const to = q.get('to') || today(); return vatReturnM(inCo(m[1]!), q.get('from') || `${to.slice(0, 4)}-01-01`, to); }],
 );
 
 // Sample data is created once everything above is defined.

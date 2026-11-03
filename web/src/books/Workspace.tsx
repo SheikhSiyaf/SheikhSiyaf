@@ -13,6 +13,7 @@ import { Vat } from './Vat.tsx';
 import { DOC_PAGES, NAV, hiddenFor, isModuleBuilt, moduleOf, navFor } from './nav.ts';
 import { Calendar } from '../calendar/Calendar.tsx';
 import { Portal } from '../portal/Portal.tsx';
+import { EInvoicing } from '../sales/EInvoicing.tsx';
 import { accessTo } from '../../../src/books/modules.ts';
 import { Overview } from '../sales/Overview.tsx';
 import { ContactList, ContactPage } from '../sales/Contacts.tsx';
@@ -207,6 +208,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Sales':
     case 'Purchases': {
       if (sub === 'overview') return <Overview books={books} side={side} />;
+      if (sub === 'e-invoicing') return <EInvoicing books={books} />;
       if (sub === 'customers' || sub === 'suppliers') {
         return item ? <ContactPage key={item} books={books} side={side} id={item} /> : <ContactList books={books} side={side} />;
       }

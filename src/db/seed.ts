@@ -21,6 +21,7 @@ import * as Hr from '../books/hrmService.js';
 import * as Crm from '../books/crmService.js';
 import * as Review from '../books/reviewService.js';
 import * as Cal from '../books/calendarService.js';
+import * as Einv from '../books/einvoiceService.js';
 import * as Portal from '../books/portalService.js';
 import { addAttachment } from '../books/setupService.js';
 import { tinyPdfBase64 } from './tinyPdf.js';
@@ -115,7 +116,9 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       const sa = c.country === 'SA';
       const vatNo = (n: number) => (sa ? `3${String(n).padStart(13, '0')}3` : String(100000000000000 + n));
       const cust = async (name: string, nameAr: string, vatN?: number, terms = 30) =>
-        saveContact(db, id, { isCustomer: true, name, nameAr, country: c.country, vatNumber: vatN ? vatNo(vatN) : undefined, paymentTermsDays: terms, city: c.city });
+        saveContact(db, id, { isCustomer: true, name, nameAr, country: c.country, vatNumber: vatN ? vatNo(vatN) : undefined, paymentTermsDays: terms, city: c.city,
+          // Saudi business customers have their national address (needed on e-invoices).
+          ...(sa && vatN ? { address: 'King Fahd Road', buildingNumber: String(1000 + (vatN % 9000)), district: 'Al Olaya', postalCode: '12211' } : {}) });
       const supp = async (name: string, nameAr: string, vatN?: number, terms = 15) =>
         saveContact(db, id, { isSupplier: true, name, nameAr, country: c.country, vatNumber: vatN ? vatNo(vatN) : undefined, paymentTermsDays: terms, city: c.city });
       const gulf = await cust('Gulf Steel Trading', 'الخليج للحديد', 1234567);
@@ -362,6 +365,9 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       await asUser(partner);
       await Review.tick(db, id, last, 'sales_complete', true);
       await Review.tick(db, id, last, 'purchases_complete', true);
+
+      // E-invoicing: Saudi clients have their national address saved, ready to connect to ZATCA (Sales > E-invoicing).
+      if (c.country === 'SA') await Einv.saveSettings(db, id, { street: c.address, buildingNumber: '2322', district: 'Al Murabba', postalCode: '23333' });
 
       // Calendar: earlier deadlines filed (the latest left to do), and the client's own licence renewal.
       await asUser(poster);

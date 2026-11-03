@@ -273,8 +273,10 @@ export async function list(db: Db, companyId: string, status?: string) {
     WHERE e.company_id = $1 AND ($2::text IS NULL OR e.status = $2) ORDER BY e.created_at DESC LIMIT 500`, [companyId, status ?? null])).rows;
 }
 export async function forDocument(db: Db, documentId: string) {
-  return (await db.query(`SELECT ${ROW}, e.qr, (e.cleared_xml IS NOT NULL) AS "hasCleared" FROM einvoices e JOIN documents d ON d.id = e.document_id LEFT JOIN contacts c ON c.id = d.contact_id
+  const rows = (await db.query(`SELECT ${ROW}, e.qr, e.cleared_xml FROM einvoices e JOIN documents d ON d.id = e.document_id LEFT JOIN contacts c ON c.id = d.contact_id
     WHERE e.document_id = $1 ORDER BY e.created_at DESC`, [documentId])).rows;
+  // The QR printed on the invoice: ZATCA's (from the cleared XML) for standard invoices, our stamp's for simplified ones.
+  return rows.map(({ cleared_xml, qr, ...r }) => ({ ...r, printQr: (cleared_xml && qrFromXml(cleared_xml)) || qr || null }));
 }
 /** The XML to download: the cleared one from ZATCA when there is one. */
 export async function xmlOf(db: Db, id: string): Promise<{ fileName: string; xml: string }> {

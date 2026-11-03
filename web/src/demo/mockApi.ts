@@ -18,6 +18,9 @@ import { autoAllocate, netFromGross, milliToString, quantityToMilli } from '../.
 import { bankFromIban, fingerprints, ibanValid, normaliseIban, similarity, type Layout, type StatementRow } from '../../../src/bank/statement.ts';
 import { averageCost, issueCost, notePrefix, receivedValue, type NoteType } from '../../../src/books/inventory.ts';
 import * as Comp from '../../../src/books/compliance.ts';
+import { FIRST_PIH, invoiceXml, kindFor } from '../../../src/einvoice/zatca/ubl.ts';
+import { pintAeInScope, pintAeXml } from '../../../src/einvoice/pintAe.ts';
+import type { EInvoiceData, EParty } from '../../../src/einvoice/invoiceData.ts';
 import { tinyPdf } from '../../../src/db/tinyPdf.ts';
 import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, previousMonthEnd, targetDepreciation, type AssetTerms } from '../../../src/books/assets.ts';
 
@@ -259,6 +262,7 @@ interface MContact {
   crNumber: string | null; email: string | null; phone: string | null; address: string | null; city: string | null; country: string | null;
   paymentTermsDays: number | null; status: 'active' | 'archived';
   isEmployee: boolean; employeeNo: string | null; jobTitle: string | null; defaultCostCentreId: string | null;
+  buildingNumber?: string | null; district?: string | null; postalCode?: string | null;
 }
 interface MDoc {
   id: string; companyId: string; type: DocType; status: string; number: string | null; contactId: string | null; issueDate: string; dueDate: string | null;
@@ -333,7 +337,10 @@ function saveContactM(companyId: string, b: Record<string, unknown>, id?: string
   const v: Omit<MContact, 'id' | 'companyId'> = { isCustomer: Boolean(b.isCustomer), isSupplier: Boolean(b.isSupplier), name: t('name')!, nameAr: t('nameAr'),
     vatNumber: vat, crNumber: t('crNumber'), email: t('email'), phone: t('phone'), address: t('address'), city: t('city'), country, paymentTermsDays: terms,
     status: b.status === 'archived' ? 'archived' : 'active', isEmployee: Boolean(b.isEmployee), employeeNo: b.isEmployee ? t('employeeNo') : null,
-    jobTitle: b.isEmployee ? t('jobTitle') : null, defaultCostCentreId: b.isEmployee ? (b.defaultCostCentreId as string) || null : null };
+    jobTitle: b.isEmployee ? t('jobTitle') : null, defaultCostCentreId: b.isEmployee ? (b.defaultCostCentreId as string) || null : null,
+    buildingNumber: t('buildingNumber'), district: t('district'), postalCode: t('postalCode') };
+  if (v.buildingNumber && !/^\d{4}$/.test(v.buildingNumber)) fail(400, 'The building number has 4 digits.', 'err.buildingNumber');
+  if (v.postalCode && !/^\d{5}$/.test(v.postalCode)) fail(400, 'The postal code has 5 digits.', 'err.postalCode');
   if (id) { Object.assign(sdb.contacts.find((x) => x.id === id) ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
   const nid = uid(); sdb.contacts.push({ id: nid, companyId, ...v }); return nid;
 }
@@ -391,6 +398,7 @@ function issueM(id: string) {
     const before = sdb.docs.filter((x) => x.originalId === o.id && x.type === d.type && x.status === 'issued').reduce((sum, x) => sum + docTotals(x).gross, 0n);
     if (before + docTotals(d).gross > docTotals(o).gross) fail(400, 'A credit note cannot be more than what is left on the original.', 'err.creditTooMuch');
   }
+  einvPrecheckM(d);   // e-invoicing: a connected device, and the buyer's national address on tax invoices
   const company = db.companies.find((c) => c.id === d.companyId)!;
   const seqKey = `${d.companyId}:${d.type}`;
   const savedSeq = sdb.seqs.get(seqKey);
@@ -401,6 +409,7 @@ function issueM(id: string) {
       postingFor(d.type, d.lines, sysAccts(d.companyId), d.paidFromAccountId ?? undefined).map((l) => ({ accountId: l.accountId, costCentreId: l.costCentreId ?? null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
   } catch (e) { if (savedSeq === undefined) sdb.seqs.delete(seqKey); else sdb.seqs.set(seqKey, savedSeq); throw e; }   // no gap in numbers
   d.number = number; d.status = 'issued';
+  einvAfterIssueM(d);
 }
 function quoteStatusM(id: string, status: string) {
   const d = docOf(id); canPostIn(d.companyId);
@@ -651,7 +660,8 @@ function seedSales(companyId: string, poster: string, c: { country: string; city
   const cc = (name: string) => db.costCentres.find((x) => x.companyId === companyId && x.name === name)!.id;
   const vatNo = (n: number) => (c.country === 'SA' ? `3${String(n).padStart(13, '0')}3` : String(100000000000000 + n));
   const contact = (cust: boolean, name: string, nameAr: string, vatN?: number, terms = 30) =>
-    saveContactM(companyId, { isCustomer: cust, isSupplier: !cust, name, nameAr, country: c.country, vatNumber: vatN ? vatNo(vatN) : '', paymentTermsDays: terms, city: c.city });
+    saveContactM(companyId, { isCustomer: cust, isSupplier: !cust, name, nameAr, country: c.country, vatNumber: vatN ? vatNo(vatN) : '', paymentTermsDays: terms, city: c.city,
+      ...(cust && c.country === 'SA' && vatN ? { address: 'King Fahd Road', buildingNumber: String(1000 + (vatN % 9000)), district: 'Al Olaya', postalCode: '12211' } : {}) });
   const gulf = contact(true, 'Gulf Steel Trading', 'الخليج للحديد', 1234567);
   const faisal = contact(true, 'Al Faisal Contracting', 'الفيصل للمقاولات', 7654321);
   const walkIn = contact(true, 'Walk-in customer', 'عميل نقدي', undefined, 0);
@@ -3176,8 +3186,136 @@ function seedPortal(companyId: string, poster: string, c: { key: string; name: s
   session = prev;
 }
 
+
+// ---------------------------------------------------------------- e-invoicing (same rules as db/migrations/0025; ZATCA is simulated in the demo)
+interface MEinvSettings { enabled: boolean; street: string | null; buildingNumber: string | null; district: string | null; postalCode: string | null;
+  zeroReasonCode: string; zeroReason: string; exemptReasonCode: string; exemptReason: string; oosReason: string }
+interface MDevice { id: string; companyId: string; environment: string; name: string; branch: string; invoiceTypes: string; status: string; checks: { type: string; outcome: string; warnings: string[]; errors: string[] }[];
+  icv: number; lastHash: string; certValidTo: string; createdAt: string; activatedAt: string | null; createdBy: string }
+interface MEinv { id: string; companyId: string; documentId: string; scheme: 'zatca' | 'pint_ae'; kind: 'standard' | 'simplified'; uuid: string; icv: number | null; status: string;
+  xml: string; warnings: string[]; errors: string[]; attempts: number; submittedAt: string | null; createdAt: string }
+const edb = { settings: new Map<string, MEinvSettings>(), devices: [] as MDevice[], einvoices: [] as MEinv[] };
+const EINV_DEFAULTS: MEinvSettings = { enabled: false, street: null, buildingNumber: null, district: null, postalCode: null, zeroReasonCode: 'VATEX-SA-32', zeroReason: 'Export of goods',
+  exemptReasonCode: 'VATEX-SA-29', exemptReason: 'Financial services mentioned in Article 29 of the VAT Regulations', oosReason: 'Not subject to VAT' };
+const einvSettings = (id: string) => edb.settings.get(id) ?? { ...EINV_DEFAULTS };
+/** A stand-in for the SHA-256 invoice hash in the demo (the real one is made on the server). */
+const demoHash = (x: string) => { let h = 2166136261; for (let i = 0; i < x.length; i++) h = Math.imul(h ^ x.charCodeAt(i), 16777619) >>> 0; return btoa(`demo-${h.toString(16).padStart(8, '0')}`); };
+function einvData(d: MDoc): EInvoiceData {
+  const co = db.companies.find((c) => c.id === d.companyId)!; const st = einvSettings(co.id);
+  const c = sdb.contacts.find((x) => x.id === d.contactId);
+  const t = docTotals(d);
+  const buyer: EParty | null = !c || (!c.vatNumber && /walk-?in/i.test(c.name)) ? null : { name: c.name, vatNumber: c.vatNumber, crNumber: c.crNumber, street: c.address, building: c.buildingNumber,
+    district: c.district, city: c.city, postalCode: c.postalCode, country: c.country ?? co.country, email: c.email };
+  const orig = d.originalId ? sdb.docs.find((x) => x.id === d.originalId) : null;
+  return { number: d.number ?? '', uuid: uid(), type: d.type === 'credit_note' ? 'credit_note' : 'invoice', issueDate: d.issueDate, issueTime: new Date().toISOString().slice(11, 19), supplyDate: d.issueDate,
+    dueDate: d.dueDate, currency: co.currency, buyer,
+    seller: { name: co.name, vatNumber: co.vatNumber, crNumber: co.crNumber, street: st.street ?? co.fields.address ?? '', building: st.buildingNumber, district: st.district, city: co.city, postalCode: st.postalCode, country: co.country },
+    lines: d.lines.map((l, i) => ({ no: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, net: s(l.net), vat: s(l.vat), vatCode: l.vatCode, vatRate: l.vatRate })),
+    netTotal: s(t.net), vatTotal: s(t.vat), grossTotal: s(t.gross), original: orig ? { number: orig.number ?? '', issueDate: orig.issueDate } : null,
+    reason: d.type === 'credit_note' ? (d.notes || 'Correction of the invoice') : null, paymentMeans: '30',
+    exemption: { zero: { code: st.zeroReasonCode, text: st.zeroReason }, exempt: { code: st.exemptReasonCode, text: st.exemptReason }, out_of_scope: { code: 'VATEX-SA-OOS', text: st.oosReason } } };
+}
+function einvPrecheckM(d: MDoc) {
+  if (!['invoice', 'credit_note'].includes(d.type)) return;
+  const co = db.companies.find((c) => c.id === d.companyId)!;
+  if (co.country !== 'SA' || !einvSettings(co.id).enabled) return;
+  if (!edb.devices.some((x) => x.companyId === co.id && x.status === 'active')) fail(400, 'Connect a device to ZATCA first.', 'err.einvNoDevice');
+  const c = sdb.contacts.find((x) => x.id === d.contactId);
+  if (c?.vatNumber && (c.country ?? 'SA') === 'SA') {
+    const missing = [!c.address && 'street', !c.buildingNumber && 'buildingNumber', !c.district && 'district', !c.city && 'city', !c.postalCode && 'postalCode'].filter(Boolean) as string[];
+    if (missing.length) fail(400, 'The customer\'s national address is needed for a tax invoice.', 'err.buyerAddress', missing);
+  }
+}
+function makeEinvM(d: MDoc) {
+  const co = db.companies.find((c) => c.id === d.companyId)!;
+  const data = einvData(d); const now = new Date().toISOString();
+  if (co.country === 'AE') {
+    if (!pintAeInScope(data)) return;
+    edb.einvoices.push({ id: uid(), companyId: co.id, documentId: d.id, scheme: 'pint_ae', kind: 'standard', uuid: data.uuid, icv: null, status: 'ready', xml: pintAeXml(data), warnings: [], errors: [], attempts: 0, submittedAt: null, createdAt: now });
+    return;
+  }
+  if (co.country !== 'SA') return;
+  const dev = edb.devices.find((x) => x.companyId === co.id && x.status === 'active')!;
+  const xml = invoiceXml(data, { icv: dev.icv + 1, pih: dev.lastHash });
+  dev.icv += 1; dev.lastHash = demoHash(xml);
+  const e: MEinv = { id: uid(), companyId: co.id, documentId: d.id, scheme: 'zatca', kind: kindFor(data.buyer), uuid: data.uuid, icv: dev.icv, status: 'pending', xml, warnings: [], errors: [], attempts: 0, submittedAt: null, createdAt: now };
+  edb.einvoices.push(e);
+  submitEinvM(e);   // sent straight after issuing, as on the server
+}
+function einvAfterIssueM(d: MDoc) { if (['invoice', 'credit_note'].includes(d.type) && einvSettings(d.companyId).enabled) makeEinvM(d); }
+/** The demo's ZATCA sandbox: accepts every invoice (business invoices cleared, consumer sales reported). */
+function submitEinvM(e: MEinv) {
+  if (e.status !== 'pending') return;
+  e.attempts += 1; e.submittedAt = new Date().toISOString();
+  e.status = e.kind === 'standard' ? 'cleared' : 'reported';
+}
+const einvRow = (e: MEinv) => { const d = sdb.docs.find((x) => x.id === e.documentId)!; const c = sdb.contacts.find((x) => x.id === d.contactId);
+  return { id: e.id, documentId: e.documentId, docType: d.type, number: d.number, issueDate: d.issueDate, total: s(docTotals(d).gross), customer: c?.name ?? null, scheme: e.scheme, kind: e.kind, uuid: e.uuid,
+    icv: e.icv, status: e.status, warnings: e.warnings, errors: e.errors, httpStatus: e.submittedAt ? 200 : null, attempts: e.attempts, submittedAt: e.submittedAt, createdAt: e.createdAt, printQr: null }; };
+const einvOf = (id: string) => edb.einvoices.find((x) => x.id === id && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+
+routes.push(
+  ['GET', /^\/api\/companies\/([\w-]+)\/einvoicing$/, (m) => {
+    const id = inCo(m[1]!); const co = db.companies.find((c) => c.id === id)!;
+    const counts: Record<string, number> = {}; for (const e of edb.einvoices.filter((x) => x.companyId === id)) counts[e.status] = (counts[e.status] ?? 0) + 1;
+    return { country: co.country, vatStatus: co.vatStatus, settings: einvSettings(id), counts,
+      devices: edb.devices.filter((x) => x.companyId === id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((x) => ({ ...x, createdBy: userName(x.createdBy) })) };
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/einvoicing\/settings$/, (m, b) => {
+    const id = inCo(m[1]!); canPostIn(id); const co = db.companies.find((c) => c.id === id)!;
+    const v = { ...einvSettings(id), ...(b ?? {}) } as MEinvSettings;
+    const t = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim() : null);
+    if (co.country === 'SA' && v.enabled && !edb.devices.some((x) => x.companyId === id && x.status === 'active')) fail(400, 'Connect a device to ZATCA first.', 'err.einvNoDevice');
+    if (t(v.buildingNumber) && !/^\d{4}$/.test(t(v.buildingNumber)!)) fail(400, 'The building number has 4 digits.', 'err.buildingNumber');
+    if (t(v.postalCode) && !/^\d{5}$/.test(t(v.postalCode)!)) fail(400, 'The postal code has 5 digits.', 'err.postalCode');
+    edb.settings.set(id, { ...v, enabled: Boolean(v.enabled), street: t(v.street), buildingNumber: t(v.buildingNumber), district: t(v.district), postalCode: t(v.postalCode) });
+    return { ok: true };
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/einvoicing\/devices$/, (m, b) => {
+    const id = inCo(m[1]!); canPostIn(id); const co = db.companies.find((c) => c.id === id)!; const st = einvSettings(id);
+    if (co.country !== 'SA') fail(400, 'ZATCA e-invoicing is for Saudi companies.', 'err.einvCountry');
+    if (!/^\d{6}$/.test(String(b?.otp ?? ''))) fail(400, 'The one-time password has 6 digits.', 'err.einvOtp');
+    if (!st.street || !st.buildingNumber || !st.district || !st.postalCode) fail(400, 'Enter the full national address first.', 'err.einvAddress');
+    // The demo can only reach a simulated sandbox; it takes ZATCA's published sandbox password.
+    if (b?.environment !== 'sandbox' || b?.otp !== '123345') fail(400, 'ZATCA did not accept the request.', 'err.zatcaOtp');
+    const dev: MDevice = { id: uid(), companyId: id, environment: 'sandbox', name: cstr(b?.name) ?? `EGS-${co.crNumber}`, branch: cstr(b?.branch) ?? co.city, invoiceTypes: '1100', status: 'compliance',
+      checks: [], icv: 0, lastHash: FIRST_PIH, certValidTo: new Date(Date.now() + 365 * 864e5).toISOString(), createdAt: new Date().toISOString(), activatedAt: null, createdBy: session! };
+    edb.devices.push(dev);
+    return { id: dev.id };
+  }],
+  ['POST', /^\/api\/einvoicing\/devices\/([\w-]+)\/finish$/, (m) => {
+    const dev = edb.devices.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); canPostIn(dev.companyId);
+    dev.checks = ['standard:invoice', 'standard:credit_note', 'standard:debit_note', 'simplified:invoice', 'simplified:credit_note', 'simplified:debit_note'].map((type) => ({ type, outcome: 'accepted', warnings: [], errors: [] }));
+    for (const x of edb.devices.filter((y) => y.companyId === dev.companyId && y.status === 'active')) x.status = 'retired';
+    dev.status = 'active'; dev.activatedAt = new Date().toISOString();
+    edb.settings.set(dev.companyId, { ...einvSettings(dev.companyId), enabled: true });
+    return { status: 'active', checks: dev.checks };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/einvoices$/, (m, _b, q) => { const id = inCo(m[1]!);
+    return edb.einvoices.filter((x) => x.companyId === id && (!q.get('status') || x.status === q.get('status'))).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(einvRow); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/einvoices\/send-pending$/, (m) => { const id = inCo(m[1]!); canPostIn(id);
+    return edb.einvoices.filter((x) => x.companyId === id && x.status === 'pending').map((e) => { submitEinvM(e); return { id: e.id, status: e.status, warnings: [], errors: [] }; }); }],
+  ['POST', /^\/api\/einvoices\/([\w-]+)\/submit$/, (m) => { const e = einvOf(m[1]!); canPostIn(e.companyId); submitEinvM(e); return { status: e.status, warnings: e.warnings, errors: e.errors }; }],
+  ['GET', /^\/api\/einvoices\/([\w-]+)\/xml$/, (m) => { const e = einvOf(m[1]!); const d = sdb.docs.find((x) => x.id === e.documentId)!;
+    return { fileName: `${String(d.number).replace(/[^\w-]+/g, '_')}${e.scheme === 'pint_ae' ? '-pint-ae' : ''}.xml`, xml: e.xml }; }],
+  ['GET', /^\/api\/documents\/([\w-]+)\/einvoice$/, (m) => { docOf(m[1]!); return edb.einvoices.filter((x) => x.documentId === m[1]).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(einvRow); }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/einvoice\/again$/, (m) => {
+    const d = docOf(m[1]!); canPostIn(d.companyId);
+    if (edb.einvoices.some((x) => x.documentId === d.id && x.status !== 'rejected')) fail(400, 'This invoice already has an e-invoice that is not rejected.', 'err.einvExists');
+    einvPrecheckM(d); makeEinvM(d);
+    return { id: edb.einvoices.at(-1)!.id };
+  }],
+);
+
+/** Sample e-invoicing setup, as in src/db/seed.ts: Saudi clients have their national address saved, ready to connect. */
+function seedEinvoicing() {
+  const addr: Record<string, [string, string, string, string]> = { 'Al Noor Trading': ['Prince Sultan Street', '2322', 'Al Murabba', '23333'], 'Riyadh Supplies Co': ['King Abdulaziz Road', '7631', 'Al Malaz', '12836'] };
+  for (const c of db.companies) { const a = addr[c.name]; if (a) edb.settings.set(c.id, { ...EINV_DEFAULTS, street: a[0], buildingNumber: a[1], district: a[2], postalCode: a[3] }); }
+}
+
 // Sample data is created once everything above is defined.
 seed();
+seedEinvoicing();
 db.activity.push({ id: uid(), firmId: firms.find((f) => f.name === DEMO_FIRM)!.id, at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });
 
 export function handle(method: string, url: string, body: unknown, actingTenant?: string | null): { status: number; data: unknown } {

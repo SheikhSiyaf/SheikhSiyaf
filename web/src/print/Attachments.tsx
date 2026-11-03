@@ -72,7 +72,11 @@ export async function printDocument(books: CompanyBooks, id: string) {
   const name = `${d.number ?? 'Draft'} ${d.contact?.name ?? d.payee ?? ''}`.trim();
   if (['invoice', 'credit_note', 'quotation'].includes(d.type)) {
     let qr: string | null = null;
-    if (books.company.country === 'SA' && d.status === 'issued' && d.type !== 'quotation' && d.seller.vatNumber) {
+    // Phase 2: the QR of the e-invoice (ZATCA's for cleared invoices); phase 1 fields when there is no e-invoice.
+    const einvoice = books.company.country === 'SA' && d.status === 'issued' && d.type !== 'quotation'
+      ? (await api<{ printQr: string | null; status: string }[]>(`/api/documents/${id}/einvoice`).catch(() => []))[0] : undefined;
+    if (einvoice?.printQr) qr = await QRCode.toDataURL(einvoice.printQr, { errorCorrectionLevel: 'M', margin: 1, width: 240 });
+    else if (books.company.country === 'SA' && d.status === 'issued' && d.type !== 'quotation' && d.seller.vatNumber) {
       qr = await QRCode.toDataURL(zatcaQrPayload({ sellerName: d.seller.name, vatNumber: d.seller.vatNumber, timestamp: zatcaTimestamp(d.issuedAt, d.issueDate),
         total: d.grossTotal, vatTotal: d.vatTotal }), { errorCorrectionLevel: 'M', margin: 1, width: 240 });
     }

@@ -23,8 +23,9 @@ export function registerEInvoiceRoutes(app: FastifyInstance, { as }: Ctx) {
   app.get<{ Params: Id; Querystring: { status?: string } }>('/api/companies/:id/einvoices', async (req) => inCompany(req, req.params.id, (db, c) => E.list(db, c, req.query.status || undefined)));
   app.post<{ Params: Id }>('/api/companies/:id/einvoices/send-pending', async (req) => inCompany(req, req.params.id, (db, c) => E.submitPending(db, c)));
   app.post<{ Params: Id }>('/api/einvoices/:id/submit', async (req) => as(req, (db) => E.submit(db, uuidParam(req.params.id))));
-  app.get<{ Params: Id }>('/api/einvoices/:id/xml', async (req, reply) => {
+  app.get<{ Params: Id; Querystring: { json?: string } }>('/api/einvoices/:id/xml', async (req, reply) => {
     const f = await as(req, (db) => E.xmlOf(db, uuidParam(req.params.id)));
+    if (req.query.json === '1') return f;   // the web app saves it as a file
     return reply.header('content-type', 'application/xml; charset=utf-8').header('content-disposition', `attachment; filename="${f.fileName}"`).send(f.xml);
   });
   app.get<{ Params: Id }>('/api/documents/:id/einvoice', async (req) => as(req, (db) => E.forDocument(db, uuidParam(req.params.id))));

@@ -10,7 +10,7 @@ export const NAV: Module[] = [
   { key: 'Home', subs: [] },
   { key: 'Portal', subs: [s('overview'), s('requests'), s('documents'), s('monthly-reports')] },
   { key: 'Calendar', subs: [s('upcoming'), s('calendar-settings')] },
-  { key: 'Sales', subs: [s('overview'), s('customers'), s('quotations'), s('invoices'), s('credit-notes'), s('payments-received')] },
+  { key: 'Sales', subs: [s('overview'), s('customers'), s('quotations'), s('invoices'), s('credit-notes'), s('payments-received'), s('e-invoicing')] },
   { key: 'Purchases', subs: [s('overview'), s('suppliers'), s('bills'), s('supplier-credits'), s('payments-made')] },
   { key: 'Expenses', subs: [s('overview'), s('expenses'), s('recurring'), s('categories'), s('claims'), s('approvals')] },
   { key: 'Bank', subs: [s('accounts'), s('import'), s('reconcile'), s('rules')] },

@@ -72,7 +72,7 @@ export function ContactPage({ books, side, id }: { books: CompanyBooks; side: Si
   if (!isNew && c.error) return <ErrorNote error={c.error} onRetry={c.reload} />;
   if (!isNew && !c.data) return <Loading />;
   const base: Form = isNew
-    ? { isCustomer: side === 'sales', isSupplier: side === 'purchases', country: books.company.country, name: '', nameAr: '', vatNumber: '', crNumber: '', email: '', phone: '', address: '', city: '', paymentTermsDays: '' }
+    ? { isCustomer: side === 'sales', isSupplier: side === 'purchases', country: books.company.country, name: '', nameAr: '', vatNumber: '', crNumber: '', email: '', phone: '', address: '', city: '', paymentTermsDays: '', buildingNumber: '', district: '', postalCode: '' }
     : Object.fromEntries(Object.entries(c.data!).map(([k, v]) => [k, typeof v === 'boolean' ? v : v === null || v === undefined ? '' : String(v)]));
   const form = f ?? base;
   const v = (k: string) => String(form[k] ?? '');
@@ -152,6 +152,14 @@ export function ContactPage({ books, side, id }: { books: CompanyBooks; side: Si
             <label className="f" style={{ flex: '2 1 260px' }}>{t('contact.address')}<input id="ct-address" value={v('address')} onChange={(e) => set('address', e.target.value)} /></label>
             <label className="f">{t('contact.city')}<input id="ct-city" value={v('city')} onChange={(e) => set('city', e.target.value)} /></label>
           </div>
+          {v('country') === 'SA' && (
+            <div className="row">
+              <label className="f">{t('einv.building')}<input id="ct-building" dir="ltr" inputMode="numeric" maxLength={4} value={v('buildingNumber')} onChange={(e) => set('buildingNumber', e.target.value.replace(/\D/g, ''))} /></label>
+              <label className="f">{t('einv.district')}<input id="ct-district" value={v('district')} onChange={(e) => set('district', e.target.value)} /></label>
+              <label className="f">{t('einv.postal')}<input id="ct-postal" dir="ltr" inputMode="numeric" maxLength={5} value={v('postalCode')} onChange={(e) => set('postalCode', e.target.value.replace(/\D/g, ''))} /></label>
+            </div>
+          )}
+          {v('country') === 'SA' && v('vatNumber') && !(v('buildingNumber') && v('district') && v('postalCode') && v('address') && v('city')) && <div className="notice small">{t('einv.addressHint')}</div>}
           {!isNew && (
             <label className="actions" style={{ marginBottom: 10 }}>
               <input type="checkbox" checked={v('status') === 'archived'} onChange={(e) => set('status', e.target.checked ? 'archived' : 'active')} />

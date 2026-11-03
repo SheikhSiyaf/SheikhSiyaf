@@ -10,6 +10,7 @@ export type Direction = 'received' | 'made';
 export interface Contact {
   id: string; isCustomer: boolean; isSupplier: boolean; name: string; nameAr: string | null; vatNumber: string | null; crNumber: string | null;
   email: string | null; phone: string | null; address: string | null; city: string | null; country: string | null;
+  buildingNumber?: string | null; district?: string | null; postalCode?: string | null;
   paymentTermsDays: number | null; status: string; balanceDue?: string; overdue?: string; isEmployee?: boolean;
 }
 export interface DocRow {

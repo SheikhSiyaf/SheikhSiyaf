@@ -1,4 +1,5 @@
 // Quotations, invoices, credit notes, bills and supplier credits: list, editor (drafts) and view.
+import { EInvoiceStatus } from './EInvoicing.tsx';
 import { useMemo, useState } from 'react';
 import { api, useApi, type CompanyBooks, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
@@ -388,6 +389,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
         )}
       </div>
       {error && <div className="notice bad" role="alert">{error}</div>}
+      {x.status === 'issued' && (x.type === 'invoice' || x.type === 'credit_note') && <EInvoiceStatus books={books} documentId={x.id} />}
       {isClaim && x.status === 'submitted' && mine && <div className="notice">{t('appr.yoursNotice')}</div>}
       {isClaim && x.status === 'rejected' && <div className="notice warn">{t('claim.rejectedBecause', { reason: x.rejectionReason ?? '', name: x.decidedByName ?? '' })}</div>}
       {rejecting && (
@@ -489,7 +491,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
         <Totals net={x.netTotal} vat={x.vatTotal} gross={x.grossTotal} cur={cur} due={due || (isClaim && x.status === 'issued') ? x.amountDue : undefined} />
         {x.notes && <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{x.notes}</p>}
         {x.status === 'issued' && <p className="mut small">{t('doc.postedNote')}</p>}
-        {x.type === 'invoice' && x.status === 'issued' && <p className="mut small">{t('doc.einvoiceLater', { einv: t(`einv.${books.company.country}`) })}</p>}
+        {x.type === 'invoice' && x.status === 'issued' && books.company.country === 'OM' && <p className="mut small">{t('doc.einvoiceLater', { einv: t(`einv.${books.company.country}`) })}</p>}
       </div>
 
       <AttachmentsCard owner="documents" id={x.id} canAdd={books.canPost} canRemove={false} hint={side === 'purchases' ? t('att.billHint') : undefined} />

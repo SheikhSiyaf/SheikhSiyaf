@@ -364,6 +364,7 @@ function quoteStatusM(id: string, status: string) {
   if (!ok) fail(400, 'This quotation cannot move to that status.', 'err.quoteStatus');
   if (!d.number) d.number = nextNo(d.companyId, 'quotation', 'QT-');
   d.status = status;
+  crmQuoteSync(d.id, status);
 }
 const copyLines = (d: MDoc) => d.lines.map(({ description, quantity, unitPrice, accountId, costCentreId, vatCode }) => ({ description, quantity, unitPrice, accountId, costCentreId, vatCode }));
 function convertM(id: string) {
@@ -372,6 +373,7 @@ function convertM(id: string) {
   const terms = sdb.contacts.find((c) => c.id === q.contactId)!.paymentTermsDays ?? 30;
   const nid = saveDraftM(q.companyId, { type: 'invoice', contactId: q.contactId, issueDate: today(), dueDate: addDays(today(), terms), reference: q.number, notes: q.notes, originalId: q.id, lines: copyLines(q) });
   q.status = 'invoiced';
+  crmQuoteSync(q.id, 'invoiced');
   return nid;
 }
 function creditM(id: string) {
@@ -667,6 +669,7 @@ function seedSales(companyId: string, poster: string, c: { country: string; city
   pay('made', yusuf, 16, c1, s(amountDue(sdb.docs.find((d) => d.id === c1)!)), '1010', 'cash');
   seedOps(companyId, poster, c, { gulf, faisal, najd, fitOut });
   seedHrm(companyId, poster);
+  seedCrm(companyId, poster);
   session = prev;
 }
 
@@ -2321,6 +2324,208 @@ function seedHrm(companyId: string, poster: string) {
     [yusuf, 'medical_insurance', 'MED-44821', daysAgo(-50)], [mona, sa ? 'national_id' : 'emirates_id', sa ? '1087654321' : '784-1985-7654321-2', daysAgo(-1400)], [mona, 'contract', 'C-2019-07', '']] as const) {
     saveHrDocM(companyId, { contactId: who, kind, number, expiryDate: expiry || undefined });
   }
+  session = prev;
+}
+
+// ---------------------------------------------------------------- CRM (same rules as src/books/crmService.ts and db/migrations/0020)
+interface MCampaign { id: string; companyId: string; name: string; channel: string; startDate: string | null; endDate: string | null; budget: bigint; status: string; audience: string | null; notes: string | null; createdAt: string }
+interface MLead { id: string; companyId: string; name: string; nameAr: string | null; contactPerson: string | null; phone: string | null; email: string | null; source: string; campaignId: string | null;
+  ownerId: string | null; status: string; estimatedValue: bigint; notes: string | null; lostReason: string | null; contactId: string | null; createdAt: string }
+interface MDeal { id: string; companyId: string; title: string; contactId: string | null; leadId: string | null; stage: string; value: bigint; expectedClose: string | null; ownerId: string | null;
+  quotationId: string | null; lostReason: string | null; closedAt: string | null; notes: string | null; createdAt: string }
+interface MActivity { id: string; companyId: string; kind: string; subject: string; notes: string | null; dueDate: string | null; dueTime: string | null; doneAt: string | null;
+  leadId: string | null; dealId: string | null; contactId: string | null; ownerId: string | null; createdAt: string }
+const cdb = { campaigns: [] as MCampaign[], leads: [] as MLead[], deals: [] as MDeal[], activities: [] as MActivity[] };
+const C_STAGES = ['new', 'qualified', 'proposal', 'negotiation', 'won', 'lost'];
+const C_OPEN = ['new', 'qualified', 'proposal', 'negotiation'];
+const CHANCE: Record<string, number> = { new: 10, qualified: 25, proposal: 50, negotiation: 75, won: 100, lost: 0 };
+const cstr = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+const cdt = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+const cpick = (v: unknown, list: string[], f: string) => (list.includes(String(v)) ? String(v) : f);
+const peopleOf = (companyId: string) => db.memberships.filter((m) => m.companyId === companyId).map((m) => db.users.find((u) => u.id === m.userId)!).filter((u) => u.status === 'active')
+  .map((u) => ({ id: u.id, name: u.name })).sort((a, b) => a.name.localeCompare(b.name));
+function crmLinks(companyId: string, x: { ownerId?: string | null; contactId?: string | null; campaignId?: string | null; leadId?: string | null; dealId?: string | null }, customerOnly = true) {
+  const okC = (id: string) => sdb.contacts.some((c) => c.id === id && c.companyId === companyId && (!customerOnly || c.isCustomer));
+  if ((x.ownerId && !db.memberships.some((m) => m.companyId === companyId && m.userId === x.ownerId)) || (x.contactId && !okC(x.contactId))
+    || (x.campaignId && !cdb.campaigns.some((c) => c.id === x.campaignId && c.companyId === companyId)) || (x.leadId && !cdb.leads.some((l) => l.id === x.leadId && l.companyId === companyId))
+    || (x.dealId && !cdb.deals.some((d) => d.id === x.dealId && d.companyId === companyId))) fail(400, 'That belongs to a different company.', 'err.otherCompany');
+}
+const campaignRow = (c: MCampaign) => {
+  const leads = cdb.leads.filter((l) => l.campaignId === c.id);
+  const won = cdb.deals.filter((d) => d.stage === 'won' && leads.some((l) => l.id === d.leadId));
+  return { id: c.id, name: c.name, channel: c.channel, startDate: c.startDate, endDate: c.endDate, budget: s(c.budget), status: c.status, audience: c.audience, notes: c.notes,
+    leads: leads.length, converted: leads.filter((l) => l.status === 'converted').length, won: won.length, wonValue: s(won.reduce((t, d) => t + d.value, 0n)),
+    costPerLead: leads.length ? s(c.budget / BigInt(leads.length)) : null };
+};
+function saveCampaignM(companyId: string, b: Body, id?: string) {
+  canPostIn(companyId);
+  const name = cstr(b?.name) ?? fail(400, 'Enter the campaign name.', 'err.campaignName');
+  const start = cdt(b?.startDate), end = cdt(b?.endDate);
+  if (start && end && end < start) fail(400, 'The end date is before the start date.', 'err.campaignDates');
+  const v = { name, channel: cpick(b?.channel, ['email', 'sms', 'whatsapp', 'social', 'event', 'print', 'other'], 'other'), startDate: start, endDate: end, budget: mny(b?.budget),
+    status: cpick(b?.status, ['planned', 'running', 'done'], 'planned'), audience: cstr(b?.audience), notes: cstr(b?.notes) };
+  if (id) { Object.assign(cdb.campaigns.find((c) => c.id === id && c.companyId === companyId) ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
+  const nid = uid(); cdb.campaigns.push({ id: nid, companyId, ...v, createdAt: new Date().toISOString() }); return nid;
+}
+const nextAct = (f: (a: MActivity) => boolean) => cdb.activities.filter((a) => !a.doneAt && a.dueDate && f(a)).map((a) => a.dueDate!).sort()[0] ?? null;
+const leadRow = (l: MLead) => ({ id: l.id, companyId: l.companyId, name: l.name, nameAr: l.nameAr, contactPerson: l.contactPerson, phone: l.phone, email: l.email, source: l.source, campaignId: l.campaignId,
+  campaignName: cdb.campaigns.find((c) => c.id === l.campaignId)?.name ?? null, ownerId: l.ownerId, ownerName: userName(l.ownerId), status: l.status, estimatedValue: s(l.estimatedValue),
+  notes: l.notes, lostReason: l.lostReason, contactId: l.contactId, createdAt: l.createdAt, nextActivity: nextAct((a) => a.leadId === l.id) });
+const leadOf = (id: string) => cdb.leads.find((l) => l.id === id && roleOf(session, l.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function saveLeadM(companyId: string, b: Body, id?: string) {
+  canPostIn(companyId);
+  const name = cstr(b?.name) ?? fail(400, 'Enter the name of the possible customer.', 'err.leadName');
+  const email = cstr(b?.email);
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) fail(400, 'Check the email address.', 'err.email');
+  if (!cstr(b?.phone) && !email) fail(400, 'Enter a phone number or an email.', 'err.leadReach');
+  const status = cpick(b?.status, ['new', 'contacted', 'qualified', 'lost'], 'new');
+  if (status === 'lost' && !cstr(b?.lostReason)) fail(400, 'Say why it was lost.', 'err.lostReason');
+  const campaignId = cstr(b?.campaignId), ownerId = cstr(b?.ownerId);
+  crmLinks(companyId, { campaignId, ownerId });
+  const v = { name, nameAr: cstr(b?.nameAr), contactPerson: cstr(b?.contactPerson), phone: cstr(b?.phone), email, source: campaignId ? 'campaign' : cpick(b?.source, ['referral', 'website', 'walk_in', 'phone', 'social', 'exhibition', 'campaign', 'other'], 'other'),
+    campaignId, ownerId, estimatedValue: mny(b?.estimatedValue), notes: cstr(b?.notes), lostReason: status === 'lost' ? cstr(b?.lostReason) : null, status };
+  if (id) { const l = leadOf(id); if (l.status === 'converted') fail(400, 'This lead is already a customer.', 'err.leadConverted'); Object.assign(l, v); return id; }
+  const nid = uid(); cdb.leads.push({ id: nid, companyId, ...v, contactId: null, createdAt: new Date().toISOString() }); return nid;
+}
+function convertLeadM(id: string, b: Body) {
+  const l = leadOf(id); canPostIn(l.companyId);
+  if (l.status === 'converted') fail(400, 'This lead is already a customer.', 'err.leadConverted');
+  if (l.status === 'lost') fail(400, 'This lead was lost.', 'err.leadLost');
+  const contactId = cstr(b?.contactId) ?? saveContactM(l.companyId, { isCustomer: true, name: l.name, nameAr: l.nameAr ?? undefined, email: l.email ?? undefined, phone: l.phone ?? undefined });
+  l.status = 'converted'; l.contactId = contactId; l.lostReason = null;
+  for (const d of cdb.deals) if (d.leadId === id && !d.contactId) d.contactId = contactId;
+  const dealId = cstr(b?.dealTitle) ? saveDealM(l.companyId, { title: b!.dealTitle, contactId, leadId: id, value: b?.dealValue ?? s(l.estimatedValue), ownerId: l.ownerId, stage: 'qualified' }) : null;
+  return { contactId, dealId };
+}
+const dealRow = (d: MDeal) => { const c = sdb.contacts.find((x) => x.id === d.contactId); const q = sdb.docs.find((x) => x.id === d.quotationId);
+  return { id: d.id, companyId: d.companyId, title: d.title, contactId: d.contactId, customerName: c?.name ?? null, customerNameAr: c?.nameAr ?? null, leadId: d.leadId,
+    leadName: cdb.leads.find((l) => l.id === d.leadId)?.name ?? null, stage: d.stage, value: s(d.value), expectedClose: d.expectedClose, ownerId: d.ownerId, ownerName: userName(d.ownerId),
+    quotationId: d.quotationId, quotationNumber: q?.number ?? null, quotationStatus: q?.status ?? null, lostReason: d.lostReason, closedAt: d.closedAt, notes: d.notes, createdAt: d.createdAt,
+    nextActivity: nextAct((a) => a.dealId === d.id) }; };
+const dealOf = (id: string) => cdb.deals.find((d) => d.id === id && roleOf(session, d.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function saveDealM(companyId: string, b: Body, id?: string) {
+  canPostIn(companyId);
+  const title = cstr(b?.title) ?? fail(400, 'Enter what the deal is for.', 'err.dealTitle');
+  const contactId = cstr(b?.contactId), leadId = cstr(b?.leadId), ownerId = cstr(b?.ownerId);
+  if (!contactId && !leadId) fail(400, 'Choose the customer or the lead.', 'err.dealWho');
+  const stage = cpick(b?.stage, C_STAGES, 'new');
+  if (stage === 'lost' && !cstr(b?.lostReason)) fail(400, 'Say why the deal was lost.', 'err.lostReason');
+  crmLinks(companyId, { contactId, leadId, ownerId });
+  const old = id ? dealOf(id) : null;
+  const closing = stage === 'won' || stage === 'lost';
+  const v = { title, contactId, leadId, stage, value: mny(b?.value), expectedClose: cdt(b?.expectedClose), ownerId, lostReason: stage === 'lost' ? cstr(b?.lostReason) : null,
+    closedAt: closing ? (old?.closedAt && old.stage === stage ? old.closedAt : today()) : null, notes: cstr(b?.notes) };
+  if (old) { Object.assign(old, v); return old.id; }
+  const nid = uid(); cdb.deals.push({ id: nid, companyId, ...v, quotationId: null, createdAt: new Date().toISOString() }); return nid;
+}
+function quoteDealM(id: string) {
+  const d = dealOf(id); canPostIn(d.companyId);
+  if (!d.contactId) fail(400, 'Make the lead a customer first.', 'err.dealNeedsCustomer');
+  if (d.quotationId) fail(400, 'This deal already has a quotation.', 'err.dealHasQuotation');
+  if (d.stage === 'won' || d.stage === 'lost') fail(400, 'This deal is closed.', 'err.dealClosed');
+  const co = db.companies.find((c) => c.id === d.companyId)!;
+  const qid = saveDraftM(d.companyId, { type: 'quotation', contactId: d.contactId, issueDate: today(), reference: d.title,
+    lines: [{ description: d.title, quantity: '1', unitPrice: s(d.value), accountId: acctBy(d.companyId, '4000').id, vatCode: co.vatStatus === 'registered' ? 'standard' : 'out_of_scope' }] });
+  d.quotationId = qid; if (d.stage === 'new' || d.stage === 'qualified') d.stage = 'proposal';
+  return qid;
+}
+/** A deal follows its quotation (db/migrations/0020: after_quotation_status). */
+function crmQuoteSync(quotationId: string, status: string) {
+  for (const d of cdb.deals.filter((x) => x.quotationId === quotationId && x.stage !== 'won' && x.stage !== 'lost')) {
+    if (status === 'invoiced') { d.stage = 'won'; d.closedAt = today(); d.lostReason = null; }
+    else if (status === 'declined') { d.stage = 'lost'; d.closedAt = today(); d.lostReason = 'Quotation declined'; }
+    else if ((status === 'sent' || status === 'accepted') && ['new', 'qualified', 'proposal'].includes(d.stage)) d.stage = status === 'accepted' ? 'negotiation' : 'proposal';
+  }
+}
+const actRow = (a: MActivity) => { const c = sdb.contacts.find((x) => x.id === a.contactId);
+  return { ...a, leadName: cdb.leads.find((l) => l.id === a.leadId)?.name ?? null, dealTitle: cdb.deals.find((d) => d.id === a.dealId)?.title ?? null, contactName: c?.name ?? null,
+    contactNameAr: c?.nameAr ?? null, ownerName: userName(a.ownerId) }; };
+const actOf = (id: string) => cdb.activities.find((a) => a.id === id && roleOf(session, a.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function saveActivityM(companyId: string, b: Body, id?: string) {
+  canPostIn(companyId);
+  const subject = cstr(b?.subject) ?? fail(400, 'Enter what the activity is about.', 'err.activitySubject');
+  const time = cstr(b?.dueTime);
+  if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) fail(400, 'Enter the time as hours and minutes.', 'err.activityTime');
+  const leadId = cstr(b?.leadId), dealId = cstr(b?.dealId), contactId = cstr(b?.contactId), ownerId = cstr(b?.ownerId);
+  if ([leadId, dealId, contactId].filter(Boolean).length > 1) fail(400, 'Link the activity to one lead, deal or customer.', 'err.activityLink');
+  crmLinks(companyId, { leadId, dealId, contactId, ownerId }, false);
+  const v = { kind: cpick(b?.kind, ['call', 'meeting', 'task', 'email', 'note'], 'task'), subject, notes: cstr(b?.notes), dueDate: cdt(b?.dueDate), dueTime: time, leadId, dealId, contactId, ownerId };
+  if (id) { Object.assign(actOf(id), v); return id; }
+  const nid = uid(); cdb.activities.push({ id: nid, companyId, ...v, doneAt: null, createdAt: new Date().toISOString() }); return nid;
+}
+
+routes.push(
+  ['GET', /^\/api\/companies\/([\w-]+)\/crm\/people$/, (m) => peopleOf(inCo(m[1]!))],
+  ['GET', /^\/api\/companies\/([\w-]+)\/crm\/campaigns$/, (m) => { const id = inCo(m[1]!);
+    return cdb.campaigns.filter((c) => c.companyId === id).sort((a, b) => Number(a.status === 'done') - Number(b.status === 'done') || (b.startDate ?? b.createdAt).localeCompare(a.startDate ?? a.createdAt)).map(campaignRow); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/crm\/campaigns$/, (m, b) => ({ id: saveCampaignM(inCo(m[1]!), b) })],
+  ['POST', /^\/api\/crm\/campaigns\/([\w-]+)$/, (m, b) => { const c = cdb.campaigns.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); return { id: saveCampaignM(c.companyId, b, c.id) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/crm\/leads$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const st = q.get('status') ?? ''; const n = (q.get('q') ?? '').trim().toLowerCase(); const owner = q.get('owner');
+    return cdb.leads.filter((l) => l.companyId === id && (!st || (st === 'open' ? ['new', 'contacted', 'qualified'].includes(l.status) : l.status === st))
+      && (!n || [l.name, l.contactPerson ?? '', l.phone ?? ''].join(' ').toLowerCase().includes(n)) && (!owner || l.ownerId === owner))
+      .sort((a, b) => Number(['converted', 'lost'].includes(a.status)) - Number(['converted', 'lost'].includes(b.status)) || b.createdAt.localeCompare(a.createdAt)).map(leadRow);
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/crm\/leads$/, (m, b) => ({ id: saveLeadM(inCo(m[1]!), b) })],
+  ['GET', /^\/api\/crm\/leads\/([\w-]+)$/, (m) => leadRow(leadOf(m[1]!))],
+  ['POST', /^\/api\/crm\/leads\/([\w-]+)\/convert$/, (m, b) => convertLeadM(m[1]!, b)],
+  ['POST', /^\/api\/crm\/leads\/([\w-]+)$/, (m, b) => { const l = leadOf(m[1]!); return { id: saveLeadM(l.companyId, b, l.id) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/crm\/pipeline$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const owner = q.get('owner'); const from = q.get('from') || `${today().slice(0, 4)}-01-01`, to = q.get('to') || today();
+    const rows = cdb.deals.filter((d) => d.companyId === id && (!owner || d.ownerId === owner) && (C_OPEN.includes(d.stage) || (d.closedAt! >= from && d.closedAt! <= to)))
+      .sort((a, b) => (a.expectedClose ?? '9999').localeCompare(b.expectedClose ?? '9999') || a.createdAt.localeCompare(b.createdAt)).map(dealRow);
+    const stages = C_STAGES.map((st) => { const deals = rows.filter((r) => r.stage === st); const total = deals.reduce((t, r) => t + toMinor(r.value), 0n);
+      return { stage: st, chance: CHANCE[st]!, deals, count: deals.length, total: s(total), weighted: s((total * BigInt(CHANCE[st]!) + 50n) / 100n) }; });
+    const open = stages.filter((x) => C_OPEN.includes(x.stage));
+    const won = stages.find((x) => x.stage === 'won')!, lost = stages.find((x) => x.stage === 'lost')!;
+    return { from, to, stages, openTotal: s(open.reduce((t, x) => t + toMinor(x.total), 0n)), weighted: s(open.reduce((t, x) => t + toMinor(x.weighted), 0n)), wonTotal: won.total,
+      wonCount: won.count, lostCount: lost.count, winRate: won.count + lost.count ? Math.round((won.count * 100) / (won.count + lost.count)) : null };
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/crm\/deals$/, (m, b) => ({ id: saveDealM(inCo(m[1]!), b) })],
+  ['GET', /^\/api\/crm\/deals\/([\w-]+)$/, (m) => dealRow(dealOf(m[1]!))],
+  ['POST', /^\/api\/crm\/deals\/([\w-]+)\/stage$/, (m, b) => { const d = dealOf(m[1]!); saveDealM(d.companyId, { ...dealRow(d), stage: b?.stage, lostReason: b?.lostReason ?? d.lostReason }, d.id); return { ok: true }; }],
+  ['POST', /^\/api\/crm\/deals\/([\w-]+)\/quotation$/, (m) => ({ id: quoteDealM(m[1]!) })],
+  ['POST', /^\/api\/crm\/deals\/([\w-]+)$/, (m, b) => { const d = dealOf(m[1]!); return { id: saveDealM(d.companyId, b, d.id) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/crm\/activities$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const show = q.get('show') ?? 'open'; const t = today();
+    const f = (k: string, v: string | null) => !q.get(k) || v === q.get(k);
+    return cdb.activities.filter((a) => a.companyId === id && (show === 'all' || (show === 'open' && !a.doneAt) || (show === 'overdue' && !a.doneAt && !!a.dueDate && a.dueDate < t) || (show === 'done' && !!a.doneAt))
+      && f('owner', a.ownerId) && f('lead', a.leadId) && f('deal', a.dealId) && f('contact', a.contactId))
+      .sort((a, b) => Number(!!a.doneAt) - Number(!!b.doneAt) || (b.doneAt ?? '').localeCompare(a.doneAt ?? '') || (a.dueDate ?? '9999').localeCompare(b.dueDate ?? '9999') || (a.dueTime ?? '99').localeCompare(b.dueTime ?? '99'))
+      .map(actRow);
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/crm\/activities$/, (m, b) => ({ id: saveActivityM(inCo(m[1]!), b) })],
+  ['POST', /^\/api\/crm\/activities\/([\w-]+)\/done$/, (m, b) => { const a = actOf(m[1]!); canPostIn(a.companyId); a.doneAt = b?.done === false ? null : new Date().toISOString(); return { ok: true }; }],
+  ['POST', /^\/api\/crm\/activities\/([\w-]+)\/delete$/, (m) => { const a = actOf(m[1]!); canPostIn(a.companyId); cdb.activities = cdb.activities.filter((x) => x.id !== a.id); return { ok: true }; }],
+  ['POST', /^\/api\/crm\/activities\/([\w-]+)$/, (m, b) => { const a = actOf(m[1]!); return { id: saveActivityM(a.companyId, b, a.id) }; }],
+);
+
+/** Sample CRM data, as in src/db/seed.ts. */
+function seedCrm(companyId: string, poster: string) {
+  const prev = session; session = poster;
+  const sa = db.companies.find((c) => c.id === companyId)!.country === 'SA';
+  const cust = (name: string) => sdb.contacts.find((c) => c.companyId === companyId && c.name === name)!.id;
+  const gulf = cust('Gulf Steel Trading'), faisal = cust('Al Faisal Contracting'), walkIn = cust('Walk-in customer');
+  const camp = saveCampaignM(companyId, { name: sa ? 'Ramadan offer' : 'Dubai expo stand', channel: sa ? 'whatsapp' : 'event', startDate: daysAgo(40), endDate: daysAgo(10), budget: '3000.00', status: 'done',
+    audience: sa ? 'Contractors in Riyadh' : 'Hotels and restaurants' });
+  saveCampaignM(companyId, { name: 'Year-end newsletter', channel: 'email', startDate: daysAgo(-20), budget: '500.00', status: 'planned' });
+  const lead1 = saveLeadM(companyId, { name: 'Najran Builders', nameAr: 'بناة نجران', contactPerson: 'Saeed', phone: '+966 55 123 4567', campaignId: camp, estimatedValue: '18000.00', ownerId: poster, status: 'qualified' });
+  saveLeadM(companyId, { name: 'Coastal Hotels', contactPerson: 'Reem', email: 'purchasing@coastal.example', campaignId: camp, estimatedValue: '9000.00', ownerId: poster, status: 'contacted' });
+  saveLeadM(companyId, { name: 'Prime Clinics', phone: '+966 50 765 4321', source: 'referral', estimatedValue: '6000.00', status: 'new' });
+  saveLeadM(companyId, { name: 'Desert Cafe', phone: '+966 54 000 1122', source: 'walk_in', status: 'lost', lostReason: 'Chose a cheaper supplier', campaignId: camp });
+  const conv = convertLeadM(lead1, { dealTitle: 'Steel frames for villa project', dealValue: '18000.00' });
+  const q1 = quoteDealM(conv.dealId!); quoteStatusM(q1, 'sent');
+  const d2 = saveDealM(companyId, { title: 'Annual supply contract', contactId: gulf, value: '42000.00', stage: 'negotiation', expectedClose: daysAgo(-14), ownerId: poster });
+  saveDealM(companyId, { title: 'Warehouse racks phase 2', contactId: faisal, value: '12500.00', stage: 'qualified', expectedClose: daysAgo(-30) });
+  saveDealM(companyId, { title: 'Spare parts order', contactId: gulf, value: '3200.00', stage: 'new' });
+  saveDealM(companyId, { title: 'Delivery and installation', contactId: faisal, value: '7800.00', stage: 'won' });
+  saveDealM(companyId, { title: 'Site cleaning', contactId: walkIn, value: '1500.00', stage: 'lost', lostReason: 'Customer postponed' });
+  saveActivityM(companyId, { kind: 'call', subject: 'Call about the quotation', dueDate: daysAgo(2), dealId: conv.dealId, ownerId: poster });
+  saveActivityM(companyId, { kind: 'meeting', subject: 'Contract terms meeting', dueDate: daysAgo(0), dueTime: '11:00', dealId: d2, ownerId: poster });
+  saveActivityM(companyId, { kind: 'email', subject: 'Send product catalogue', dueDate: daysAgo(-3), contactId: gulf });
+  saveActivityM(companyId, { kind: 'task', subject: 'Prepare samples', dueDate: daysAgo(-7), ownerId: poster });
+  const done = saveActivityM(companyId, { kind: 'call', subject: 'First call with Najran Builders', dueDate: daysAgo(12), leadId: lead1 });
+  actOf(done).doneAt = new Date().toISOString();
   session = prev;
 }
 

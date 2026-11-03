@@ -190,3 +190,11 @@ Every change below is covered by a test in `test/`.
 | Change | Why |
 |---|---|
 | `client_roles.default_for` marks each firm's starting Client accountant and Client management roles; a client user added without a role gets the marked role for their base | 0018 chose by creation time, which tied for roles made in the same transaction, so a new user could get a role such as "Cashier" by name order. The marked roles stay ordinary and editable. |
+
+## 0020_crm.sql
+| Change | Why |
+|---|---|
+| `crm_campaigns`, `crm_leads`, `crm_deals`, `crm_activities`, each with company_id, audit triggers and row-level security; only people who can post change them | Light CRM inside each client's books (PRODUCT_SPEC: "light CRM"), with the same separation and audit as everything else (rules 5 and 6). |
+| Links (customer, lead, deal, campaign, quotation) must belong to the same company; owners must be members of it; `crm_people()` lists them for members only | No CRM record can point into another client's data. |
+| Leads, deals and campaigns are never deleted (closed as lost, converted or done); activities can be removed | History of the pipeline is kept. |
+| Trigger on `documents`: a deal follows its quotation (sent = proposal, accepted = negotiation, invoiced = won, declined = lost) | The pipeline stays in step with Sales without double entry. |

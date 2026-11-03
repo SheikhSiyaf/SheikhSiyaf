@@ -25,6 +25,7 @@ import { ChartOfAccounts, CostCentres } from '../ledger/Setup.tsx';
 import { ReportFrame } from '../print/Print.tsx';
 import { ProjectList, ProjectPage, ProjectReport } from '../projects/Projects.tsx';
 import { EmployeeList, EmployeePage } from '../hrm/Employees.tsx';
+import { Activities, Campaigns, Leads, PipelinePage } from '../crm/Crm.tsx';
 import { Attendance, EndOfService, HrDocuments, HrOverview, Leave, Loans, Payroll } from '../hrm/Hrm.tsx';
 import { BankAccountForm, BankAccountList, BankAccountPage, ImportStatement, Reconcile, Rules } from '../bank/Bank.tsx';
 import { ItemList, ItemPage, NoteEditor, NoteList, StockValue } from '../inventory/Inventory.tsx';
@@ -163,6 +164,11 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Assets':
       if (sub === 'depreciation') return <Depreciation books={books} />;
       return item ? <AssetPage key={item} books={books} id={item} /> : <AssetRegister books={books} />;
+    case 'CRM':
+      if (sub === 'leads') return <Leads books={books} id={item} />;
+      if (sub === 'activities') return <Activities books={books} />;
+      if (sub === 'campaigns') return <Campaigns books={books} />;
+      return <PipelinePage books={books} id={item} />;
     case 'HRM':
       if (sub === 'employees') return item ? <EmployeePage key={`${item}${extra ?? ''}`} books={books} id={item} extra={extra} /> : <EmployeeList books={books} />;
       if (sub === 'overview') return <HrOverview books={books} />;

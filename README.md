@@ -30,7 +30,12 @@ Read `CLAUDE.md` first. It holds the non-negotiable accounting rules.
     - **Inventory:** items with quantity, average cost and value; goods received notes (GRN, inbound: Dr 1300 Inventory, Cr 2050 Goods received not yet billed); goods delivery notes (GDN, outbound at average cost: Dr 5000 Cost of sales, Cr 1300); stock value against 1300 in the books.
     - **Restaurant** (for clients whose industry is restaurant or café, instead of Inventory): food sales with a tap-to-sell order pad (each sale issues the tax invoice, takes the recipe materials out of stock at average cost and records the cash, card or bank payment; a sale on account stays to be paid); the menu with recipes, cost per portion, food cost % and margin; materials; materials in; waste and staff meals; stock value.
     - **Assets:** fixed asset register (cost, depreciation to date, book value, against the books); monthly straight-line depreciation posted one month at a time; selling or scrapping an asset with its gain or loss.
-    - **CRM and Review:** their sub-pages describe what each will do. CRM covers leads, pipeline, activities and campaigns.
+    - **CRM** (light, no postings to the books):
+      - **Pipeline:** open deals as a board by stage (New, Interested, Quotation sent, Negotiation), with totals, likely value (each stage's chance), deals won this year and win rate. A deal can make a Sales quotation for its customer; the deal then follows it (sent, accepted, invoiced = won, declined = lost).
+      - **Leads:** possible customers with where they came from (or the campaign), who follows up, possible value and status; **Make customer** creates the customer in Sales and can open a deal.
+      - **Activities:** calls, meetings, tasks, emails and notes with due dates, for a lead, deal or customer; to do, overdue and done. Customer pages in Sales show their activities.
+      - **Campaigns:** channel, dates and budget, with the leads, customers and won deals they brought in and the cost per lead.
+    - **Review:** its sub-pages describe what it will do.
   - **Sidebar:** pressing a module opens its sub-menu; pressing it again closes it.
   - **PDFs:** every invoice, credit note, quotation, bill, expense, claim and goods note has a **PDF** button. It opens a professional A4 page in the print window; choose "Save as PDF". Saudi tax invoices carry the ZATCA phase 1 QR code. Bills, expenses, claims and goods notes can have attachments (the supplier's invoice as a PDF or photo, up to 10 MB); pictures are printed on pages after the document.
   - **Line editors:** quantity and price boxes show the full number; on laptop screens each line takes two rows so nothing scrolls out of view.

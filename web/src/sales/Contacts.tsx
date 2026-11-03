@@ -1,4 +1,6 @@
 // Customers and suppliers: list with balances, and one page per contact (details, documents, payments).
+import { ActivityPanel } from '../crm/Crm.tsx';
+import { accessTo } from '../../../src/books/modules.ts';
 import { useState, type FormEvent } from 'react';
 import { api, useApi, type CompanyBooks } from '../api.ts';
 import { useI18n, useLocalName } from '../i18n.tsx';
@@ -200,6 +202,7 @@ export function ContactPage({ books, side, id }: { books: CompanyBooks; side: Si
               </div>
             )}
           </div>
+          {side === 'sales' && (books.company.modules ?? []).includes('CRM') && accessTo(books.access?.permissions, 'CRM') !== 'none' && <ActivityPanel books={{ ...books, canPost: books.canPost && accessTo(books.access?.permissions, 'CRM') === 'edit' }} link={{ contactId: id }} />}
         </>
       )}
     </>

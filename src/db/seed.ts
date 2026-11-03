@@ -18,6 +18,7 @@ import * as Bank from '../books/bankService.js';
 import * as Inv from '../books/inventoryService.js';
 import * as Fa from '../books/assetsService.js';
 import * as Hr from '../books/hrmService.js';
+import * as Crm from '../books/crmService.js';
 import * as Pay from '../books/payroll.js';
 import { monthEnd, nextMonthEnd, previousMonthEnd, targetDepreciation } from '../books/assets.js';
 import { toMinor } from '../money.js';
@@ -234,6 +235,29 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
         [mona, 'contract', 'C-2019-07', ''],
       ];
       for (const [who, kind, number, expiry] of docs) await Hr.saveDocument(db, id, { contactId: who, kind, number, expiryDate: expiry || undefined });
+
+      // CRM: a campaign and its leads, a lead made a customer with a deal and quotation, deals at each stage, follow-ups.
+      const crmCampaign = await Crm.saveCampaign(db, id, { name: sa ? 'Ramadan offer' : 'Dubai expo stand', channel: sa ? 'whatsapp' : 'event', startDate: daysAgo(40), endDate: daysAgo(10),
+        budget: '3000.00', status: 'done', audience: sa ? 'Contractors in Riyadh' : 'Hotels and restaurants' });
+      await Crm.saveCampaign(db, id, { name: 'Year-end newsletter', channel: 'email', startDate: daysAgo(-20), budget: '500.00', status: 'planned' });
+      const lead1 = await Crm.saveLead(db, id, { name: 'Najran Builders', nameAr: 'بناة نجران', contactPerson: 'Saeed', phone: '+966 55 123 4567', campaignId: crmCampaign, estimatedValue: '18000.00', ownerId: poster, status: 'qualified' });
+      await Crm.saveLead(db, id, { name: 'Coastal Hotels', contactPerson: 'Reem', email: 'purchasing@coastal.example', campaignId: crmCampaign, estimatedValue: '9000.00', ownerId: poster, status: 'contacted' });
+      await Crm.saveLead(db, id, { name: 'Prime Clinics', phone: '+966 50 765 4321', source: 'referral', estimatedValue: '6000.00', status: 'new' });
+      await Crm.saveLead(db, id, { name: 'Desert Cafe', phone: '+966 54 000 1122', source: 'walk_in', status: 'lost', lostReason: 'Chose a cheaper supplier', campaignId: crmCampaign });
+      const conv = await Crm.convertLead(db, lead1, { dealTitle: 'Steel frames for villa project', dealValue: '18000.00' });
+      const q1 = await Crm.quoteDeal(db, conv.dealId!);
+      await setQuotationStatus(db, q1, 'sent');
+      const d2 = await Crm.saveDeal(db, id, { title: 'Annual supply contract', contactId: gulf, value: '42000.00', stage: 'negotiation', expectedClose: daysAgo(-14), ownerId: poster });
+      await Crm.saveDeal(db, id, { title: 'Warehouse racks phase 2', contactId: faisal, value: '12500.00', stage: 'qualified', expectedClose: daysAgo(-30) });
+      await Crm.saveDeal(db, id, { title: 'Spare parts order', contactId: gulf, value: '3200.00', stage: 'new' });
+      await Crm.saveDeal(db, id, { title: 'Delivery and installation', contactId: faisal, value: '7800.00', stage: 'won' });
+      await Crm.saveDeal(db, id, { title: 'Site cleaning', contactId: walkIn, value: '1500.00', stage: 'lost', lostReason: 'Customer postponed' });
+      await Crm.saveActivity(db, id, { kind: 'call', subject: 'Call about the quotation', dueDate: daysAgo(2), dealId: conv.dealId, ownerId: poster });
+      await Crm.saveActivity(db, id, { kind: 'meeting', subject: 'Contract terms meeting', dueDate: daysAgo(0), dueTime: '11:00', dealId: d2, ownerId: poster });
+      await Crm.saveActivity(db, id, { kind: 'email', subject: 'Send product catalogue', dueDate: daysAgo(-3), contactId: gulf });
+      await Crm.saveActivity(db, id, { kind: 'task', subject: 'Prepare samples', dueDate: daysAgo(-7), ownerId: poster });
+      const doneAct = await Crm.saveActivity(db, id, { kind: 'call', subject: 'First call with Najran Builders', dueDate: daysAgo(12), leadId: lead1 });
+      await Crm.setActivityDone(db, doneAct, true);
 
       if (c.industry === 'restaurant') {
         // Restaurant: kitchen materials in stock, the menu with recipes, and the last few days' food sales.

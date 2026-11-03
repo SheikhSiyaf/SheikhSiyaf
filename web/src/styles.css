@@ -385,3 +385,14 @@ table.payroll td .small { white-space: nowrap; }
 .pdf.payslip .pdf-lines tr.strong td { background: var(--pl) !important; }
 .pdf.payslip .pdf-lines td:first-child, .pdf.payslip .pdf-lines th:first-child { width: auto; text-align: start; color: inherit; }
 .pdf.payslip .pdf-lines td:first-child .bi, .pdf.payslip .pdf-lines th:first-child .bi { display: flex; justify-content: space-between; gap: 8px; }
+
+/* CRM pipeline board: a column per open stage, scrolling sideways on small screens. */
+.board { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 10px; overflow-x: auto; margin-bottom: 12px; }
+.board-col { margin: 0; display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
+.board-col header { border-bottom: 2px solid var(--teal); padding-bottom: 6px; }
+.deal { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.deal .link { text-align: start; }
+.deal-move { justify-content: flex-end; margin-top: 4px; }
+.small.bad { color: var(--bad); } .small.warn { color: var(--warn); }
+@media (max-width: 720px) { .board { grid-template-columns: repeat(4, 78vw); } }
+.board ~ .grid table.mini td + td { padding-inline-start: 14px; white-space: nowrap; }

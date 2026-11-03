@@ -256,7 +256,7 @@ const DOC_COLS = `d.id, d.company_id AS "companyId", d.type, d.status, d.number,
   c.name_ar AS "contactNameAr", d.payee, d.paid_from_account_id AS "paidFromAccountId", pa.name AS "paidFromName", pa.name_ar AS "paidFromNameAr",
   d.recurring_id AS "recurringId", d.voided_at AS "voidedAt", d.submitted_by AS "submittedBy", d.submitted_at AS "submittedAt",
   d.decided_by AS "decidedBy", d.decided_at AS "decidedAt", d.rejection_reason AS "rejectionReason",
-  (SELECT full_name FROM users WHERE id = d.submitted_by) AS "submittedByName", (SELECT full_name FROM users WHERE id = d.decided_by) AS "decidedByName", d.issue_date::text AS "issueDate", d.due_date::text AS "dueDate", d.reference, d.notes,
+  person_name(d.submitted_by) AS "submittedByName", person_name(d.decided_by) AS "decidedByName", d.issue_date::text AS "issueDate", d.due_date::text AS "dueDate", d.reference, d.notes,
   d.original_id AS "originalId", d.journal_entry_id AS "journalEntryId",
   d.net_total::text AS "netTotal", d.vat_total::text AS "vatTotal", d.gross_total::text AS "grossTotal",
   document_amount_due(d.id)::numeric(18,2)::text AS "amountDue", d.created_at AS "createdAt", d.issued_at AS "issuedAt"`;

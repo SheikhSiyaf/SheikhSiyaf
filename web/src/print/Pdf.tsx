@@ -166,7 +166,7 @@ export function PurchasePdf({ d, attachments }: { d: PurchaseDoc; attachments: A
           <Party label={d.type === 'claim' ? 'pdf.employee' : d.type === 'expense' ? 'pdf.paidTo' : 'pdf.supplier'} name={c?.name ?? d.payee ?? d.contactName} nameAr={c?.nameAr}
             lines={[['pdf.vatNo', c?.vatNumber], ['pdf.crNo', c?.crNumber], ['pdf.address', [c?.address, c?.city].filter(Boolean).join(', ')]]} />
           <Meta rows={[
-            ['pdf.ourNo', <b>{d.number ?? en('pdf.draft')}</b>], ['pdf.supplierInvoiceNo', d.reference], ['pdf.issueDate', d.issueDate], ['pdf.dueDate', d.dueDate],
+            ['pdf.ourNo', <b>{d.number ?? en('pdf.draft')}</b>], [d.type === 'claim' || d.type === 'expense' ? 'pdf.receiptNo' : 'pdf.supplierInvoiceNo', d.reference], ['pdf.issueDate', d.issueDate], ['pdf.dueDate', d.dueDate],
             ['pdf.paidFrom', d.paidFromName ?? null], ['pdf.currency', d.seller.currency],
           ]} />
         </div>
@@ -193,7 +193,7 @@ export function PurchasePdf({ d, attachments }: { d: PurchaseDoc; attachments: A
       </div>
       <div className="pdf-signs">
         <div><Bi k={d.type === 'claim' ? 'pdf.submittedBy' : 'pdf.preparedBy'} /><span>{d.submittedByName ?? ''}</span></div>
-        <div><Bi k="pdf.approvedBy" /><span>{d.decidedByName ?? ''}</span></div>
+        <div><Bi k={d.status === 'rejected' ? 'pdf.rejectedBy' : 'pdf.approvedBy'} /><span>{d.decidedByName ?? ''}</span></div>
         <div><Bi k="pdf.postedInBooks" /><span>{d.journalEntryId ? '✓' : ''}</span></div>
       </div>
       <Footer number={d.number} />

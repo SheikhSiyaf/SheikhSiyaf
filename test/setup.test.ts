@@ -90,6 +90,16 @@ describe('Attachments', () => {
   });
 });
 
+describe('Names of the people involved', () => {
+  it('firm staff see attachments client users uploaded, with their names; other companies get no name', async () => {
+    await as(f.a.clientAccountant, (db) => U.addAttachment(db, { documentId: bill }, { fileName: 'from-client.pdf', data: PDF }));
+    const seen = await as(f.partner, (db) => U.listAttachments(db, { documentId: bill }));
+    expect(seen.find((a) => a.fileName === 'from-client.pdf')?.uploadedBy).toBe('Client Accountant SA');
+    const name = await as(f.b.clientAccountant, async (db) => (await db.query('SELECT person_name($1) AS n', [f.a.clientAccountant])).rows[0].n);
+    expect(name).toBeNull();
+  });
+});
+
 describe('ZATCA QR code (phase 1)', () => {
   it('holds seller, VAT number, time, total and VAT as TLV in base64, Arabic included', () => {
     const qr = zatcaQrPayload({ sellerName: 'النور للتجارة', vatNumber: '300123456700003', timestamp: zatcaTimestamp('2026-03-05T09:30:12.345Z', '2026-03-05'), total: '1150.00', vatTotal: '150.00' });

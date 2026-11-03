@@ -145,9 +145,9 @@ export async function runDepreciation(db: Db, companyId: string, periodEnd: stri
 
 export async function listRuns(db: Db, companyId: string) {
   const { rows } = await db.query(
-    `SELECT r.id, r.period_end::text AS "periodEnd", r.total::text, r.journal_entry_id AS "journalEntryId", r.run_at AS "runAt", u.full_name AS "runBy",
+    `SELECT r.id, r.period_end::text AS "periodEnd", r.total::text, r.journal_entry_id AS "journalEntryId", r.run_at AS "runAt", person_name(r.run_by) AS "runBy",
             (SELECT count(*) FROM depreciation_lines l WHERE l.run_id = r.id)::int AS assets
-     FROM depreciation_runs r JOIN users u ON u.id = r.run_by WHERE r.company_id = $1 ORDER BY r.period_end DESC`, [companyId]);
+     FROM depreciation_runs r WHERE r.company_id = $1 ORDER BY r.period_end DESC`, [companyId]);
   return rows;
 }
 

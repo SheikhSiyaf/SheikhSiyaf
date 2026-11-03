@@ -96,8 +96,8 @@ export interface AttachmentInput { fileName?: string; contentType?: string; data
 
 export async function listAttachments(db: Db, owner: { documentId?: string; stockNoteId?: string }) {
   const { rows } = await db.query(
-    `SELECT a.id, a.file_name AS "fileName", a.content_type AS "contentType", a.size_bytes AS "size", a.uploaded_at AS "uploadedAt", u.full_name AS "uploadedBy"
-     FROM attachments a JOIN users u ON u.id = a.uploaded_by
+    `SELECT a.id, a.file_name AS "fileName", a.content_type AS "contentType", a.size_bytes AS "size", a.uploaded_at AS "uploadedAt", person_name(a.uploaded_by) AS "uploadedBy"
+     FROM attachments a
      WHERE (a.document_id = $1 OR a.stock_note_id = $2) ORDER BY a.uploaded_at`, [owner.documentId ?? null, owner.stockNoteId ?? null]);
   return rows;
 }

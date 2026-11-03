@@ -108,10 +108,10 @@ export async function importStatement(db: Db, bankAccountId: string, input: Impo
 export async function listImports(db: Db, bankAccountId: string) {
   const { rows } = await db.query(
     `SELECT i.id, i.file_name AS "fileName", i.line_count AS "lineCount", i.skipped, i.date_from::text AS "dateFrom", i.date_to::text AS "dateTo",
-            i.imported_at AS "importedAt", u.full_name AS "importedBy",
+            i.imported_at AS "importedAt", person_name(i.imported_by) AS "importedBy",
             (SELECT count(*) FROM bank_statement_lines s WHERE s.import_id = i.id)::int AS "remaining",
             (SELECT count(*) FROM bank_statement_lines s WHERE s.import_id = i.id AND s.status = 'matched')::int AS "matched"
-     FROM bank_imports i JOIN users u ON u.id = i.imported_by WHERE i.bank_account_id = $1 ORDER BY i.imported_at DESC`, [bankAccountId]);
+     FROM bank_imports i WHERE i.bank_account_id = $1 ORDER BY i.imported_at DESC`, [bankAccountId]);
   return rows;
 }
 

@@ -69,7 +69,7 @@ export function Bars({ rows, cur }: { rows: { id?: string; name: string; nameAr:
         const pct = Number((toMinor(r.spent) * 1000n) / max) / 10;   // display width only, not money
         return (
           <div key={r.id ?? r.name} className="bar-row">
-            <div className="bar-label">{r.code ? `${r.code} ` : ''}{local(r.name, r.nameAr)}</div>
+            <div className="bar-label">{local(r.name, r.nameAr)}</div>
             <div className="bar-track"><div className="bar-fill" style={{ width: `${Math.max(pct, 1)}%` }} /></div>
             <div className="bar-value num ltr">{fmt(r.spent)} <span className="mut small">{cur}</span></div>
           </div>

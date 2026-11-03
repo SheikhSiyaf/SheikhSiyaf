@@ -10,6 +10,7 @@ import { Journal } from './Journal.tsx';
 import { Reports } from './Reports.tsx';
 import { Vat } from './Vat.tsx';
 import { DOC_PAGES, NAV, isModuleBuilt, moduleOf, navFor } from './nav.ts';
+import { accessTo } from '../../../src/books/modules.ts';
 import { Overview } from '../sales/Overview.tsx';
 import { ContactList, ContactPage } from '../sales/Contacts.tsx';
 import { DocEditor, DocList, DocView } from '../sales/Documents.tsx';
@@ -68,8 +69,8 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
 
   return (
     <div className="app">
-      <Sidebar subtitle={b ? local(b.company.name, b.company.nameAr) : ''} user={me.user} roleLabel={b ? t(`role.${b.role}`) : undefined} onSignOut={onSignOut}>
-        {(b ? navFor(b.company.modules) : NAV.filter((m) => m.key === 'Home')).map((m) => (
+      <Sidebar subtitle={b ? local(b.company.name, b.company.nameAr) : ''} user={me.user} roleLabel={b ? (b.access ? local(b.access.name, b.access.nameAr ?? null) : t(`role.${b.role}`)) : undefined} onSignOut={onSignOut}>
+        {(b ? navFor(b.company.modules, b.access?.permissions) : NAV.filter((m) => m.key === 'Home')).map((m) => (
           <div key={m.key}>
             <button className={`${m.key === mod.key ? 'on' : ''} ${isModuleBuilt(m) ? '' : 'soon'}`} aria-current={m.key === mod.key && !sub ? 'page' : undefined}
               aria-expanded={m.subs.length ? open === m.key : undefined} onClick={() => onModule(m)}>
@@ -92,7 +93,13 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
         {!b ? <Loading /> : (
           <>
             {!b.canPost && <div className="notice warn">{t('viewOnly')}</div>}
-            <Page books={b} module={mod.key} sub={sub?.key ?? ''} built={sub?.built ?? true} item={item} extra={extra} extra2={extra2} reloadBooks={books.reload} goModule={goModule} />
+            {b.access && accessTo(b.access.permissions, mod.key) === 'none' ? (
+              <div className="card"><h2>{t('access.noneTitle')}</h2><p className="mut">{t('access.noneText', { role: local(b.access.name, b.access.nameAr ?? null) })}</p>
+                <button className="b p" onClick={() => goModule('Home')}>{t('mod.Home')}</button></div>
+            ) : <>
+            {b.access && <div className="notice small">{t('roleAccess', { role: local(b.access.name, b.access.nameAr ?? null), level: t(`access.${accessTo(b.access.permissions, mod.key)}` as Key) })}</div>}
+            <Page books={{ ...b, canPost: b.canPost && accessTo(b.access?.permissions, mod.key) === 'edit' }} module={mod.key} sub={sub?.key ?? ''} built={sub?.built ?? true} item={item} extra={extra} extra2={extra2} reloadBooks={books.reload} goModule={goModule} />
+            </>}
           </>
         )}
       </main>

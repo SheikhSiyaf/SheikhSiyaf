@@ -67,3 +67,11 @@ export const DEMO_RESTAURANT = {
     { ago: 1, method: 'card', items: [['Classic burger', 2], ['Cappuccino', 4]] },
   ] as { ago: number; method: 'cash' | 'card' | 'on_account'; items: [string, number][] }[],
 };
+
+/** Sample job titles for client users (Administrator > Roles and permissions). */
+export const DEMO_ROLES: { name: string; nameAr: string; description: string; permissions: Record<string, 'view' | 'edit'>; canApprove: boolean }[] = [
+  { name: 'Cashier', nameAr: 'أمين الصندوق', description: 'Raises invoices and records receipts', permissions: { Sales: 'edit', Bank: 'view', Reports: 'view' }, canApprove: false },
+  { name: 'Store keeper', nameAr: 'أمين المخزن', description: 'Goods received and delivered', permissions: { Inventory: 'edit', Restaurant: 'edit', Purchases: 'view' }, canApprove: false },
+  { name: 'Finance manager', nameAr: 'المدير المالي', description: 'Sees everything, approves claims',
+    permissions: { Sales: 'view', Purchases: 'view', Expenses: 'view', Bank: 'view', Inventory: 'view', Restaurant: 'view', Assets: 'view', Projects: 'view', HRM: 'view', CRM: 'view', Journal: 'view', Ledger: 'view', Reports: 'view' }, canApprove: true },
+];

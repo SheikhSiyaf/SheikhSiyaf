@@ -43,7 +43,7 @@ export function Approvals({ books }: { books: CompanyBooks }) {
                       <td className="small" data-label={t('appr.submittedBy')}>{c.submittedByName}</td>
                       <td className="num ltr" data-label={t('doc.total')}>{fmt(c.grossTotal)}</td>
                       <td>
-                        {!books.canPost ? null : mine ? <span className="small mut">{t('appr.yours')}</span> : (
+                        {!books.canPost || (books.access && !books.access.canApprove) ? null : mine ? <span className="small mut">{t('appr.yours')}</span> : (
                           <div className="actions">
                             <button className="b p small" disabled={busy} onClick={() => void approve(c)}>{t('appr.approve')}</button>
                             <button className="b small" onClick={() => go('Expenses', 'claims', c.id)}>{t('appr.review')}</button>

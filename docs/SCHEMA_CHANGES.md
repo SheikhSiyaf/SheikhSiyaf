@@ -154,3 +154,16 @@ Every change below is covered by a test in `test/`.
 | PDF, PNG, JPG and WEBP only, up to 10 MB; the API checks the file really is one (first bytes) | Nothing else is stored under a PDF or picture name. |
 | Attachments of an issued or posted document stay (can be added to, not removed); drafts can remove them | Rule 2 applied to supporting documents. |
 | Ledger account codes: 4 digits starting with 1 (assets), 2 (liabilities), 3 (equity), 4 (income) or 5-9 (expenses); code and type fixed once the account has postings | Ledger > Chart of accounts lets clients add accounts; the reports stay consistent. |
+
+## 0015_person_name.sql
+| Change | Why |
+|---|---|
+| `person_name(user)`: a person's name, given only to themselves or to someone who shares a client company with them | Lists and PDFs show who submitted, decided or uploaded something (for example a client user's attachment seen by firm staff) without opening the whole users table to everyone. |
+
+## 0016_pnl_roles.sql
+| Change | Why |
+|---|---|
+| `accounts.pnl_group`: the line of the profit and loss an income or expense account sits on (Sales, Indirect income, Cost of sales, Indirect expenses). A trigger fills in the usual line (5000 is cost of sales; income codes from 4800 are indirect income) and resets a line that does not fit the type | The P&L is laid out the way accountants read it: Sales - Cost of sales = Gross profit - Indirect expenses + Indirect income = Net profit. Clients can move an account to another line in the chart of accounts. |
+| `client_roles` (per firm: title in English and Arabic, description, access per module as none, view or edit, can approve claims, active or archived); audited, never deleted; only the Administrator adds or changes them | The Administrator defines job titles for client users (Cashier, Store keeper, ...) with their own access. |
+| `memberships.client_role_id`; a trigger sets the membership's base role from the role (any "edit" = client accountant, otherwise client management) and keeps it in step when the role changes | The database still refuses every write from someone whose role only views. The API checks each module against the role. |
+| `app_client_role(company)`; Administrator-only update of a client user's role; the activity page includes role changes | The books know the person's access; changes are audited and visible to the Administrator. |

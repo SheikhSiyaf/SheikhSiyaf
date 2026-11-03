@@ -19,7 +19,7 @@ import * as Inv from '../books/inventoryService.js';
 import * as Fa from '../books/assetsService.js';
 import { monthEnd, nextMonthEnd, previousMonthEnd, targetDepreciation } from '../books/assets.js';
 import { toMinor } from '../money.js';
-import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_USERS } from './demoData.js';
+import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_USERS } from './demoData.js';
 import { DEFAULT_MODULES } from '../books/modules.js';
 import * as Rest from '../books/restaurantService.js';
 
@@ -45,6 +45,10 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
     }
     const admin = userIds['admin@firm.example']!;
     await asUser(admin);
+    for (const r of DEMO_ROLES) {
+      await client.query('INSERT INTO client_roles (firm_id, name, name_ar, description, permissions, can_approve) VALUES ($1,$2,$3,$4,$5,$6)',
+        [firmId, r.name, r.nameAr, r.description, JSON.stringify(r.permissions), r.canApprove]);
+    }
 
     const companyIds: Record<string, string> = {};
     for (const c of DEMO_COMPANIES) {

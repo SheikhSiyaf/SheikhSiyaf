@@ -6,8 +6,8 @@
 import { toMinor, fromMinor, divRoundHalfUp } from '../../../src/money.ts';
 import { vatForLine } from '../../../src/vat/vat.ts';
 import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../../../src/books/chartTemplate.ts';
-import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_USERS } from '../../../src/db/demoData.ts';
-import { cleanModules, DEFAULT_MODULES, isIndustry, type Industry } from '../../../src/books/modules.ts';
+import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_USERS } from '../../../src/db/demoData.ts';
+import { accessTo, cleanModules, DEFAULT_MODULES, isIndustry, ROLE_MODULES, type AccessLevel, type Industry } from '../../../src/books/modules.ts';
 import {
   addDays, AGE_BUCKETS, ageBucket, nextOccurrence, type Frequency, documentTotals, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, sideOf,
   type AgeBucket, type Direction, type DocType, type LineInput, type PricedLine,
@@ -29,13 +29,27 @@ interface Company {
   industry: string; modules: string[];
   fields: Record<string, string>;   // the rest of the registration form, as entered
 }
-interface Account { id: string; companyId: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank: boolean }
+interface Account { id: string; companyId: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank: boolean; pnlGroup?: string | null }
 interface CostCentre { id: string; companyId: string; name: string; nameAr: string | null; kind: string; status?: string; budget?: string | null; contactId?: string | null;
   startDate?: string | null; endDate?: string | null; description?: string | null }
 interface Period { companyId: string; startDate: string; endDate: string; lockedAt: string | null }
 interface Line { id: string; accountId: string; costCentreId: string | null; debit: bigint; credit: bigint }
 interface Entry { id: string; companyId: string; date: string; memo: string | null; createdBy: string; createdAt: string; reversesEntryId: string | null; lines: Line[] }
-interface Membership { userId: string; companyId: string; role: Role }
+interface Membership { userId: string; companyId: string; role: Role; clientRoleId?: string | null }
+interface ClientRole { id: string; name: string; nameAr: string | null; description: string | null; permissions: Record<string, AccessLevel>; canApprove: boolean; status: 'active' | 'archived' }
+const rolesDb: ClientRole[] = [];
+const roleBase = (p: Record<string, AccessLevel>): Role => (Object.values(p).includes('edit') ? 'client_accountant' : 'client_viewer');
+/** The line of the profit and loss an account sits on (same defaults as db/migrations/0016). */
+function pnlGroupOf(a: Account): string | null {
+  if (a.type === 'income') return a.pnlGroup === 'revenue' || a.pnlGroup === 'other_income' ? a.pnlGroup : a.code >= '4800' ? 'other_income' : 'revenue';
+  if (a.type === 'expense') return a.pnlGroup === 'cost_of_sales' || a.pnlGroup === 'indirect_expense' ? a.pnlGroup : a.code === '5000' ? 'cost_of_sales' : 'indirect_expense';
+  return null;
+}
+/** The signed-in person's client role in a company, if they have one. */
+function clientRoleIn(companyId: string): ClientRole | null {
+  const id = db.memberships.find((m) => m.userId === session && m.companyId === companyId)?.clientRoleId;
+  return id ? rolesDb.find((r) => r.id === id) ?? null : null;
+}
 
 const POSTING: Role[] = ['partner', 'staff_accountant', 'client_accountant'];
 let seq = 0;
@@ -1165,7 +1179,7 @@ function saveAccountM(companyId: string, b: Record<string, unknown>, id?: string
   const code = String(b.code ?? '').trim() || nextCodeM(companyId, type);
   if (!/^[1-9]\d{3}$/.test(code) || !CODE_START[type]!.includes(code[0]!)) fail(400, 'Account codes have 4 digits.', 'err.accountCode');
   if (db.accounts.some((a) => a.companyId === companyId && a.code === code && a.id !== id)) fail(400, 'Another account already has this code.', 'err.accountCodeTaken');
-  const v = { code, name, nameAr: (b.nameAr as string)?.trim() || null, type, costCentreRequired: Boolean(b.costCentreRequired) };
+  const v = { code, name, nameAr: (b.nameAr as string)?.trim() || null, type, costCentreRequired: Boolean(b.costCentreRequired), pnlGroup: (b.pnlGroup as string) || null };
   if (id) {
     const a = db.accounts.find((x) => x.id === id && x.companyId === companyId) ?? fail(404, 'Not found.', 'err.notFound');
     if ((a.code !== code || a.type !== type) && db.entries.some((e) => e.lines.some((l) => l.accountId === id))) fail(400, 'This account has postings, so its code and type can no longer change.', 'err.accountUsed');
@@ -1348,6 +1362,7 @@ const routes: [string, RegExp, Handler][] = [
       company: { ...companyView(c), vatStatus: c.vatStatus, vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: c.paymentTermsDays,
         industry: c.industry, modules: c.modules },
       role, canPost: POSTING.includes(role), canLock: role === 'partner',
+      access: (() => { const r = clientRoleIn(c.id); return r && { name: r.name, nameAr: r.nameAr, permissions: r.permissions, canApprove: r.canApprove }; })(),
       accounts: db.accounts.filter((a) => a.companyId === c.id).sort((a, b) => a.code.localeCompare(b.code)),
       costCentres: db.costCentres.filter((x) => x.companyId === c.id).sort((a, b) => a.name.localeCompare(b.name)),
       periods: db.periods.filter((p) => p.companyId === c.id),
@@ -1423,12 +1438,17 @@ const routes: [string, RegExp, Handler][] = [
       const cc = db.costCentres.find((x) => x.id === ccId);
       return { costCentreId: ccId, name: cc?.name ?? null, nameAr: cc?.nameAr ?? null, kind: cc?.kind ?? null, income: s(r.income), expense: s(r.expense), profit: s(r.income - r.expense) };
     }).sort((a, b) => (a.name === null ? 1 : b.name === null ? -1 : a.name.localeCompare(b.name)));
-    const byAccount = db.accounts.filter((a) => a.companyId === id && (a.type === 'income' || a.type === 'expense')).map((a) => {
+    const sums: Record<string, bigint> = { revenue: 0n, other_income: 0n, cost_of_sales: 0n, indirect_expense: 0n };
+    const lines = db.accounts.filter((a) => a.companyId === id && (a.type === 'income' || a.type === 'expense')).sort((a, b) => a.code.localeCompare(b.code)).map((a) => {
       let v = 0n;
       for (const e of db.entries) if (e.companyId === id && e.date >= from && e.date <= to) for (const l of e.lines) if (l.accountId === a.id) v += a.type === 'income' ? l.credit - l.debit : l.debit - l.credit;
-      return { accountId: a.id, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, amount: s(v), v };
-    }).filter((a) => a.v !== 0n).sort((a, b) => a.code.localeCompare(b.code)).map(({ v: _v, ...a }) => a);
-    return { from, to, total: { income: s(income), expense: s(expense), profit: s(income - expense) }, byCostCentre, byAccount };
+      const group = pnlGroupOf(a)!; sums[group]! += v;
+      return { accountId: a.id, name: a.name, nameAr: a.nameAr, group, amount: s(v), v };
+    }).filter((a) => a.v !== 0n).map(({ v: _v, ...a }) => a);
+    const gross = sums.revenue! - sums.cost_of_sales!;
+    const statement = { lines, revenue: s(sums.revenue!), costOfSales: s(sums.cost_of_sales!), grossProfit: s(gross), indirectExpenses: s(sums.indirect_expense!),
+      otherIncome: s(sums.other_income!), netProfit: s(gross - sums.indirect_expense! + sums.other_income!) };
+    return { from, to, total: { income: s(income), expense: s(expense), profit: s(income - expense) }, byCostCentre, statement };
   }],
   ['GET', /^\/api\/config$/, () => ({ demoLogins: true, demoPassword: DEMO_PASSWORD, minPassword: 10, publicUrl: '' })],
   // ---------------------------------------------------------------- expenses
@@ -1531,7 +1551,7 @@ const routes: [string, RegExp, Handler][] = [
   ['GET', /^\/api\/companies\/([\w-]+)\/chart$/, (m) => { const id = inCo(m[1]!);
     return db.accounts.filter((a) => a.companyId === id).sort((a, b) => a.code.localeCompare(b.code)).map((a) => {
       const ls = db.entries.flatMap((e) => e.lines).filter((l) => l.accountId === a.id);
-      return { id: a.id, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, costCentreRequired: a.costCentreRequired, isBank: a.isBank, balance: s(ls.reduce((t, l) => t + l.debit - l.credit, 0n)), postings: ls.length };
+      return { id: a.id, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, costCentreRequired: a.costCentreRequired, isBank: a.isBank, pnlGroup: pnlGroupOf(a), balance: s(ls.reduce((t, l) => t + l.debit - l.credit, 0n)), postings: ls.length };
     }); }],
   ['GET', /^\/api\/companies\/([\w-]+)\/chart\/next-code$/, (m, _b, q) => ({ code: nextCodeM(inCo(m[1]!), q.get('type') ?? 'expense') })],
   ['POST', /^\/api\/companies\/([\w-]+)\/accounts$/, (m, b) => ({ id: saveAccountM(inCo(m[1]!), b ?? {}) })],
@@ -1706,7 +1726,7 @@ const routes: [string, RegExp, Handler][] = [
         vatStatus: c.vatStatus, vatNumber: c.vatNumber ?? '', vatRate: c.vatRate, city: c.city, invoicePrefix: c.invoicePrefix,
         paymentTermsDays: String(c.paymentTermsDays), status: c.status, industry: c.industry, modules: c.modules },
       users: db.memberships.filter((x) => x.companyId === c.id).map((x) => ({ x, u: db.users.find((u) => u.id === x.userId)! }))
-        .filter(({ u }) => u.kind === 'client').map(({ x, u }) => ({ ...person(u), role: x.role })),
+        .filter(({ u }) => u.kind === 'client').map(({ x, u }) => ({ ...person(u), role: x.role, clientRoleId: x.clientRoleId ?? null })),
       staff: db.users.filter((u) => u.kind === 'firm_staff').map((u) => ({ id: u.id, name: u.name, role: u.staffRole, status: u.status,
         assigned: db.memberships.some((x) => x.userId === u.id && x.companyId === c.id) })),
     };
@@ -1753,8 +1773,33 @@ const routes: [string, RegExp, Handler][] = [
     if (!name || !email) fail(400, 'Enter the name and email.', 'err.nameEmail');
     emailFree(email);
     const u = addUser(name, email, 'client', null);
-    db.memberships.push({ userId: u.id, companyId: c.id, role: b?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant' });
+    const cr = b?.clientRoleId ? rolesDb.find((r) => r.id === b.clientRoleId) ?? fail(404, 'Not found.', 'err.notFound') : null;
+    db.memberships.push({ userId: u.id, companyId: c.id, role: cr ? roleBase(cr.permissions) : b?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant', clientRoleId: cr?.id ?? null });
     return { invite: newInvite(u) };
+  }],
+  ['POST', /^\/api\/admin\/companies\/([\w-]+)\/users\/([\w-]+)\/role$/, (m, b) => {
+    admin();
+    const c = company(m[1]!);
+    const ms = db.memberships.find((x) => x.companyId === c.id && x.userId === m[2] && db.users.find((u) => u.id === x.userId)?.kind === 'client') ?? fail(404, 'Not found.', 'err.notFound');
+    const cr = b?.clientRoleId ? rolesDb.find((r) => r.id === b.clientRoleId) ?? fail(404, 'Not found.', 'err.notFound') : null;
+    ms.clientRoleId = cr?.id ?? null;
+    ms.role = cr ? roleBase(cr.permissions) : b?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant';
+    logActivity('act.roleAssigned', { name: db.users.find((u) => u.id === ms.userId)!.name, client: c.name, role: cr?.name ?? ms.role });
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/admin\/roles$/, () => { admin();
+    return [...rolesDb].sort((a, b) => a.status.localeCompare(b.status) || a.name.localeCompare(b.name))
+      .map((r) => ({ ...r, users: db.memberships.filter((x) => x.clientRoleId === r.id).length })); }],
+  ['POST', /^\/api\/admin\/roles$/, (_m, b) => { admin(); const r = { id: uid(), ...roleValues(b) }; rolesDb.push(r); logActivity('act.roleAdded', { role: r.name }); return { id: r.id }; }],
+  ['POST', /^\/api\/admin\/roles\/([\w-]+)$/, (m, b) => {
+    admin();
+    const r = rolesDb.find((x) => x.id === m[1]) ?? fail(404, 'Not found.', 'err.notFound');
+    const v = roleValues(b, r.id);
+    if (v.status === 'archived' && db.memberships.some((x) => x.clientRoleId === r.id)) fail(400, 'People still have this role. Give them another role first.', 'err.roleInUse');
+    Object.assign(r, v);
+    for (const x of db.memberships) if (x.clientRoleId === r.id) x.role = roleBase(r.permissions);
+    logActivity('act.roleUpdated', { role: r.name });
+    return { ok: true };
   }],
   ['POST', /^\/api\/admin\/companies\/([\w-]+)\/staff$/, (m, b) => { admin(); return assign(String(b?.userId), m[1]!, Boolean(b?.assigned)); }],
   ['GET', /^\/api\/admin\/staff$/, () => {
@@ -1828,13 +1873,66 @@ const routes: [string, RegExp, Handler][] = [
   }],
 ];
 
+function roleValues(b: Body, id?: string): Omit<ClientRole, 'id'> {
+  const name = String(b?.name ?? '').trim();
+  if (!name) fail(400, 'Enter the title.', 'err.roleName');
+  if (rolesDb.some((r) => r.id !== id && r.name.toLowerCase() === name.toLowerCase())) fail(400, 'Another role already has this title.', 'err.roleTaken');
+  const permissions: Record<string, AccessLevel> = {};
+  for (const m of ROLE_MODULES) { const v = (b?.permissions as Record<string, unknown> | undefined)?.[m]; if (v === 'view' || v === 'edit') permissions[m] = v; }
+  return { name, nameAr: String(b?.nameAr ?? '').trim() || null, description: String(b?.description ?? '').trim() || null, permissions,
+    canApprove: Boolean(b?.canApprove), status: b?.status === 'archived' ? 'archived' : 'active' };
+}
+
+// Access by client role, for requests about a company (same idea as src/api/permissions.ts, simplified).
+const PATH_MODULES: [RegExp, string[]][] = [
+  [/^(recurring|expense-categories|expense-overview)/, ['Expenses']],
+  [/^(entries|periods)/, ['Journal']],
+  [/^ledger\/cost-centre/, ['Ledger', 'Projects']],
+  [/^(ledger|chart|accounts|cost-centres)/, ['Ledger']],
+  [/^reports/, ['Reports']],
+  [/^(bank-accounts|bank-rules)/, ['Bank']],
+  [/^(items|stock-notes|stock-value)/, ['Inventory', 'Restaurant']],
+  [/^(recipes|restaurant)/, ['Restaurant']],
+  [/^(assets|asset-summary|depreciation)/, ['Assets']],
+  [/^projects/, ['Projects']],
+];
+const RANK: Record<AccessLevel, number> = { none: 0, view: 1, edit: 2 };
+function checkAccess(method: string, path: string, body: Body, q: URLSearchParams) {
+  const docMods = (type: string) => (type === 'expense' || type === 'claim' ? ['Expenses'] : ['bill', 'supplier_credit'].includes(type) ? ['Purchases'] : ['Sales']);
+  let companyId: string | undefined, mods: string[] | undefined, approve = false;
+  const cm = path.match(/^\/api\/companies\/([\w-]+)\/(.+)$/);
+  const dm = path.match(/^\/api\/documents\/([\w-]+)(\/(approve|reject))?/);
+  if (cm) {
+    companyId = cm[1]!;
+    const rest = cm[2]!;
+    if (rest === 'documents') mods = docMods(String(method === 'GET' ? q.get('type') : body?.type));
+    else if (rest === 'payments') mods = (method === 'GET' ? q.get('direction') : body?.direction) === 'received' ? ['Sales'] : ['Purchases', 'Expenses'];
+    else if (rest === 'overview') mods = [q.get('side') === 'purchases' ? 'Purchases' : 'Sales'];
+    else if (rest === 'contacts' && method === 'POST') mods = body?.isEmployee ? ['HRM', 'Expenses'] : [...(body?.isCustomer ? ['Sales', 'Restaurant'] : []), ...(body?.isSupplier ? ['Purchases', 'Expenses'] : [])];
+    else if (rest === 'bank-accounts' && method === 'GET') mods = ['Bank', 'Restaurant'];
+    else mods = PATH_MODULES.find(([re]) => re.test(rest))?.[1];
+  } else if (dm) {
+    const d = sdb.docs.find((x) => x.id === dm[1]);
+    if (d) { companyId = d.companyId; mods = docMods(d.type); approve = Boolean(dm[3]); }
+  }
+  if (!companyId || !mods?.length || !session) return;
+  const r = clientRoleIn(companyId);
+  if (!r) return;
+  const best = Math.max(...mods.map((m) => RANK[accessTo(r.permissions, m)]));
+  if (best < RANK[method === 'GET' ? 'view' : 'edit']) fail(403, 'Your role does not allow this.', 'err.roleNoAccess');
+  if (approve && !r.canApprove) fail(403, 'Your role does not allow approving claims.', 'err.roleNoApprove');
+}
+
 // Sample data is created once everything above is defined.
 seed();
+for (const r of DEMO_ROLES) rolesDb.push({ id: uid(), ...r, status: 'active' });
 db.activity.push({ id: uid(), at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });
 
 export function handle(method: string, url: string, body: unknown): { status: number; data: unknown } {
   const [path, qs] = url.split('?') as [string, string | undefined];
   try {
+    const params = new URLSearchParams(qs ?? '');
+    checkAccess(method, path, body as Body, params);
     for (const [m, re, h] of routes) {
       const match = path.match(re);
       if (match && m === method) return { status: 200, data: JSON.parse(JSON.stringify(h(match, body as Body, new URLSearchParams(qs ?? '')))) };

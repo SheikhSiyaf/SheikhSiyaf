@@ -1,4 +1,4 @@
-import { OPTIONAL_MODULES } from '../../../src/books/modules.ts';
+import { OPTIONAL_MODULES, accessTo } from '../../../src/books/modules.ts';
 // The client workspace menu: each module and its sub-pages, in order.
 // `built: false` pages show what comes next in the build order (CLAUDE.md).
 export interface SubPage { key: string; built: boolean }
@@ -27,8 +27,9 @@ export const NAV: Module[] = [
 
 export const moduleOf = (key: string) => NAV.find((m) => m.key === key) ?? NAV[0]!;
 /** The menu for one client: core modules always, optional ones only when turned on for that client. */
-export const navFor = (modules: string[] | undefined) =>
-  NAV.filter((m) => !(OPTIONAL_MODULES as readonly string[]).includes(m.key) || (modules ?? []).includes(m.key));
+export const navFor = (modules: string[] | undefined, permissions?: Record<string, string> | null) =>
+  NAV.filter((m) => (!(OPTIONAL_MODULES as readonly string[]).includes(m.key) || (modules ?? []).includes(m.key)) && accessTo(permissions, m.key) !== 'none'
+    && !(permissions && m.key === 'Review'));   // the firm's review layer is not part of a client role
 export const isModuleBuilt = (m: Module) => m.subs.length === 0 || m.subs.some((x) => x.built);
 
 /** Document type behind each list page. */

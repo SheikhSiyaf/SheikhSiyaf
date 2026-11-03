@@ -20,3 +20,16 @@ export const isIndustry = (v: unknown): v is Industry => INDUSTRIES.includes(v a
 /** Keeps only known modules, in menu order. */
 export const cleanModules = (v: unknown): OptionalModule[] =>
   OPTIONAL_MODULES.filter((m) => Array.isArray(v) && v.includes(m));
+
+/** Modules a client role sets access for (none, view or edit). Home is always shown. */
+export const ROLE_MODULES = ['Sales', 'Purchases', 'Expenses', 'Bank', 'Inventory', 'Restaurant', 'Assets', 'Projects', 'HRM', 'CRM', 'Journal', 'Ledger', 'Reports'] as const;
+export type RoleModule = (typeof ROLE_MODULES)[number];
+export type AccessLevel = 'none' | 'view' | 'edit';
+export const ACCESS_LEVELS: AccessLevel[] = ['none', 'view', 'edit'];
+/** Access to a module from a role's permissions; null permissions = full access (no client role). */
+export function accessTo(permissions: Record<string, string> | null | undefined, module: string): AccessLevel {
+  if (!permissions) return 'edit';
+  if (!(ROLE_MODULES as readonly string[]).includes(module)) return 'edit';   // Home and modules outside roles
+  const v = permissions[module];
+  return v === 'edit' || v === 'view' ? v : 'none';
+}

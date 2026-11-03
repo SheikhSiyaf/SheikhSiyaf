@@ -1,6 +1,6 @@
 // Administrator console: clients, client users, firm staff, access, suspension, invitations,
 // activity log and firm settings. The Administrator never reaches the books (RLS + no memberships).
-import { cleanModules, DEFAULT_MODULES, isIndustry, type Industry } from '../books/modules.js';
+import { cleanModules, DEFAULT_MODULES, isIndustry, ROLE_MODULES, type Industry } from '../books/modules.js';
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
@@ -97,7 +97,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
        FROM companies WHERE id = $1 AND firm_id = app_firm_id()`, [id]);
     if (!rows[0]) throw new HttpError(404, 'Not found.', 'err.notFound');
     const users = await db.query(
-      `SELECT u.id, u.full_name AS name, u.email, m.role, u.status,
+      `SELECT u.id, u.full_name AS name, u.email, m.role, m.client_role_id AS "clientRoleId", u.status,
               (u.invite_expires_at > now()) AS "invitePending", (u.password_hash IS NOT NULL) AS "passwordSet",
               (u.totp_enabled_at IS NOT NULL) AS "twoFactor"
        FROM memberships m JOIN users u ON u.id = m.user_id
@@ -166,17 +166,67 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
     });
   });
 
-  app.post<{ Params: { id: string }; Body: { name?: string; email?: string; role?: string } }>('/api/admin/companies/:id/users', async (req) => {
+  app.post<{ Params: { id: string }; Body: { name?: string; email?: string; role?: string; clientRoleId?: string | null } }>('/api/admin/companies/:id/users', async (req) => {
     const id = uuidParam(req.params.id);
     const p = person(req.body);
     const role = CLIENT_ROLES.includes(String(req.body?.role)) ? String(req.body?.role) : 'client_accountant';
+    const clientRoleId = req.body?.clientRoleId ? uuidParam(String(req.body.clientRoleId)) : null;
     return admin(req, async (db) => {
       const c = await db.query('SELECT 1 FROM companies WHERE id = $1 AND firm_id = app_firm_id()', [id]);
       if (!c.rows[0]) throw new HttpError(404, 'Not found.', 'err.notFound');
       const u = await db.query(
         `INSERT INTO users (firm_id, kind, full_name, email) VALUES (app_firm_id(), 'client', $1, $2) RETURNING id`, [p.name, p.email]);
-      await db.query('INSERT INTO memberships (user_id, company_id, role) VALUES ($1, $2, $3)', [u.rows[0].id, id, role]);
+      await db.query('INSERT INTO memberships (user_id, company_id, role, client_role_id) VALUES ($1, $2, $3, $4)', [u.rows[0].id, id, role, clientRoleId]);
       return { invite: { userId: u.rows[0].id, name: p.name, email: p.email, token: await newInvite(db, u.rows[0].id) } };
+    });
+  });
+
+  // A client user's role: one of the two built-in ones, or a role made in Roles and permissions.
+  app.post<{ Params: { id: string; userId: string }; Body: { role?: string; clientRoleId?: string | null } }>('/api/admin/companies/:id/users/:userId/role', async (req) => {
+    const id = uuidParam(req.params.id), userId = uuidParam(req.params.userId);
+    const clientRoleId = req.body?.clientRoleId ? uuidParam(String(req.body.clientRoleId)) : null;
+    const role = CLIENT_ROLES.includes(String(req.body?.role)) ? String(req.body?.role) : 'client_accountant';
+    return admin(req, async (db) => {
+      const { rowCount } = await db.query(
+        `UPDATE memberships m SET role = $3, client_role_id = $4 FROM users u
+         WHERE m.user_id = u.id AND u.kind = 'client' AND m.user_id = $1 AND m.company_id = $2 AND u.firm_id = app_firm_id()`, [userId, id, role, clientRoleId]);
+      if (!rowCount) throw new HttpError(404, 'Not found.', 'err.notFound');
+      return { ok: true };
+    });
+  });
+
+  // ------------------------------------------------------------ roles and permissions (for client users)
+  app.get('/api/admin/roles', async (req) => admin(req, async (db) => (await db.query(
+    `SELECT r.id, r.name, r.name_ar AS "nameAr", r.description, r.permissions, r.can_approve AS "canApprove", r.status,
+            (SELECT count(*) FROM memberships m WHERE m.client_role_id = r.id)::int AS users
+     FROM client_roles r WHERE r.firm_id = app_firm_id() ORDER BY r.status, r.name`)).rows));
+  const roleValues = (b: Record<string, unknown>) => {
+    const name = String(b.name ?? '').trim();
+    if (!name) throw new HttpError(400, 'Enter the title.', 'err.roleName');
+    const perms: Record<string, string> = {};
+    for (const m of ROLE_MODULES) {
+      const v = (b.permissions as Record<string, unknown> | undefined)?.[m];
+      if (v === 'view' || v === 'edit') perms[m] = v;
+    }
+    return [name, String(b.nameAr ?? '').trim() || null, String(b.description ?? '').trim() || null, JSON.stringify(perms), Boolean(b.canApprove),
+      b.status === 'archived' ? 'archived' : 'active'];
+  };
+  app.post<{ Body: Record<string, unknown> }>('/api/admin/roles', async (req) => {
+    const v = roleValues(req.body ?? {});
+    return admin(req, async (db) => ({ id: (await db.query(
+      `INSERT INTO client_roles (firm_id, name, name_ar, description, permissions, can_approve, status) VALUES (app_firm_id(), $1, $2, $3, $4, $5, $6) RETURNING id`, v)).rows[0].id }));
+  });
+  app.post<{ Params: { id: string }; Body: Record<string, unknown> }>('/api/admin/roles/:id', async (req) => {
+    const id = uuidParam(req.params.id);
+    const v = roleValues(req.body ?? {});
+    return admin(req, async (db) => {
+      if (v[5] === 'archived' && (await db.query('SELECT 1 FROM memberships WHERE client_role_id = $1 LIMIT 1', [id])).rows[0]) {
+        throw new HttpError(400, 'People still have this role. Give them another role first.', 'err.roleInUse');
+      }
+      const { rowCount } = await db.query(
+        `UPDATE client_roles SET name=$2, name_ar=$3, description=$4, permissions=$5, can_approve=$6, status=$7 WHERE id = $1 AND firm_id = app_firm_id()`, [id, ...v]);
+      if (!rowCount) throw new HttpError(404, 'Not found.', 'err.notFound');
+      return { ok: true };
     });
   });
 
@@ -248,6 +298,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
     const { rows } = await db.query('SELECT * FROM admin_activity(300)');
     const names = new Map<string, string>((await db.query(
       `SELECT id, full_name FROM users WHERE firm_id = app_firm_id()`)).rows.map((r) => [r.id, r.full_name]));
+    const roleNames = new Map((await db.query('SELECT id, name FROM client_roles WHERE firm_id = app_firm_id()')).rows.map((r) => [r.id, r.name]));
     return rows.map((r) => {
       const before = r.detail.before ?? {};
       const after = r.detail.after ?? r.detail.row ?? {};
@@ -271,7 +322,12 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
         params.name = names.get(after.user_id) ?? '—';
         params.client = r.company ?? '—';
         params.role = after.role;
-        key = r.action === 'delete' ? 'act.accessRemoved' : 'act.accessGiven';
+        if (r.action === 'update' && (changed('client_role_id') || changed('role'))) {
+          key = 'act.roleAssigned'; params.role = roleNames.get(after.client_role_id) ?? after.role;
+        } else key = r.action === 'delete' ? 'act.accessRemoved' : 'act.accessGiven';
+      } else if (r.table_name === 'client_roles') {
+        params.role = after.name;
+        key = r.action === 'insert' ? 'act.roleAdded' : 'act.roleUpdated';
       } else if (r.table_name === 'firms') {
         params.name = after.name;
         key = r.action === 'insert' ? 'act.firmCreated' : 'act.firmRenamed';

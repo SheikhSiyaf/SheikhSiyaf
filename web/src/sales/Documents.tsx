@@ -339,6 +339,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
   const isExpense = x.type === 'expense';
   const isClaim = x.type === 'claim';
   const mine = isClaim && x.submittedBy && me.data?.user.id === x.submittedBy;
+  const canDecide = !mine && (!books.access || books.access.canApprove);
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError(undefined);
     try { await fn(); d.reload(); } catch (e) { setError(errorText(t, has, e)); } finally { setBusy(false); }
@@ -363,8 +364,8 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
         )}
         {books.canPost && isClaim && x.status === 'submitted' && !rejecting && (
           <>
-            {!mine && <button className="b p" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/approve`, { body: {} }))}>{t('appr.approve')}</button>}
-            {!mine && <button className="b" disabled={busy} onClick={() => setRejecting(true)}>{t('appr.reject')}</button>}
+            {canDecide && <button className="b p" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/approve`, { body: {} }))}>{t('appr.approve')}</button>}
+            {canDecide && <button className="b" disabled={busy} onClick={() => setRejecting(true)}>{t('appr.reject')}</button>}
             <button className="b" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/reopen`, { body: {} }))}>{t('claim.withdraw')}</button>
           </>
         )}

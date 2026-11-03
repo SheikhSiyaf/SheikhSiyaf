@@ -1,7 +1,7 @@
 // Administrator console: separate from the books.
 // Clients (summary, search, add, manage), Staff (add, clients handled, suspend, sign-in links),
 // Activity (who changed clients, people and access) and Settings (firm name, sign-in security).
-import { DEFAULT_MODULES, INDUSTRIES, OPTIONAL_MODULES, type Industry } from '../../../src/books/modules.ts';
+import { DEFAULT_MODULES, INDUSTRIES, OPTIONAL_MODULES, ROLE_MODULES, type AccessLevel, type Industry } from '../../../src/books/modules.ts';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, useApi, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
@@ -18,14 +18,14 @@ interface StaffRow {
   id: string; name: string; email: string; role: string; status: string; twoFactor: boolean;
   invitePending: boolean | null; passwordSet: boolean; clientIds: string[]; clients: string[];
 }
-interface ClientUser { id: string; name: string; email: string; role: string; status: string; invitePending: boolean | null; passwordSet: boolean; twoFactor: boolean }
+interface ClientUser { id: string; name: string; email: string; role: string; clientRoleId: string | null; status: string; invitePending: boolean | null; passwordSet: boolean; twoFactor: boolean }
 interface ClientDetail {
   company: Record<string, string | null> & { id: string; name: string; country: Country; status: string };
   users: ClientUser[];
   staff: { id: string; name: string; role: string; status: string; assigned: boolean }[];
 }
 
-const TABS = ['Clients', 'Staff', 'Activity', 'Settings'] as const;
+const TABS = ['Clients', 'Staff', 'Roles', 'Activity', 'Settings'] as const;
 const LEGAL_FORMS = ['LLC', 'Sole establishment', 'Joint stock company', 'Partnership', 'Branch of foreign company', 'Other'] as const;
 const DERIVED = { SA: { currency: 'SAR', rate: 15 }, AE: { currency: 'AED', rate: 5 }, OM: { currency: 'OMR', rate: 5 } } as const;
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -51,7 +51,7 @@ export function AdminConsole({ me, path, onSignOut }: { me: Me; path: string; on
           <h1>{clientId ? '' : title}</h1>
           <TopControls />
         </div>
-        {tab === 'Staff' ? <Staff /> : tab === 'Activity' ? <Activity /> : tab === 'Settings' ? <Settings />
+        {tab === 'Staff' ? <Staff /> : tab === 'Roles' ? <Roles /> : tab === 'Activity' ? <Activity /> : tab === 'Settings' ? <Settings />
           : adding ? <AddClient /> : clientId ? <ClientPage id={clientId} /> : <Clients />}
       </main>
     </div>
@@ -343,6 +343,7 @@ function ClientPage({ id }: { id: string }) {
   const local = useLocalName();
   const check = useCompanyCheck();
   const d = useApi<ClientDetail>(`/api/admin/companies/${id}`);
+  const roles = useApi<ClientRole[]>('/api/admin/roles');
   const [f, setF] = useState<Fields>();
   const [msg, setMsg] = useState<{ ok?: string; bad?: string }>({});
   const [busy, setBusy] = useState(false);
@@ -376,7 +377,7 @@ function ClientPage({ id }: { id: string }) {
     setNuError(undefined);
     setBusy(true);
     try {
-      const r = await api<{ invite: Invite }>(`/api/admin/companies/${id}/users`, { body: nu });
+      const r = await api<{ invite: Invite }>(`/api/admin/companies/${id}/users`, { body: { name: nu.name, email: nu.email, ...roleBody(nu.role) } });
       setInvite(r.invite); setNu({ name: '', email: '', role: 'client_accountant' }); d.reload();
     } catch (err) { setNuError(errorText(t, has, err)); } finally { setBusy(false); }
   };
@@ -406,7 +407,14 @@ function ClientPage({ id }: { id: string }) {
       {/* Client users */}
       <div className="card">
         <h2>{t('admin.clientUsersTitle')}</h2>
-        <PeopleTable people={d.data.users} roleOf={(u) => t(`role.${u.role}` as Key)} onChanged={d.reload} onInvite={setInvite} />
+        <PeopleTable people={d.data.users} onChanged={d.reload} onInvite={setInvite}
+          roleOf={(u) => (
+            <select aria-label={t('admin.role')} value={u.clientRoleId ?? u.role} disabled={busy}
+              onChange={(e) => void run(() => api(`/api/admin/companies/${id}/users/${u.id}/role`, { body: roleBody(e.target.value) }), t('admin.roleChanged', { name: u.name }))}>
+              <RoleOptions roles={roles.data} current={u.clientRoleId} />
+            </select>
+          )} />
+        <div className="small mut" style={{ marginTop: 6 }}>{t('admin.rolesHint')} <a href="/admin/roles" onClick={(e) => { e.preventDefault(); navigate('/admin/roles'); }}>{t('admin.Roles')}</a></div>
         <form onSubmit={addUser} style={{ marginTop: 12 }}>
           <b className="small">{t('admin.addClientUser')}</b>
           {nuError && <div className="small bad">{nuError}</div>}
@@ -415,8 +423,7 @@ function ClientPage({ id }: { id: string }) {
             <label className="f">{t('reg.firstUserEmail')}<input id="nu-email" type="email" dir="ltr" value={nu.email} onChange={(e) => setNu({ ...nu, email: e.target.value })} /></label>
             <label className="f">{t('reg.firstUserRole')}
               <select id="nu-role" value={nu.role} onChange={(e) => setNu({ ...nu, role: e.target.value })}>
-                <option value="client_accountant">{t('role.client_accountant')}</option>
-                <option value="client_viewer">{t('role.client_viewer')}</option>
+                <RoleOptions roles={roles.data} />
               </select>
             </label>
           </div>
@@ -455,7 +462,7 @@ function ClientPage({ id }: { id: string }) {
 /** People with sign-in state and actions: new sign-in link, reset two-factor, suspend/reactivate. */
 function PeopleTable<P extends { id: string; name: string; email: string; status: string; invitePending: boolean | null; passwordSet: boolean; twoFactor: boolean }>(
   { people, roleOf, extra, onChanged, onInvite }: {
-    people: P[]; roleOf: (p: P) => string; extra?: (p: P) => React.ReactNode; onChanged: () => void; onInvite: (i: Invite) => void;
+    people: P[]; roleOf: (p: P) => React.ReactNode; extra?: (p: P) => React.ReactNode; onChanged: () => void; onInvite: (i: Invite) => void;
   }) {
   const { t, has } = useI18n();
   const [confirm, setConfirm] = useState<{ kind: 'suspend' | 'reset'; p: P }>();
@@ -614,6 +621,173 @@ function Staff() {
             </>
           )} />
       </div>
+    </>
+  );
+}
+
+// ------------------------------------------------------------------ Roles and permissions (client users)
+interface ClientRole {
+  id: string; name: string; nameAr: string | null; description: string | null;
+  permissions: Record<string, AccessLevel>; canApprove: boolean; status: 'active' | 'archived'; users: number;
+}
+const BUILT_IN = ['client_accountant', 'client_viewer'] as const;
+
+/** A select value is a built-in role key or a custom role id. */
+function roleBody(value: string): { role: string; clientRoleId: string | null } {
+  return (BUILT_IN as readonly string[]).includes(value) ? { role: value, clientRoleId: null } : { role: 'client_accountant', clientRoleId: value };
+}
+
+function RoleOptions({ roles, current }: { roles?: ClientRole[]; current?: string | null }) {
+  const { t } = useI18n();
+  const local = useLocalName();
+  const custom = (roles ?? []).filter((r) => r.status === 'active' || r.id === current);
+  return (
+    <>
+      <option value="client_accountant">{t('role.client_accountant')}</option>
+      <option value="client_viewer">{t('role.client_viewer')}</option>
+      {custom.length > 0 && (
+        <optgroup label={t('roles.firmRoles')}>
+          {custom.map((r) => <option key={r.id} value={r.id}>{local(r.name, r.nameAr)}</option>)}
+        </optgroup>
+      )}
+    </>
+  );
+}
+
+function AccessSummary({ permissions }: { permissions: Record<string, AccessLevel> }) {
+  const { t } = useI18n();
+  const list = ROLE_MODULES.filter((m) => permissions[m] === 'view' || permissions[m] === 'edit');
+  if (!list.length) return <span className="mut small">{t('roles.noModules')}</span>;
+  return (
+    <span className="chips">
+      {list.map((m) => <span key={m} className={`badge ${permissions[m] === 'edit' ? 'good' : ''}`}>{t(`mod.${m}` as Key)} · {t(`access.${permissions[m]}` as Key)}</span>)}
+    </span>
+  );
+}
+
+type RoleDraft = { id?: string; name: string; nameAr: string; description: string; permissions: Record<string, AccessLevel>; canApprove: boolean; status: 'active' | 'archived' };
+const emptyRole = (): RoleDraft => ({ name: '', nameAr: '', description: '', permissions: {}, canApprove: false, status: 'active' });
+
+function Roles() {
+  const { t, has } = useI18n();
+  const local = useLocalName();
+  const list = useApi<ClientRole[]>('/api/admin/roles');
+  const [edit, setEdit] = useState<RoleDraft>();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok?: string; bad?: string }>({});
+  if (list.error) return <ErrorNote error={list.error} onRetry={list.reload} />;
+  if (!list.data) return <Loading />;
+
+  const save = async (draft: RoleDraft, ok: string) => {
+    if (!draft.name.trim()) { setMsg({ bad: t('err.roleName') }); return; }
+    setBusy(true); setMsg({});
+    try {
+      const body = { name: draft.name, nameAr: draft.nameAr, description: draft.description, permissions: draft.permissions, canApprove: draft.canApprove, status: draft.status };
+      await api(draft.id ? `/api/admin/roles/${draft.id}` : '/api/admin/roles', { body });
+      setEdit(undefined); setMsg({ ok }); list.reload();
+    } catch (e) { setMsg({ bad: errorText(t, has, e) }); } finally { setBusy(false); }
+  };
+  const setAll = (level: AccessLevel) => edit && setEdit({ ...edit, permissions: Object.fromEntries(ROLE_MODULES.map((m) => [m, level])) });
+  const builtIn = BUILT_IN.map((k) => ({ key: k, permissions: Object.fromEntries(ROLE_MODULES.map((m) => [m, k === 'client_accountant' ? 'edit' : 'view'])) as Record<string, AccessLevel> }));
+
+  const form = edit && (
+    <form className="card inset" id="role-form" onSubmit={(e) => { e.preventDefault(); void save(edit, t('roles.saved', { role: edit.name })); }}>
+      <h2>{edit.id ? t('roles.editTitle', { role: edit.name }) : t('roles.new')}</h2>
+      <div className="row">
+        <label className="f">{t('roles.title')}<input id="role-name" value={edit.name} placeholder={t('roles.titleExample')}
+          onChange={(e) => setEdit({ ...edit, name: e.target.value, nameAr: followArabic(edit.name, e.target.value, edit.nameAr) })} /></label>
+        <label className="f">{t('ar.nameAr')}<input id="role-name-ar" dir="rtl" value={edit.nameAr} onChange={(e) => setEdit({ ...edit, nameAr: e.target.value })} />
+          <ArabicHint english={edit.name} arabic={edit.nameAr} /></label>
+      </div>
+      <label className="f">{t('roles.description')}<input id="role-desc" value={edit.description} placeholder={t('roles.descriptionExample')} onChange={(e) => setEdit({ ...edit, description: e.target.value })} /></label>
+      <div className="actions" style={{ margin: '10px 0 6px' }}>
+        <b className="small" style={{ flex: '1 1 auto' }}>{t('roles.accessTitle')}</b>
+        <button type="button" className="b small" onClick={() => setAll('none')}>{t('roles.allNone')}</button>
+        <button type="button" className="b small" onClick={() => setAll('view')}>{t('roles.allView')}</button>
+        <button type="button" className="b small" onClick={() => setAll('edit')}>{t('roles.allEdit')}</button>
+      </div>
+      <div className="wrap">
+        <table className="perm">
+          <thead><tr><th>{t('roles.module')}</th>{(['none', 'view', 'edit'] as const).map((l) => <th key={l} className="c">{t(`access.${l}`)}</th>)}</tr></thead>
+          <tbody>
+            {ROLE_MODULES.map((m) => {
+              const cur = edit.permissions[m] ?? 'none';
+              return (
+                <tr key={m}>
+                  <td>{t(`mod.${m}` as Key)}<div className="small mut">{t(`roles.about.${m}` as Key)}</div></td>
+                  {(['none', 'view', 'edit'] as const).map((l) => (
+                    <td key={l} className="c">
+                      <input type="radio" name={`perm-${m}`} id={`perm-${m}-${l}`} aria-label={`${t(`mod.${m}` as Key)}: ${t(`access.${l}`)}`} checked={cur === l}
+                        onChange={() => setEdit({ ...edit, permissions: { ...edit.permissions, [m]: l } })} />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <label className="check-one" style={{ marginTop: 10 }}>
+        <input type="checkbox" id="role-approve" checked={edit.canApprove} onChange={(e) => setEdit({ ...edit, canApprove: e.target.checked })} />
+        {t('roles.canApprove')}
+      </label>
+      <div className="small mut" style={{ margin: '4px 0 10px' }}>{t('roles.levelsHint')}</div>
+      <div className="actions">
+        <button className="b p" type="submit" id="role-save" disabled={busy}>{t('roles.save')}</button>
+        <button className="b" type="button" onClick={() => { setEdit(undefined); setMsg({}); }}>{t('cancel')}</button>
+      </div>
+    </form>
+  );
+
+  return (
+    <>
+      <div className="mut small" style={{ marginBottom: 10 }}>{t('roles.hint')}</div>
+      {msg.ok && <div className="notice">{msg.ok}</div>}
+      {msg.bad && <div className="notice bad" role="alert">{msg.bad}</div>}
+      <div className="actions" style={{ marginBottom: 10 }}>
+        <span className="spacer" />
+        {!edit && <button className="b p" id="role-new" onClick={() => { setMsg({}); setEdit(emptyRole()); }}>{t('roles.new')}</button>}
+      </div>
+      {edit && !edit.id && form}
+      <div className="card">
+        <div className="wrap">
+          <table className="roles">
+            <thead><tr><th>{t('roles.title')}</th><th>{t('roles.access')}</th><th>{t('roles.approves')}</th><th className="num">{t('roles.people')}</th><th /></tr></thead>
+            <tbody>
+              {builtIn.map((b) => (
+                <tr key={b.key}>
+                  <td data-label={t('roles.title')}><b>{t(`role.${b.key}`)}</b><div className="small mut">{t(`roles.builtIn.${b.key}`)}</div></td>
+                  <td data-label={t('roles.access')}><span className="small">{t(b.key === 'client_accountant' ? 'roles.allModulesEdit' : 'roles.allModulesView')}</span></td>
+                  <td data-label={t('roles.approves')}>{b.key === 'client_accountant' ? t('yes') : t('no')}</td>
+                  <td className="num mut">—</td>
+                  <td><span className="badge">{t('roles.builtInBadge')}</span></td>
+                </tr>
+              ))}
+              {list.data.map((r) => (
+                <tr key={r.id} className={r.status === 'archived' ? 'mut' : ''}>
+                  <td data-label={t('roles.title')}><b>{local(r.name, r.nameAr)}</b>{r.status === 'archived' && <> <span className="badge">{t('roles.archived')}</span></>}
+                    {r.description && <div className="small mut">{r.description}</div>}</td>
+                  <td data-label={t('roles.access')}><AccessSummary permissions={r.permissions} /></td>
+                  <td data-label={t('roles.approves')}>{r.canApprove ? t('yes') : t('no')}</td>
+                  <td className="num" data-label={t('roles.people')}>{r.users}</td>
+                  <td className="num">
+                    <span className="actions" style={{ justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
+                      <button className="b small" disabled={busy} onClick={() => { setMsg({}); setEdit({ id: r.id, name: r.name, nameAr: r.nameAr ?? '', description: r.description ?? '', permissions: { ...r.permissions }, canApprove: r.canApprove, status: r.status }); }}>{t('roles.edit')}</button>
+                      {r.status === 'active'
+                        ? <button className="b small" disabled={busy || r.users > 0} title={r.users > 0 ? t('err.roleInUse') : undefined}
+                            onClick={() => void save({ ...r, nameAr: r.nameAr ?? '', description: r.description ?? '', status: 'archived' }, t('roles.archivedDone', { role: r.name }))}>{t('roles.archive')}</button>
+                        : <button className="b small" disabled={busy}
+                            onClick={() => void save({ ...r, nameAr: r.nameAr ?? '', description: r.description ?? '', status: 'active' }, t('roles.restored', { role: r.name }))}>{t('roles.restore')}</button>}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {list.data.length === 0 && <tr><td colSpan={5} className="mut">{t('roles.empty')}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {edit?.id && form}
     </>
   );
 }

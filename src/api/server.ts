@@ -19,6 +19,8 @@ import { registerLedgerRoutes } from './ledger.js';
 import { registerBankRoutes } from './bank.js';
 import { registerStockRoutes } from './stock.js';
 import { registerSetupRoutes } from './setup.js';
+import { profitAndLoss } from '../books/reportsService.js';
+import { registerPermissionCheck } from './permissions.js';
 
 export type { ServerOptions } from './context.js';
 const POSTING_ROLES = ['partner', 'staff_accountant', 'client_accountant'];
@@ -55,6 +57,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     return withUser(pool, req.userId, fn);
   };
   const ctx: Ctx = { pool, opts, as };
+  registerPermissionCheck(app, ctx);
 
   async function companyRole(db: Db, companyId: string): Promise<string> {
     const { rows } = await db.query(
@@ -83,8 +86,9 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     const periods = await db.query(
       `SELECT start_date::text AS "startDate", end_date::text AS "endDate", locked_at AS "lockedAt"
        FROM periods WHERE company_id = $1 ORDER BY start_date`, [id]);
+    const access = (await db.query('SELECT permissions, can_approve AS "canApprove", name, name_ar AS "nameAr" FROM app_client_role($1)', [id])).rows[0] ?? null;
     return {
-      company: rows[0], role,
+      company: rows[0], role, access,
       canPost: POSTING_ROLES.includes(role), canLock: role === 'partner',
       accounts: accounts.rows, costCentres: costCentres.rows, periods: periods.rows,
     };
@@ -221,14 +225,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
       `SELECT p.cost_centre_id AS "costCentreId", p.cost_centre_name AS name, cc.name_ar AS "nameAr", cc.kind,
               p.income::text, p.expense::text, p.profit::text
        FROM profit_and_loss_by_cost_centre($1,$2,$3) p LEFT JOIN cost_centres cc ON cc.id = p.cost_centre_id`, [id, from, to]);
-    // Each income and expense account with its amount for the period (the full statement).
-    const byAccount = await db.query(
-      `SELECT a.id AS "accountId", a.code, a.name, a.name_ar AS "nameAr", a.type,
-              (CASE WHEN a.type = 'income' THEN sum(l.credit - l.debit) ELSE sum(l.debit - l.credit) END)::numeric(18,2)::text AS amount
-       FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id JOIN accounts a ON a.id = l.account_id
-       WHERE e.company_id = $1 AND e.entry_date BETWEEN $2 AND $3 AND a.type IN ('income', 'expense')
-       GROUP BY a.id HAVING sum(l.debit - l.credit) <> 0 ORDER BY a.code`, [id, from, to]);
-    return { from, to, total: total.rows[0], byCostCentre: byCc.rows, byAccount: byAccount.rows };
+    return { from, to, total: total.rows[0], byCostCentre: byCc.rows, statement: await profitAndLoss(db, id, from, to) };
   }));
 
   registerAdminRoutes(app, ctx);

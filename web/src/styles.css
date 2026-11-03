@@ -362,3 +362,16 @@ table.coa { table-layout: fixed; }
 table.coa th:nth-child(1) { width: 90px; } table.coa th:nth-child(3) { width: 170px; } table.coa th:nth-child(4) { width: 70px; }
 .card.inset { background: var(--bg); box-shadow: none; }
 @media (max-width: 760px) { table.coa { table-layout: auto; } }
+table.pnl td.indent { padding-inline-start: 22px; }
+table.pnl tr.subtotal td { color: var(--mut); border-top: 1px solid var(--line); }
+table.pnl tr.subtotal td:last-child { color: var(--ink); }
+.pdf-report-body td.indent { padding-left: 20px; }
+.pdf-report-body tr.section td { font-weight: 700; color: #0f766e; background: #fff !important; padding-top: 10px; }
+.pdf-report-body tr.subtotal td { color: #5b6b7b; }
+
+/* Roles and permissions */
+.check-one { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+table.perm th.c, table.perm td.c { text-align: center; width: 84px; }
+table.perm td.c input { width: 18px; height: 18px; accent-color: var(--teal); }
+table.perm tbody tr:hover { background: var(--tealbg); }
+table.roles .chips .badge { font-size: 11px; }

@@ -158,4 +158,15 @@ describe('API', () => {
     expect((await post(st, `/api/portal/uploads/${up}/status`, { status: 'processed' })).statusCode).toBe(200);
     expect((await get(st, `/api/portal/my-clients`)).json()).toEqual([{ companyId: f.a.id, newUploads: 0, openRequests: 0, answeredRequests: 1, unreadLetters: 0 }]);
   });
+
+  it('e-invoicing through the API: the overview, settings by role, and XML download refused for others', async () => {
+    const st = await signIn('staff'), v = await signIn('viewerA'), c = await signIn('clientA');
+    const o = (await get(v, `/api/companies/${f.a.id}/einvoicing`)).json();
+    expect(o).toMatchObject({ country: 'SA', settings: { enabled: false }, devices: [] });
+    expect((await post(v, `/api/companies/${f.a.id}/einvoicing/settings`, { street: 'X' })).statusCode).toBe(403);
+    expect((await post(st, `/api/companies/${f.a.id}/einvoicing/settings`, { street: 'Olaya', buildingNumber: '1234', district: 'Olaya', postalCode: '12345' })).statusCode).toBe(200);
+    expect((await post(st, `/api/companies/${f.a.id}/einvoicing/settings`, { enabled: true })).json()).toMatchObject({ key: 'err.einvNoDevice' });
+    expect((await post(c, `/api/companies/${f.a.id}/einvoicing/devices`, { environment: 'sandbox', otp: '12' })).json()).toMatchObject({ key: 'err.einvOtp' });
+    expect((await get(c, `/api/companies/${f.b.id}/einvoices`)).statusCode).toBe(404);
+  });
 });

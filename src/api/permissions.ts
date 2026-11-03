@@ -98,6 +98,10 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/crm/deals/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_deals', m[1]!, ['CRM'])],
   ['*', new RegExp(`^/api/crm/activities/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_activities', m[1]!, ['CRM'])],
   ['*', new RegExp(`^/api/crm/campaigns/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_campaigns', m[1]!, ['CRM'])],
+  // e-invoicing belongs to Sales
+  ['*', new RegExp(`^/api/companies/${UUID}/(einvoicing|einvoices)(/.*)?$`), c(['Sales', 'Restaurant'])],
+  ['*', new RegExp(`^/api/einvoices/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'einvoices', m[1]!, ['Sales', 'Restaurant'])],
+  ['*', new RegExp(`^/api/einvoicing/devices/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'einvoice_devices', m[1]!, ['Sales'])],
   // assets and projects
   ['*', new RegExp(`^/api/companies/${UUID}/(assets|asset-summary|depreciation)(/.*)?$`), c(['Assets'])],
   ['*', new RegExp(`^/api/assets/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'fixed_assets', m[1]!, ['Assets'])],

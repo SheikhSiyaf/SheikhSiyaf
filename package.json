@@ -23,11 +23,13 @@
     "build:demo": "vite build --config web/vite.config.ts --mode demo && node scripts/demo-page.mjs"
   },
   "dependencies": {
+    "@xmldom/xmldom": "^0.8.15",
     "fastify": "^5.12.8",
     "pg": "^8.13.1",
     "qrcode": "^1.5.4",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "xml-crypto": "^6.4.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -1,6 +1,7 @@
 // Sales and purchases: database operations. Every function runs inside withUser(), so row-level
 // security and the database rules (db/migrations/0005) apply on top of the checks made here.
 import { randomUUID } from 'node:crypto';
+import { afterIssue } from './einvoiceService.js';
 import type { Db } from '../db/session.js';
 import { postEntry, reverseEntry } from '../ledger/ledger.js';
 import { fromMinor, toMinor } from '../money.js';
@@ -48,12 +49,14 @@ export interface ContactInput {
   isCustomer?: boolean; isSupplier?: boolean; isEmployee?: boolean; employeeNo?: string; jobTitle?: string; defaultCostCentreId?: string | null;
   name?: string; nameAr?: string; vatNumber?: string; crNumber?: string;
   email?: string; phone?: string; address?: string; city?: string; country?: string; paymentTermsDays?: string | number | null;
+  /** Saudi national address (needed on standard e-invoices): 4-digit building number, district, 5-digit postal code. */
+  buildingNumber?: string; district?: string; postalCode?: string;
   status?: 'active' | 'archived';
 }
 const CONTACT_COLS = `c.id, c.is_customer AS "isCustomer", c.is_supplier AS "isSupplier", c.name, c.name_ar AS "nameAr",
   c.vat_number AS "vatNumber", c.cr_number AS "crNumber", c.email, c.phone, c.address, c.city, c.country,
   c.payment_terms_days AS "paymentTermsDays", c.status, c.is_employee AS "isEmployee", c.employee_no AS "employeeNo",
-  c.job_title AS "jobTitle", c.default_cost_centre_id AS "defaultCostCentreId"`;
+  c.job_title AS "jobTitle", c.default_cost_centre_id AS "defaultCostCentreId", c.building_number AS "buildingNumber", c.district, c.postal_code AS "postalCode"`;
 
 function contactValues(c: ContactInput) {
   const t = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
@@ -65,9 +68,13 @@ function contactValues(c: ContactInput) {
   const terms = c.paymentTermsDays === null || c.paymentTermsDays === undefined || c.paymentTermsDays === '' ? null : Number(c.paymentTermsDays);
   if (terms !== null && (!Number.isInteger(terms) || terms < 0 || terms > 365)) bad('Payment terms are 0 to 365 days.', 'err.terms');
   const country = t(c.country)?.toUpperCase() ?? null;
+  const building = t(c.buildingNumber), postal = t(c.postalCode);
+  if (building && !/^\d{4}$/.test(building)) bad('The building number has 4 digits.', 'err.buildingNumber');
+  if (postal && !/^\d{5}$/.test(postal)) bad('The postal code has 5 digits.', 'err.postalCode');
   return [Boolean(c.isCustomer), Boolean(c.isSupplier), t(c.name), t(c.nameAr), t(c.vatNumber)?.replace(/\s/g, '') ?? null, t(c.crNumber),
     email, t(c.phone), t(c.address), t(c.city), country, terms, c.status === 'archived' ? 'archived' : 'active',
-    Boolean(c.isEmployee), c.isEmployee ? t(c.employeeNo) : null, c.isEmployee ? t(c.jobTitle) : null, c.isEmployee ? c.defaultCostCentreId || null : null];
+    Boolean(c.isEmployee), c.isEmployee ? t(c.employeeNo) : null, c.isEmployee ? t(c.jobTitle) : null, c.isEmployee ? c.defaultCostCentreId || null : null,
+    building, t(c.district), postal];
 }
 
 export async function saveContact(db: Db, companyId: string, c: ContactInput, id?: string): Promise<string> {
@@ -76,14 +83,14 @@ export async function saveContact(db: Db, companyId: string, c: ContactInput, id
     const { rowCount } = await db.query(
       `UPDATE contacts SET is_customer=$2, is_supplier=$3, name=$4, name_ar=$5, vat_number=$6, cr_number=$7, email=$8, phone=$9,
          address=$10, city=$11, country=$12, payment_terms_days=$13, status=$14, is_employee=$15, employee_no=$16, job_title=$17,
-         default_cost_centre_id=$18 WHERE id = $1 AND company_id = $19`, [id, ...v, companyId]);
+         default_cost_centre_id=$18, building_number=$19, district=$20, postal_code=$21 WHERE id = $1 AND company_id = $22`, [id, ...v, companyId]);
     if (!rowCount) notFound();
     return id;
   }
   const { rows } = await db.query(
     `INSERT INTO contacts (company_id, is_customer, is_supplier, name, name_ar, vat_number, cr_number, email, phone, address, city, country,
-       payment_terms_days, status, is_employee, employee_no, job_title, default_cost_centre_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, [companyId, ...v]);
+       payment_terms_days, status, is_employee, employee_no, job_title, default_cost_centre_id, building_number, district, postal_code)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING id`, [companyId, ...v]);
   return rows[0].id;
 }
 
@@ -204,6 +211,7 @@ export async function issueDocument(db: Db, id: string): Promise<void> {
     lines: postingFor(d.type, lines, await systemAccounts(db, d.company_id), d.paid_from_account_id ?? undefined),
   });
   await db.query(`UPDATE documents SET status = 'issued', number = $2, journal_entry_id = $3 WHERE id = $1`, [id, number, entryId]);
+  await afterIssue(db, id);   // e-invoicing (ZATCA, PINT AE) when the company has it on
 }
 
 export async function setQuotationStatus(db: Db, id: string, status: 'sent' | 'accepted' | 'declined'): Promise<void> {

@@ -1,5 +1,6 @@
 // Sales and purchases routes: customers, suppliers, quotations, invoices, credit notes, bills,
 // supplier credits and payments. Row-level security decides what each person can see and do.
+import { sendAfterIssue } from './einvoice.js';
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
@@ -52,7 +53,12 @@ export function registerSalesRoutes(app: FastifyInstance, { as }: Ctx) {
     return { id: await S.saveDraft(db, d.companyId, { ...req.body, type: d.type, originalId: d.originalId }, d.id) };
   }));
   app.post<{ Params: P }>('/api/documents/:id/delete', async (req) => as(req, async (db) => { await S.deleteDraft(db, uuidParam(req.params.id)); return { ok: true }; }));
-  app.post<{ Params: P }>('/api/documents/:id/issue', async (req) => as(req, async (db) => { await S.issueDocument(db, uuidParam(req.params.id)); return { ok: true }; }));
+  app.post<{ Params: P }>('/api/documents/:id/issue', async (req) => {
+    const id = uuidParam(req.params.id);
+    await as(req, (db) => S.issueDocument(db, id));
+    await sendAfterIssue(as, req, id);   // ZATCA clearance or reporting, outside the issuing transaction
+    return { ok: true };
+  });
   app.post<{ Params: P; Body: { status?: string } }>('/api/documents/:id/quotation-status', async (req) => as(req, async (db) => {
     const st = req.body?.status;
     if (st !== 'sent' && st !== 'accepted' && st !== 'declined') throw new HttpError(400, 'Some values are not in the right format.', 'err.format');

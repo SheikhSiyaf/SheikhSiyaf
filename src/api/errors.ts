@@ -77,6 +77,11 @@ const RAISED: [RegExp, string][] = [
   [/Goods received are credited/, 'err.noteAccount'],
   [/Choose a supplier \(goods received\)/, 'err.noteContact'],
   [/Only the person who sent these documents/, 'err.portalNotYours'],
+  [/e-invoicing device is not active/, 'err.einvNoDevice'],
+  [/The e-invoice chain moved on/, 'err.einvChain'],
+  [/An e-invoice is never changed|The authority has answered for this e-invoice/, 'err.einvFixed'],
+  [/Only issued invoices and credit notes are e-invoiced/, 'err.einvDocType'],
+  [/A device keeps its key|invoice counter moves only|A retired device stays retired/, 'err.einvDevice'],
   [/Your accountant has dealt with these documents/, 'err.portalDealt'],
   [/This request is already dealt with/, 'err.portalRequestDone'],
   [/published after the month has ended/, 'err.letterEarly'],
@@ -108,6 +113,9 @@ const CONSTRAINTS: Record<string, [string, string]> = {
   client_roles_firm_name_key: ['Another role already has this title.', 'err.roleTaken'],
   items_company_id_sku_key: ['Another item already has this code.', 'err.skuTaken'],
   items_qty_on_hand_check: ['Not enough stock.', 'err.notEnoughStock'],
+  contact_building_number: ['The building number has 4 digits.', 'err.buildingNumber'],
+  contact_postal_code: ['The postal code has 5 digits.', 'err.postalCode'],
+  einvoices_one_per_document: ['This invoice already has an e-invoice.', 'err.einvExists'],
 };
 
 interface PgError { code?: string; message: string; constraint?: string }

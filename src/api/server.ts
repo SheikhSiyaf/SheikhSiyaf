@@ -24,6 +24,8 @@ import { registerReviewRoutes } from './review.js';
 import { registerOwnerRoutes } from './owner.js';
 import { registerReportRoutes } from './reports.js';
 import { registerPortalRoutes } from './portal.js';
+import { registerEInvoiceRoutes } from './einvoice.js';
+import { configureEInvoicing } from '../books/einvoiceService.js';
 import { reviewedUpTo } from '../books/reviewService.js';
 import { registerSetupRoutes } from './setup.js';
 import { profitAndLoss } from '../books/reportsService.js';
@@ -66,6 +68,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     return withUser(pool, req.userId, fn, typeof acting === 'string' && /^[0-9a-f-]{36}$/i.test(acting) ? acting : null);
   };
   const ctx: Ctx = { pool, opts, as };
+  configureEInvoicing({ encryptionKey: opts.encryptionKey || opts.sessionSecret });
   registerPermissionCheck(app, ctx);
 
   async function companyRole(db: Db, companyId: string): Promise<string> {
@@ -252,6 +255,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerOwnerRoutes(app, ctx);
   registerReportRoutes(app, ctx);
   registerPortalRoutes(app, ctx);
+  registerEInvoiceRoutes(app, ctx);
   registerSetupRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });

@@ -234,3 +234,11 @@ Every change below is covered by a test in `test/`.
 | `portal_letters` (month, the firm's commentary and the figures as published; read once by the client; never changed or deleted) | The monthly report the client reads. |
 | `before_attachment_change()` replaced: portal uploads; an HR document's attachment check no longer stops the later checks | Portal files follow the same rules as other attachments. |
 | `portal_is_firm()`, `portal_my_clients()` | The firm's side of the portal, and what is waiting across its clients. |
+
+## 0025_einvoicing.sql
+| Change | Why |
+|---|---|
+| `einvoice_settings` (on or off; the seller's Saudi national address: street, 4-digit building number, district, 5-digit postal code; the exemption reason codes and texts for zero-rated, exempt and out-of-scope lines) | ZATCA needs the full national address and a reason (VATEX-SA-...) for every line without VAT. Turning it on for a Saudi company needs a connected device. |
+| `contacts.building_number`, `district`, `postal_code` | The buyer's national address on standard (B2B) tax invoices. |
+| `einvoice_devices` (ZATCA EGS units: environment, key encrypted by the application, CSR, compliance and production CSIDs, compliance check results, the chain counter ICV and last hash PIH; one active per company; never deleted, retired instead) | Onboarding with ZATCA, and the invoice hash chain each device keeps. |
+| `einvoices` (per issued invoice or credit note: scheme `zatca` or `pint_ae`, standard or simplified, UUID, ICV, PIH, hash, XML, QR, status and ZATCA's answer; never deleted; only the answer changes; one per document unless rejected) | The record of what was sent to ZATCA (or prepared for the UAE service provider). A trigger takes the device's next counter and previous hash, so the chain cannot skip or repeat. |

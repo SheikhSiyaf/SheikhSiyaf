@@ -1,4 +1,5 @@
 // Inventory (items, goods received and delivery notes, stock value) and fixed asset routes.
+import { sendAfterIssue } from './einvoice.js';
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
@@ -54,7 +55,11 @@ export function registerStockRoutes(app: FastifyInstance, { as }: Ctx) {
     if (!r) throw new HttpError(404, 'Not found.', 'err.notFound');
     return { id: await R.saveRecipe(db, r.company_id, req.body ?? {}, req.params.id) };
   }));
-  app.post<{ Params: P; Body: R.SaleInput }>('/api/companies/:id/restaurant/sales', async (req) => inCompany(req, req.params.id, (db, c) => R.sellFood(db, c, req.body ?? {})));
+  app.post<{ Params: P; Body: R.SaleInput }>('/api/companies/:id/restaurant/sales', async (req) => {
+    const r = await inCompany(req, req.params.id, (db, c) => R.sellFood(db, c, req.body ?? {}));
+    await sendAfterIssue(as, req, r.invoiceId);   // simplified invoice reported to ZATCA
+    return r;
+  });
   app.get<{ Params: P; Querystring: { from?: string; to?: string } }>('/api/companies/:id/restaurant/sales', async (req) =>
     inCompany(req, req.params.id, (db, c) => { const to = dateParam(req.query.to, today()); return R.listSales(db, c, dateParam(req.query.from, to), to); }));
 

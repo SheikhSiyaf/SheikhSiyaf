@@ -20,6 +20,8 @@ import { Categories } from '../expenses/Categories.tsx';
 import { ExpensesByCategory, ExpensesByPayee } from '../expenses/Reports.tsx';
 import { Approvals } from '../expenses/Approvals.tsx';
 import { ContactLedgers, CostCentreLedger, GeneralLedger } from '../ledger/Ledger.tsx';
+import { ChartOfAccounts, CostCentres } from '../ledger/Setup.tsx';
+import { ReportFrame } from '../print/Print.tsx';
 import { ProjectList, ProjectPage, ProjectReport } from '../projects/Projects.tsx';
 import { EmployeeList, EmployeePage } from '../hrm/Employees.tsx';
 import { BankAccountForm, BankAccountList, BankAccountPage, ImportStatement, Reconcile, Rules } from '../bank/Bank.tsx';
@@ -114,14 +116,16 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
   switch (module) {
     case 'Home': return <Home books={books} go={goModule} />;
     case 'Journal': return <Journal books={books} sub={sub} reloadBooks={reloadBooks} go={(s) => goModule('Journal', s)} />;
-    case 'Reports':
-      if (sub === 'vat-summary') return <Vat books={books} />;
-      if (sub === 'expenses-by-category') return <ExpensesByCategory books={books} />;
-      if (sub === 'expenses-by-payee') return <ExpensesByPayee books={books} />;
-      return <Reports books={books} sub={sub} />;
+    case 'Reports': {
+      const page = sub === 'vat-summary' ? <Vat books={books} /> : sub === 'expenses-by-category' ? <ExpensesByCategory books={books} />
+        : sub === 'expenses-by-payee' ? <ExpensesByPayee books={books} /> : <Reports books={books} sub={sub} />;
+      return <ReportFrame key={sub} books={books} title={t(`sub.${sub}` as Key)}>{page}</ReportFrame>;
+    }
     case 'Ledger':
-      if (sub === 'general-ledger') return <GeneralLedger books={books} />;
-      if (sub === 'cost-centre-ledger') return <CostCentreLedger books={books} />;
+      if (sub === 'chart-of-accounts') return <ChartOfAccounts books={books} onChanged={reloadBooks} />;
+      if (sub === 'cost-centres-setup') return <CostCentres books={books} onChanged={reloadBooks} />;
+      if (sub === 'general-ledger') return <GeneralLedger key={item ?? ''} books={books} initial={item} />;
+      if (sub === 'cost-centre-ledger') return <CostCentreLedger key={item ?? ''} books={books} initial={item} />;
       return <ContactLedgers key={`${sub}-${item ?? ''}`} books={books} role={sub.replace('-ledger', '') as 'customer' | 'supplier' | 'employee'} contactId={item} />;
     case 'Projects':
       if (sub === 'project-report') return <ProjectReport books={books} />;

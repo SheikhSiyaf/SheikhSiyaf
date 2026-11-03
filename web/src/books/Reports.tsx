@@ -8,7 +8,8 @@ import { Aged } from '../sales/Aged.tsx';
 
 interface TB { asOf: string; rows: { accountId: string; code: string; name: string; nameAr: string | null; debit: string; credit: string }[] }
 interface PnlRow { income: string; expense: string; profit: string }
-interface PNL { from: string; to: string; total: PnlRow; byCostCentre: (PnlRow & { costCentreId: string | null; name: string | null; nameAr: string | null })[] }
+interface PNL { from: string; to: string; total: PnlRow; byCostCentre: (PnlRow & { costCentreId: string | null; name: string | null; nameAr: string | null; kind: string | null })[];
+  byAccount: { accountId: string; code: string; name: string; nameAr: string | null; type: 'income' | 'expense'; amount: string }[] }
 
 export function Reports({ books, sub }: { books: CompanyBooks; sub: string }) {
   const { t } = useI18n();
@@ -65,31 +66,51 @@ export function Reports({ books, sub }: { books: CompanyBooks; sub: string }) {
         {pnl.error && <ErrorNote error={pnl.error} onRetry={pnl.reload} />}
         {!pnl.data ? <Loading /> : (
           <>
-            {!byCc && <table>
-              <tbody>
-                <tr><td>{t('reports.income')}</td><td className="num ltr">{fmt(pnl.data.total.income)}</td></tr>
-                <tr><td>{t('reports.expenses')}</td><td className="num ltr">{fmt(pnl.data.total.expense)}</td></tr>
-                <tr className="total"><td>{t('reports.netProfit')}</td><td className="num ltr">{fmt(pnl.data.total.profit)} {books.company.currency}</td></tr>
-              </tbody>
-            </table>}
-            {byCc && (pnl.data.byCostCentre.length === 0 ? <div className="mut">{t('reports.noActivity')}</div> : (
-              <div className="wrap">
-                <table>
-                  <thead><tr><th>{t('journal.costCentre')}</th><th className="num">{t('reports.income')}</th><th className="num">{t('reports.expenses')}</th><th className="num">{t('reports.netProfit')}</th></tr></thead>
-                  <tbody>
-                    {pnl.data.byCostCentre.map((r) => (
-                      <tr key={r.costCentreId ?? 'none'}>
-                        <td>{r.costCentreId ? local(r.name, r.nameAr) : <span className="mut">{t('reports.unassigned')}</span>}</td>
-                        <td className="num ltr">{fmt(r.income)}</td>
-                        <td className="num ltr">{fmt(r.expense)}</td>
-                        <td className="num ltr">{fmt(r.profit)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {ccSum === toMinor(pnl.data.total.profit) && <div className="mut small">{t('reports.sumCheck')}</div>}
-              </div>
-            ))}
+            {!byCc && (
+              <div className="wrap"><table>
+                <thead><tr><th>{t('journal.account')}</th><th className="num">{t('reports.amount')}</th></tr></thead>
+                <tbody>
+                  <tr className="section"><td colSpan={2}><b>{t('reports.income')}</b></td></tr>
+                  {(pnl.data.byAccount ?? []).filter((a) => a.type === 'income').map((a) => (
+                    <tr key={a.accountId}><td>{a.code} {local(a.name, a.nameAr)}</td><td className="num ltr">{fmt(a.amount)}</td></tr>
+                  ))}
+                  <tr className="total"><td>{t('reports.totalIncome')}</td><td className="num ltr">{fmt(pnl.data.total.income)}</td></tr>
+                  <tr className="section"><td colSpan={2}><b>{t('reports.expenses')}</b></td></tr>
+                  {(pnl.data.byAccount ?? []).filter((a) => a.type === 'expense').map((a) => (
+                    <tr key={a.accountId}><td>{a.code} {local(a.name, a.nameAr)}</td><td className="num ltr">{fmt(a.amount)}</td></tr>
+                  ))}
+                  <tr className="total"><td>{t('reports.totalExpenses')}</td><td className="num ltr">{fmt(pnl.data.total.expense)}</td></tr>
+                  <tr className="total grand"><td>{t('reports.netProfit')} ({books.company.currency})</td><td className={`num ltr ${toMinor(pnl.data.total.profit) < 0n ? 'bad' : ''}`}>{fmt(pnl.data.total.profit)}</td></tr>
+                </tbody>
+              </table></div>
+            )}
+            {byCc && (() => {
+              // Branches and departments here; projects have their own report, shown as one line so the total still agrees.
+              const rows = pnl.data!.byCostCentre.filter((r) => r.kind !== 'project');
+              const proj = pnl.data!.byCostCentre.filter((r) => r.kind === 'project');
+              const sum = (k: 'income' | 'expense' | 'profit') => fromMinor(proj.reduce((x, r) => x + toMinor(r[k]), 0n));
+              return pnl.data!.byCostCentre.length === 0 ? <div className="mut">{t('reports.noActivity')}</div> : (
+                <div className="wrap">
+                  <table>
+                    <thead><tr><th>{t('journal.costCentre')}</th><th className="num">{t('reports.income')}</th><th className="num">{t('reports.expenses')}</th><th className="num">{t('reports.netProfit')}</th></tr></thead>
+                    <tbody>
+                      {rows.map((r) => (
+                        <tr key={r.costCentreId ?? 'none'}>
+                          <td>{r.costCentreId ? local(r.name, r.nameAr) : <span className="mut">{t('reports.unassigned')}</span>}</td>
+                          <td className="num ltr">{fmt(r.income)}</td><td className="num ltr">{fmt(r.expense)}</td><td className="num ltr">{fmt(r.profit)}</td>
+                        </tr>
+                      ))}
+                      {proj.length > 0 && (
+                        <tr className="mut"><td>{t('reports.onProjects', { n: proj.length })}</td><td className="num ltr">{fmt(sum('income'))}</td><td className="num ltr">{fmt(sum('expense'))}</td><td className="num ltr">{fmt(sum('profit'))}</td></tr>
+                      )}
+                      <tr className="total"><td>{t('total')}</td><td className="num ltr">{fmt(pnl.data!.total.income)}</td><td className="num ltr">{fmt(pnl.data!.total.expense)}</td><td className="num ltr">{fmt(pnl.data!.total.profit)}</td></tr>
+                    </tbody>
+                  </table>
+                  {ccSum === toMinor(pnl.data!.total.profit) && <div className="mut small no-export">{t('reports.sumCheck')}</div>}
+                  {proj.length > 0 && <p className="mut small">{t('reports.projectsApart')}</p>}
+                </div>
+              );
+            })()}
           </>
         )}
       </div>}

@@ -1,5 +1,6 @@
 // Ledger reports: general (account) ledger, cost centre ledger, and customer / supplier / employee ledgers.
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
+import { ExportBar } from '../print/Print.tsx';
 import { useApi, type CompanyBooks } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { fmt, fromMinor, toMinor } from '../money.ts';
@@ -84,16 +85,19 @@ function Header({ title, children }: { title: ReactNode; children: ReactNode }) 
   return <div className="actions" style={{ marginBottom: 8 }}><h2 style={{ margin: 0, flex: '1 1 200px' }}>{title}</h2>{children}</div>;
 }
 
-export function GeneralLedger({ books }: { books: CompanyBooks }) {
+export function GeneralLedger({ books, initial }: { books: CompanyBooks; initial?: string }) {
   const { t } = useI18n();
   const local = useLocalName();
   const r = useRange();
-  const [accountId, setAccountId] = useState(books.accounts.find((a) => a.isBank)?.id ?? books.accounts[0]?.id ?? '');
+  const ref = useRef<HTMLDivElement>(null);
+  const [accountId, setAccountId] = useState(initial ?? books.accounts.find((a) => a.isBank)?.id ?? books.accounts[0]?.id ?? '');
+  const acct = books.accounts.find((a) => a.id === accountId);
   const d = useApi<{ opening: string; closing: string; totalDebit: string; totalCredit: string; rows: LRow[] }>(
     accountId ? `/api/companies/${books.company.id}/ledger/account/${accountId}?from=${r.from}&to=${r.to}` : null);
   return (
-    <div className="card">
+    <div className="card" ref={ref}>
       <Header title={`${t('sub.general-ledger')} (${books.company.currency})`}>
+        <ExportBar books={books} title={`${t('sub.general-ledger')} · ${acct ? `${acct.code} ${local(acct.name, acct.nameAr)}` : ''}`} period={`${r.from} – ${r.to}`} target={ref} />
         <label className="f">{t('journal.account')}
           <select id="gl-account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
             {books.accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {local(a.name, a.nameAr)}</option>)}
@@ -107,19 +111,25 @@ export function GeneralLedger({ books }: { books: CompanyBooks }) {
   );
 }
 
-export function CostCentreLedger({ books }: { books: CompanyBooks }) {
+export function CostCentreLedger({ books, initial }: { books: CompanyBooks; initial?: string }) {
   const { t } = useI18n();
   const local = useLocalName();
   const r = useRange();
-  const [ccId, setCcId] = useState(books.costCentres[0]?.id ?? '');
+  const ref = useRef<HTMLDivElement>(null);
+  const centres = books.costCentres.filter((c) => c.kind !== 'project');
+  const projects = books.costCentres.filter((c) => c.kind === 'project');
+  const [ccId, setCcId] = useState(initial ?? centres[0]?.id ?? books.costCentres[0]?.id ?? '');
+  const cc = books.costCentres.find((c) => c.id === ccId);
   const d = useApi<{ rows: LRow[]; income: string; expense: string; profit: string }>(
     ccId ? `/api/companies/${books.company.id}/ledger/cost-centre/${ccId}?from=${r.from}&to=${r.to}` : null);
   return (
-    <div className="card">
+    <div className="card" ref={ref}>
       <Header title={`${t('sub.cost-centre-ledger')} (${books.company.currency})`}>
+        <ExportBar books={books} title={`${t('sub.cost-centre-ledger')} · ${cc ? local(cc.name, cc.nameAr) : ''}`} period={`${r.from} – ${r.to}`} target={ref} />
         <label className="f">{t('journal.costCentre')}
           <select id="cc-pick" value={ccId} onChange={(e) => setCcId(e.target.value)}>
-            {books.costCentres.map((c) => <option key={c.id} value={c.id}>{local(c.name, c.nameAr)}{c.kind === 'project' ? ` · ${t('proj.project')}` : ''}</option>)}
+            <optgroup label={t('cc.groupCentres')}>{centres.map((c) => <option key={c.id} value={c.id}>{local(c.name, c.nameAr)}</option>)}</optgroup>
+            {projects.length > 0 && <optgroup label={t('cc.groupProjects')}>{projects.map((c) => <option key={c.id} value={c.id}>{local(c.name, c.nameAr)} · {t('proj.project')}</option>)}</optgroup>}
           </select>
         </label>
         <RangeInputs r={r} />
@@ -148,14 +158,20 @@ export function ContactLedgers({ books, role, contactId }: { books: CompanyBooks
   const local = useLocalName();
   const go = useGo(books.company.id);
   const sub = `${role}-ledger`;
+  const ref = useRef<HTMLDivElement>(null);
   const list = useApi<Balance[]>(contactId ? null : `/api/companies/${books.company.id}/ledger/balances/${role}`);
   if (contactId) return <ContactLedger books={books} role={role} contactId={contactId} />;
   if (list.error) return <ErrorNote error={list.error} onRetry={list.reload} />;
   if (!list.data) return <Loading />;
   const total = list.data.reduce((s, x) => s + toMinor(x.balance), 0n);
+  const newContact = () => (role === 'customer' ? go('Sales', 'customers', 'new') : role === 'supplier' ? go('Purchases', 'suppliers', 'new') : go('HRM', 'employees', 'new'));
   return (
-    <div className="card">
-      <p className="mut small" style={{ marginTop: 0 }}>{t(`led.hint.${role}` as Key)}</p>
+    <div className="card" ref={ref}>
+      <div className="actions" style={{ marginBottom: 6 }}>
+        <p className="mut small" style={{ margin: 0, flex: '1 1 240px' }}>{t(`led.hint.${role}` as Key)}</p>
+        <ExportBar books={books} title={t(`sub.${sub}` as Key)} period={new Date().toISOString().slice(0, 10)} target={ref} />
+        {books.canPost && <button className="b small p no-print" onClick={newContact}>{t(`led.new.${role}` as Key)}</button>}
+      </div>
       {list.data.length === 0 ? <div className="mut">{t('none')}</div> : (
         <div className="wrap">
           <table className="stack">
@@ -181,6 +197,7 @@ function ContactLedger({ books, role, contactId }: { books: CompanyBooks; role: 
   const local = useLocalName();
   const go = useGo(books.company.id);
   const r = useRange();
+  const ref = useRef<HTMLDivElement>(null);
   const d = useApi<{ contact: { name: string; nameAr: string | null }; opening: string; closing: string; totalDebit: string; totalCredit: string; rows: LRow[] }>(
     `/api/companies/${books.company.id}/ledger/contact/${contactId}?from=${r.from}&to=${r.to}`);
   return (
@@ -195,8 +212,9 @@ function ContactLedger({ books, role, contactId }: { books: CompanyBooks; role: 
           </>
         )}
       </div>
-      <div className="card">
+      <div className="card" ref={ref}>
         <Header title={d.data ? local(d.data.contact.name, d.data.contact.nameAr) : ''}>
+          {d.data && <ExportBar books={books} title={`${t(`sub.${role}-ledger` as Key)} · ${local(d.data.contact.name, d.data.contact.nameAr)}`} period={`${r.from} – ${r.to}`} target={ref} />}
           <RangeInputs r={r} />
         </Header>
         <p className="mut small">{t(`led.balance.${role}` as Key)}</p>

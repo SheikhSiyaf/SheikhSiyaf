@@ -303,8 +303,11 @@ export async function getDocument(db: Db, id: string) {
      FROM documents d WHERE (d.original_id = $1 OR d.id = $2) AND d.id <> $1 ORDER BY d.created_at`, [id, d.originalId]);
   const contact = d.contactId ? await getContact(db, d.contactId) : null;
   const seller = await db.query(
-    `SELECT name, name_ar AS "nameAr", vat_number AS "vatNumber", cr_number AS "crNumber", address, city, country, currency
-     FROM companies WHERE id = $1`, [d.companyId]);
+    `SELECT c.name, c.name_ar AS "nameAr", c.vat_number AS "vatNumber", c.cr_number AS "crNumber", c.address, c.city, c.country, c.currency,
+            c.phone, c.email, b.bank_name AS "bankName", b.iban, (SELECT o.number FROM documents o WHERE o.id = $2) AS "originalNumber"
+     FROM companies c LEFT JOIN LATERAL (SELECT bank_name, iban FROM bank_accounts WHERE company_id = c.id AND kind = 'bank' AND status = 'active' AND iban IS NOT NULL
+                                         ORDER BY created_at LIMIT 1) b ON true
+     WHERE c.id = $1`, [d.companyId, d.originalId]);
   return { ...d, state: stateOf(d, today()), lines: lines.rows, payments: payments.rows, related: related.rows, contact, seller: seller.rows[0] };
 }
 

@@ -37,6 +37,9 @@ const RAISED: [RegExp, string][] = [
   [/same role for every client/, 'err.sameRole'],
   [/only belong to their own company/, 'err.clientOneCompany'],
   [/Not enough stock/, 'err.notEnoughStock'],
+  [/Account codes have 4 digits/, 'err.accountCode'],
+  [/has postings, so its code and type/, 'err.accountUsed'],
+  [/Attachments of an issued document are kept/, 'err.attachmentKept'],
   [/Restaurant module is not turned on/, 'err.restaurantOff'],
   [/Menu items are sold to an income account/, 'err.recipeAccount'],
   [/Posted goods notes are never changed/, 'err.notePosted'],
@@ -75,6 +78,7 @@ const CONSTRAINTS: Record<string, [string, string]> = {
   bank_accounts_number: ['Another bank account already has this account number.', 'err.bankNumberTaken'],
   bank_accounts_iban_check: ['This IBAN is not right.', 'err.iban'],
   recipes_company_id_name_key: ['Another menu item already has this name.', 'err.recipeNameTaken'],
+  accounts_company_id_code_key: ['Another account already has this code.', 'err.accountCodeTaken'],
   items_company_id_sku_key: ['Another item already has this code.', 'err.skuTaken'],
   items_qty_on_hand_check: ['Not enough stock.', 'err.notEnoughStock'],
 };

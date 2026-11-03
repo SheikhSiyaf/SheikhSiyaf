@@ -9,6 +9,7 @@ import { ConfirmBar, ErrorNote, Loading, errorText } from '../ui.tsx';
 import { useGo, type Contact } from '../sales/common.tsx';
 import { ArabicHint, followArabic } from '../arabic.tsx';
 import { isLocked } from '../books/Workspace.tsx';
+import { AttachmentsCard, PdfButton, printNote } from '../print/Attachments.tsx';
 import { issueCost, quantityToMilli, receivedValue } from '../../../src/books/inventory.ts';
 
 export interface Item {
@@ -346,9 +347,10 @@ export function NoteEditor({ books, type, id, presetItemId, mod = 'Inventory' }:
         <div className="actions">
           <button className="b" disabled={busy || !canSave} onClick={() => save(false)}>{t('doc.saveDraft')}</button>
           <button id="nt-post" className="b p" disabled={busy || !canSave} onClick={() => setConfirm(true)}>{w(type === 'grn' ? 'inv.postGrn' : 'inv.postGdn')}</button>
-          {id && <><span className="spacer" /><button className="b" onClick={remove}>{t('doc.deleteDraft')}</button></>}
+          {id && <><span className="spacer" /><PdfButton onPrint={() => printNote(books, id, mod === 'Restaurant')} /><button className="b" onClick={remove}>{t('doc.deleteDraft')}</button></>}
         </div>
       ))}
+      {id && <AttachmentsCard owner="stock-notes" id={id} canAdd={books.canPost} canRemove={books.canPost} hint={t('att.noteHint')} />}
     </>
   );
 }
@@ -364,7 +366,7 @@ function NoteView({ books, note, mod }: { books: CompanyBooks; note: NoteRow & {
       <div className="actions" style={{ marginBottom: 10 }}>
         <button className="b" onClick={() => go(mod, subOf(type, mod))}>{w(type === 'grn' ? 'inv.backGrn' : 'inv.backGdn')}</button>
         <span className="spacer" />
-        <button className="b" onClick={() => window.print()}>{w('inv.print')}</button>
+        <PdfButton id="note-pdf" onPrint={() => printNote(books, note.id, mod === 'Restaurant')} />
       </div>
       <div className="card paper">
         <div className="paper-head">
@@ -390,6 +392,7 @@ function NoteView({ books, note, mod }: { books: CompanyBooks; note: NoteRow & {
         <p className="small mut">{w(type === 'grn' ? 'inv.postedGrn' : 'inv.postedGdn', { account: `${note.otherAccountCode} ${local(note.otherAccountName, note.otherAccountNameAr)}` })}</p>
         {note.notes && <p className="small">{note.notes}</p>}
       </div>
+      <AttachmentsCard owner="stock-notes" id={note.id} canAdd={books.canPost} canRemove={false} hint={t('att.noteHint')} />
       <p className="mut small">{w('inv.correctNote')}</p>
     </>
   );

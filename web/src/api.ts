@@ -62,7 +62,7 @@ export interface Account { id: string; code: string; name: string; nameAr: strin
 export interface CostCentre { id: string; name: string; nameAr: string | null; kind: string }
 export interface Period { startDate: string; endDate: string; lockedAt: string | null }
 export interface CompanyBooks {
-  company: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; vatStatus: string; invoicePrefix?: string; paymentTermsDays?: number; industry?: string; modules?: string[] };
+  company: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; vatStatus: string; invoicePrefix?: string; paymentTermsDays?: number; industry?: string; modules?: string[]; vatNumber?: string | null };
   role: Role; canPost: boolean; canLock: boolean;
   accounts: Account[]; costCentres: CostCentre[]; periods: Period[];
 }

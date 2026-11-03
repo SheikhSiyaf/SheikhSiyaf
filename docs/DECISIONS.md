@@ -14,6 +14,10 @@
 - Each client has an industry, chosen at registration. It sets the optional modules (Inventory, Restaurant, Assets, Projects, HRM, CRM); a restaurant gets Restaurant instead of Inventory. The Administrator can change them.
 - Restaurant: materials (stock items), materials in (goods received), menu items with recipes (materials per portion), waste, and food sales. Each food sale issues a tax invoice, takes the recipe materials out of stock at average cost and records the payment, all at once. A sale that would take a material below zero is stopped; materials are received first.
 
+- PDFs are A4 pages drawn by the browser and saved with its print window ("Save as PDF"), so Arabic is always shaped correctly. Sales documents are bilingual (English and Arabic). In Saudi Arabia an invoice is a "Tax invoice" when the buyer has a VAT number and a "Simplified tax invoice" otherwise, with the ZATCA phase 1 QR code (seller, VAT number, time, total, VAT). Phase 2 (XML, cryptographic stamp, clearance through Fatoora) comes with the ZATCA adapter.
+- Reports export to PDF and to Excel (.xlsx), numbers as numbers.
+- In reports, projects are kept apart from cost centres: P&L by cost centre shows branches and departments, with projects as one line pointing to the Projects report.
+
 ## Open
 - Restaurant POS integration (importing sales from the restaurant's own POS instead of entering them in Nusuh Books): which POS systems.
 - Direct bank feeds (transactions sent by the bank, no files): needs an open banking provider licensed by SAMA (Saudi) or under the UAE Central Bank open finance framework. Which provider, and the cost.

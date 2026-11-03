@@ -146,3 +146,11 @@ Every change below is covered by a test in `test/`.
 | `recipes` (menu items: selling price before VAT, VAT treatment, income account, category, on or off the menu) and `recipe_lines` (materials and quantity per portion) | The menu and its recipes, so each portion's food cost comes from the materials' average cost. |
 | `restaurant_sales` linking the tax invoice, the goods delivery note for the materials used, and the payment; refused unless the client has the Restaurant module; never changed | Selling food issues the invoice, takes the materials out of stock (Dr 5000 / Cr 1300) and records the payment in one transaction: all three or none. |
 | Audit triggers and row-level security on the three tables | Rules 5 and 6. |
+
+## 0014_attachments_chart.sql
+| Change | Why |
+|---|---|
+| `attachments` (file name, type, size, who and when; belongs to one document or one goods note) and `attachment_files` (the file itself, kept apart) | The supplier's invoice, receipts and delivery notes are kept with the bill, expense, claim or goods note and printed with its PDF. The audit log records each attachment but never copies the file. |
+| PDF, PNG, JPG and WEBP only, up to 10 MB; the API checks the file really is one (first bytes) | Nothing else is stored under a PDF or picture name. |
+| Attachments of an issued or posted document stay (can be added to, not removed); drafts can remove them | Rule 2 applied to supporting documents. |
+| Ledger account codes: 4 digits starting with 1 (assets), 2 (liabilities), 3 (equity), 4 (income) or 5-9 (expenses); code and type fixed once the account has postings | Ledger > Chart of accounts lets clients add accounts; the reports stay consistent. |

@@ -18,6 +18,7 @@ import { registerExpenseRoutes } from './expenses.js';
 import { registerLedgerRoutes } from './ledger.js';
 import { registerBankRoutes } from './bank.js';
 import { registerStockRoutes } from './stock.js';
+import { registerSetupRoutes } from './setup.js';
 
 export type { ServerOptions } from './context.js';
 const POSTING_ROLES = ['partner', 'staff_accountant', 'client_accountant'];
@@ -217,10 +218,17 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     const from = dateParam(req.query.from, `${to.slice(0, 4)}-01-01`);
     const total = await db.query('SELECT income::text, expense::text, profit::text FROM profit_and_loss($1,$2,$3)', [id, from, to]);
     const byCc = await db.query(
-      `SELECT p.cost_centre_id AS "costCentreId", p.cost_centre_name AS name, cc.name_ar AS "nameAr",
+      `SELECT p.cost_centre_id AS "costCentreId", p.cost_centre_name AS name, cc.name_ar AS "nameAr", cc.kind,
               p.income::text, p.expense::text, p.profit::text
        FROM profit_and_loss_by_cost_centre($1,$2,$3) p LEFT JOIN cost_centres cc ON cc.id = p.cost_centre_id`, [id, from, to]);
-    return { from, to, total: total.rows[0], byCostCentre: byCc.rows };
+    // Each income and expense account with its amount for the period (the full statement).
+    const byAccount = await db.query(
+      `SELECT a.id AS "accountId", a.code, a.name, a.name_ar AS "nameAr", a.type,
+              (CASE WHEN a.type = 'income' THEN sum(l.credit - l.debit) ELSE sum(l.debit - l.credit) END)::numeric(18,2)::text AS amount
+       FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id JOIN accounts a ON a.id = l.account_id
+       WHERE e.company_id = $1 AND e.entry_date BETWEEN $2 AND $3 AND a.type IN ('income', 'expense')
+       GROUP BY a.id HAVING sum(l.debit - l.credit) <> 0 ORDER BY a.code`, [id, from, to]);
+    return { from, to, total: total.rows[0], byCostCentre: byCc.rows, byAccount: byAccount.rows };
   }));
 
   registerAdminRoutes(app, ctx);
@@ -229,6 +237,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerLedgerRoutes(app, ctx);
   registerBankRoutes(app, ctx);
   registerStockRoutes(app, ctx);
+  registerSetupRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });
 

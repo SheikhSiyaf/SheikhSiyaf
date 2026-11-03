@@ -9,12 +9,14 @@ import { AdminConsole } from './admin/AdminConsole.tsx';
 import { AcceptInvite } from './pages/AcceptInvite.tsx';
 import { Security } from './pages/Security.tsx';
 import { ErrorNote, Loading } from './ui.tsx';
+import { PrintHost } from './print/Print.tsx';
 
 export function App() {
   return (
     <>
       {DEMO && <DemoBanner />}
       <Screens />
+      <PrintHost />
     </>
   );
 }

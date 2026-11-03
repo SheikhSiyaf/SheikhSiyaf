@@ -1137,6 +1137,72 @@ function salesM(companyId: string, from: string, to: string) {
   return { from, to, sales: rows, count: rows.length, netTotal: s(net), grossTotal: s(sum('grossTotal')), foodCost: s(cost), foodCostPct: net > 0n ? Number((cost * 1000n) / net) / 10 : null };
 }
 
+// ---- chart of accounts, cost centres, attachments (same rules as db/migrations/0014)
+interface MAttachment { id: string; companyId: string; documentId: string | null; noteId: string | null; fileName: string; contentType: string; size: number; dataUrl: string; uploadedBy: string; uploadedAt: string }
+const adb = { files: [] as MAttachment[] };
+function sellerOf(co: Company) {
+  const bank = odb.banks.find((b) => b.companyId === co.id && b.kind === 'bank' && b.status === 'active' && b.iban);
+  return { name: co.name, nameAr: co.nameAr, vatNumber: co.vatNumber, crNumber: co.crNumber, address: co.fields.address ?? '', city: co.city, country: co.country, currency: co.currency,
+    phone: co.fields.phone || null, email: co.fields.email || null, bankName: bank?.bankName ?? null, iban: bank?.iban ?? null };
+}
+const CODE_START: Record<string, string> = { asset: '1', liability: '2', equity: '3', income: '4', expense: '56789' };
+function nextCodeM(companyId: string, type: string) {
+  const used = new Set(db.accounts.filter((a) => a.companyId === companyId).map((a) => a.code));
+  for (const first of CODE_START[type] ?? '5') {
+    const codes = [...used].filter((c) => c.startsWith(first)).map(Number).sort((a, b) => a - b);
+    let c = codes.length ? Math.floor(codes.at(-1)! / 10) * 10 + 10 : Number(`${first}000`);
+    while (used.has(String(c)) && c < Number(`${first}999`)) c++;
+    if (c <= Number(`${first}999`) && !used.has(String(c))) return String(c);
+  }
+  return fail(400, 'There is no free code left.', 'err.noCode');
+}
+function saveAccountM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId);
+  const name = String(b.name ?? '').trim();
+  if (!name) fail(400, 'Enter the account name.', 'err.accountName');
+  const type = String(b.type);
+  if (!CODE_START[type]) fail(400, 'Choose the type of account.', 'err.accountType');
+  const code = String(b.code ?? '').trim() || nextCodeM(companyId, type);
+  if (!/^[1-9]\d{3}$/.test(code) || !CODE_START[type]!.includes(code[0]!)) fail(400, 'Account codes have 4 digits.', 'err.accountCode');
+  if (db.accounts.some((a) => a.companyId === companyId && a.code === code && a.id !== id)) fail(400, 'Another account already has this code.', 'err.accountCodeTaken');
+  const v = { code, name, nameAr: (b.nameAr as string)?.trim() || null, type, costCentreRequired: Boolean(b.costCentreRequired) };
+  if (id) {
+    const a = db.accounts.find((x) => x.id === id && x.companyId === companyId) ?? fail(404, 'Not found.', 'err.notFound');
+    if ((a.code !== code || a.type !== type) && db.entries.some((e) => e.lines.some((l) => l.accountId === id))) fail(400, 'This account has postings, so its code and type can no longer change.', 'err.accountUsed');
+    Object.assign(a, v); return id;
+  }
+  const nid = uid(); db.accounts.push({ id: nid, companyId, isBank: false, ...v }); return nid;
+}
+function saveCostCentreM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId);
+  const name = String(b.name ?? '').trim();
+  if (!name) fail(400, 'Enter the cost centre name.', 'err.costCentreName');
+  if (db.costCentres.some((c) => c.companyId === companyId && c.id !== id && c.name.toLowerCase() === name.toLowerCase())) fail(400, 'Another cost centre already has this name.', 'err.costCentreTaken');
+  const parentId = (b.parentId as string) || null;
+  if (parentId && (parentId === id || !db.costCentres.some((c) => c.id === parentId && c.companyId === companyId && c.kind !== 'project'))) fail(400, 'Choose a branch or department as the parent.', 'err.costCentreParent');
+  const v = { name, nameAr: (b.nameAr as string)?.trim() || null, kind: b.kind === 'department' ? 'department' : 'branch', parentId, status: b.status === 'closed' ? 'closed' : 'active' };
+  if (id) { Object.assign(db.costCentres.find((c) => c.id === id && c.companyId === companyId && c.kind !== 'project') ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
+  const nid = uid(); db.costCentres.push({ id: nid, companyId, ...v }); return nid;
+}
+function addAttachmentM(owner: { documentId?: string; noteId?: string }, b: Record<string, unknown>) {
+  const companyId = owner.documentId ? docOf(owner.documentId).companyId : noteOf(owner.noteId!).companyId;
+  canPostIn(companyId);
+  const fileName = String(b.fileName ?? '').trim();
+  const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+  const type = ({ pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' } as Record<string, string>)[ext];
+  if (!type) fail(400, 'Attach a PDF or a picture.', 'err.attachmentType');
+  const data = String(b.data ?? '');
+  const size = Math.floor((data.length * 3) / 4);
+  if (!size) fail(400, 'The file is empty.', 'err.attachmentEmpty');
+  if (size > 10 * 1024 * 1024) fail(400, 'Files can be up to 10 MB.', 'err.attachmentSize');
+  const id = uid();
+  adb.files.push({ id, companyId, documentId: owner.documentId ?? null, noteId: owner.noteId ?? null, fileName, contentType: type!, size, dataUrl: `data:${type};base64,${data}`,
+    uploadedBy: db.users.find((u) => u.id === session)?.name ?? '', uploadedAt: new Date().toISOString() });
+  return id;
+}
+const attachmentRows = (f: (a: MAttachment) => boolean) => adb.files.filter((a) => f(a) && roleOf(session, a.companyId))
+  .map(({ id, fileName, contentType, size, dataUrl, uploadedBy, uploadedAt }) => ({ id, fileName, contentType, size, dataUrl, uploadedBy, uploadedAt }));
+
 /** Sample bank, stock and asset data, as in src/db/seed.ts. */
 function seedOps(companyId: string, poster: string, c: { country: string }, contacts: { gulf: string; faisal: string; najd: string; fitOut: string }) {
   const prev = session; session = poster;
@@ -1355,9 +1421,14 @@ const routes: [string, RegExp, Handler][] = [
     const byCostCentre = [...rows.entries()].map(([ccId, r]) => {
       income += r.income; expense += r.expense;
       const cc = db.costCentres.find((x) => x.id === ccId);
-      return { costCentreId: ccId, name: cc?.name ?? null, nameAr: cc?.nameAr ?? null, income: s(r.income), expense: s(r.expense), profit: s(r.income - r.expense) };
+      return { costCentreId: ccId, name: cc?.name ?? null, nameAr: cc?.nameAr ?? null, kind: cc?.kind ?? null, income: s(r.income), expense: s(r.expense), profit: s(r.income - r.expense) };
     }).sort((a, b) => (a.name === null ? 1 : b.name === null ? -1 : a.name.localeCompare(b.name)));
-    return { from, to, total: { income: s(income), expense: s(expense), profit: s(income - expense) }, byCostCentre };
+    const byAccount = db.accounts.filter((a) => a.companyId === id && (a.type === 'income' || a.type === 'expense')).map((a) => {
+      let v = 0n;
+      for (const e of db.entries) if (e.companyId === id && e.date >= from && e.date <= to) for (const l of e.lines) if (l.accountId === a.id) v += a.type === 'income' ? l.credit - l.debit : l.debit - l.credit;
+      return { accountId: a.id, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, amount: s(v), v };
+    }).filter((a) => a.v !== 0n).sort((a, b) => a.code.localeCompare(b.code)).map(({ v: _v, ...a }) => a);
+    return { from, to, total: { income: s(income), expense: s(expense), profit: s(income - expense) }, byCostCentre, byAccount };
   }],
   ['GET', /^\/api\/config$/, () => ({ demoLogins: true, demoPassword: DEMO_PASSWORD, minPassword: 10, publicUrl: '' })],
   // ---------------------------------------------------------------- expenses
@@ -1442,7 +1513,7 @@ const routes: [string, RegExp, Handler][] = [
   }],
   ['GET', /^\/api\/documents\/([\w-]+)$/, (m) => {
     const d = docOf(m[1]!); const c = sdb.contacts.find((x) => x.id === d.contactId) ?? null; const co = db.companies.find((x) => x.id === d.companyId)!;
-    return { ...docRow(d), contact: c, seller: { name: co.name, nameAr: co.nameAr, vatNumber: co.vatNumber, crNumber: co.crNumber, address: co.fields.address ?? '', city: co.city, country: co.country, currency: co.currency },
+    return { ...docRow(d), contact: c, seller: { ...sellerOf(co), originalNumber: sdb.docs.find((o) => o.id === d.originalId)?.number ?? null }, issuedAt: d.journalEntryId ? db.entries.find((e) => e.id === d.journalEntryId)?.createdAt ?? null : null,
       lines: d.lines.map((l, i) => { const a = db.accounts.find((x) => x.id === l.accountId)!; const cc = db.costCentres.find((x) => x.id === l.costCentreId);
         return { id: l.id, lineNo: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, accountId: a.id, accountCode: a.code, accountName: a.name, accountNameAr: a.nameAr,
           costCentreId: l.costCentreId ?? null, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null, vatCode: l.vatCode, vatRate: l.vatRate, net: s(l.net), vat: s(l.vat) }; }),
@@ -1455,6 +1526,31 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/documents\/([\w-]+)\/quotation-status$/, (m, b) => { quoteStatusM(m[1]!, String(b?.status)); return { ok: true }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/convert$/, (m) => ({ id: convertM(m[1]!) })],
   ['POST', /^\/api\/documents\/([\w-]+)\/credit$/, (m) => ({ id: creditM(m[1]!) })],
+  // ---------------------------------------------------------------- chart of accounts, cost centres, attachments, print header
+  ['GET', /^\/api\/companies\/([\w-]+)\/print-header$/, (m) => ({ seller: sellerOf(company(inCo(m[1]!))) })],
+  ['GET', /^\/api\/companies\/([\w-]+)\/chart$/, (m) => { const id = inCo(m[1]!);
+    return db.accounts.filter((a) => a.companyId === id).sort((a, b) => a.code.localeCompare(b.code)).map((a) => {
+      const ls = db.entries.flatMap((e) => e.lines).filter((l) => l.accountId === a.id);
+      return { id: a.id, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, costCentreRequired: a.costCentreRequired, isBank: a.isBank, balance: s(ls.reduce((t, l) => t + l.debit - l.credit, 0n)), postings: ls.length };
+    }); }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/chart\/next-code$/, (m, _b, q) => ({ code: nextCodeM(inCo(m[1]!), q.get('type') ?? 'expense') })],
+  ['POST', /^\/api\/companies\/([\w-]+)\/accounts$/, (m, b) => ({ id: saveAccountM(inCo(m[1]!), b ?? {}) })],
+  ['POST', /^\/api\/accounts\/([\w-]+)$/, (m, b) => { const a = db.accounts.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); return { id: saveAccountM(a.companyId, b ?? {}, a.id) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/cost-centres$/, (m) => { const id = inCo(m[1]!);
+    return db.costCentres.filter((c) => c.companyId === id).map((c) => { const p = db.costCentres.find((x) => x.id === (c as { parentId?: string | null }).parentId);
+      return { id: c.id, name: c.name, nameAr: c.nameAr, kind: c.kind, status: c.status ?? 'active', parentId: (c as { parentId?: string | null }).parentId ?? null, parentName: p?.name ?? null, parentNameAr: p?.nameAr ?? null,
+        postings: db.entries.flatMap((e) => e.lines).filter((l) => l.costCentreId === c.id).length }; })
+      .sort((a, b) => Number(a.kind === 'project') - Number(b.kind === 'project') || a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name)); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/cost-centres$/, (m, b) => ({ id: saveCostCentreM(inCo(m[1]!), b ?? {}) })],
+  ['POST', /^\/api\/cost-centres\/([\w-]+)$/, (m, b) => { const c = db.costCentres.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); return { id: saveCostCentreM(c.companyId, b ?? {}, c.id) }; }],
+  ['GET', /^\/api\/documents\/([\w-]+)\/attachments$/, (m) => { docOf(m[1]!); return attachmentRows((a) => a.documentId === m[1]); }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/attachments$/, (m, b) => ({ id: addAttachmentM({ documentId: m[1]! }, b ?? {}) })],
+  ['GET', /^\/api\/stock-notes\/([\w-]+)\/attachments$/, (m) => { noteOf(m[1]!); return attachmentRows((a) => a.noteId === m[1]); }],
+  ['POST', /^\/api\/stock-notes\/([\w-]+)\/attachments$/, (m, b) => ({ id: addAttachmentM({ noteId: m[1]! }, b ?? {}) })],
+  ['POST', /^\/api\/attachments\/([\w-]+)\/delete$/, (m) => { const a = adb.files.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); canPostIn(a.companyId);
+    const draft = a.documentId ? sdb.docs.find((d) => d.id === a.documentId)?.status === 'draft' : odb.notes.find((n) => n.id === a.noteId)?.status === 'draft';
+    if (!draft) fail(400, 'Attachments of an issued document are kept.', 'err.attachmentKept');
+    adb.files = adb.files.filter((x) => x.id !== a.id); return { ok: true }; }],
   // ---------------------------------------------------------------- restaurant
   ['GET', /^\/api\/companies\/([\w-]+)\/recipes$/, (m, _b, q) => { const id = inCo(m[1]!); const n = (q.get('q') ?? '').trim().toLowerCase();
     return rdb.recipes.filter((r) => r.companyId === id && (!n || [r.name, r.nameAr, r.category].join(' ').toLowerCase().includes(n))).map(recipeRow)

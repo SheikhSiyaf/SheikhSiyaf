@@ -72,7 +72,7 @@ describe('Data separation between companies', () => {
     await expect(as(u, (db) => postEntry(db, sale(f.b, '2026-03-02', '1.00')))).rejects.toThrow(/row-level security/);
     await expect(as(f.staff, (db) => postEntry(db, sale(f.b, '2026-03-02', '1.00')))).rejects.toThrow(/row-level security/);
     await expect(as(u, (db) => db.query(
-      `INSERT INTO accounts (company_id, code, name, type) VALUES ($1, '9999', 'Sneaky', 'asset')`, [f.b.id]))).rejects.toThrow(/row-level security/);
+      `INSERT INTO accounts (company_id, code, name, type) VALUES ($1, '1999', 'Sneaky', 'asset')`, [f.b.id]))).rejects.toThrow(/row-level security/);
     await expect(as(u, (db) => db.query(
       `INSERT INTO journal_lines (entry_id, account_id, debit) VALUES ($1, $2, 1)`, [entryB, f.b.cash]))).rejects.toThrow(/row-level security/);
     const upd = await as(u, (db) => db.query(`UPDATE accounts SET name = 'Hacked' WHERE company_id = $1`, [f.b.id]));

@@ -19,7 +19,7 @@ export const NAV: Module[] = [
   { key: 'HRM', subs: [s('employees'), s('payroll', false), s('leave', false), s('attendance', false), s('end-of-service', false), s('hr-documents', false)] },
   { key: 'CRM', subs: [s('leads', false), s('pipeline', false), s('activities', false), s('campaigns', false)] },
   { key: 'Journal', subs: [s('entries'), s('new'), s('periods')] },
-  { key: 'Ledger', subs: [s('general-ledger'), s('cost-centre-ledger'), s('customer-ledger'), s('supplier-ledger'), s('employee-ledger')] },
+  { key: 'Ledger', subs: [s('chart-of-accounts'), s('cost-centres-setup'), s('general-ledger'), s('cost-centre-ledger'), s('customer-ledger'), s('supplier-ledger'), s('employee-ledger')] },
   { key: 'Reports', subs: [s('trial-balance'), s('profit-and-loss'), s('cost-centres'), s('expenses-by-category'), s('expenses-by-payee'),
     s('aged-receivables'), s('aged-payables'), s('vat-summary'), s('vat-return', false)] },
   { key: 'Review', subs: [s('checks', false), s('queries', false), s('sign-off', false)] },

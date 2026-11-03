@@ -8,6 +8,7 @@ import { ConfirmBar, ErrorNote, Loading, errorText } from '../ui.tsx';
 import { isLocked, lockedUpTo } from '../books/Workspace.tsx';
 import { moduleForType, pageForType } from '../books/nav.ts';
 import { documentTotals, priceLine, type VatCode } from '../../../src/books/documents.ts';
+import { AttachmentsCard, PdfButton, printDocument } from '../print/Attachments.tsx';
 import { StateBadge, bankAccounts, lineAccounts, sideOf, useGo, type Contact, type DocDetail, type DocRow, type DocType } from './common.tsx';
 
 const FILTERS: Record<string, string[]> = {
@@ -293,8 +294,11 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
         <button className="b p" disabled={busy || (tried && problems.length > 0)} onClick={() => void save(true)}>{t(`doc.issue.${type}` as Key)}</button>
         <button className="b" disabled={busy} onClick={() => void save(false)}>{t('doc.saveDraft')}</button>
         {id && <button className="b" disabled={busy} onClick={() => setConfirmDelete(true)}>{t('doc.deleteDraft')}</button>}
+        {id && <PdfButton onPrint={() => printDocument(books, id)} />}
         <span className="mut small">{t(isClaim ? 'claim.submitHint' : willPost ? 'doc.issueHint' : 'doc.quoteHint')}</span>
       </div>
+      {id ? <AttachmentsCard owner="documents" id={id} canAdd={books.canPost} canRemove={books.canPost} hint={sideOf(type) === 'purchases' ? t('att.billHint') : undefined} />
+        : sideOf(type) === 'purchases' && <p className="mut small">{t('att.saveFirst')}</p>}
     </>
   );
 }
@@ -347,6 +351,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
       <div className="actions" style={{ marginBottom: 10 }}>
         <button className="b" onClick={() => go(m, pageForType(x.type))}>{t(`doc.back.${x.type}` as Key)}</button>
         <span className="spacer" />
+        <PdfButton id="doc-pdf" onPrint={() => printDocument(books, x.id)} />
         {canPay && <button className="b p" onClick={() => go(m, side === 'sales' ? 'payments-received' : 'payments-made', 'new', x.contactId, x.id)}>{t(side === 'sales' ? 'ov.recordReceipt' : 'ov.recordPayment')}</button>}
         {books.canPost && due && <button className="b" disabled={busy} onClick={() => void run(async () => {
           const r = await api<{ id: string }>(`/api/documents/${x.id}/credit`, { body: {} });
@@ -486,6 +491,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
         {x.type === 'invoice' && x.status === 'issued' && <p className="mut small">{t('doc.einvoiceLater', { einv: t(`einv.${books.company.country}`) })}</p>}
       </div>
 
+      <AttachmentsCard owner="documents" id={x.id} canAdd={books.canPost} canRemove={false} hint={side === 'purchases' ? t('att.billHint') : undefined} />
       {x.payments.length > 0 && (
         <div className="card">
           <h2>{t(side === 'sales' ? 'sub.payments-received' : 'sub.payments-made')}</h2>

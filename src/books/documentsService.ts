@@ -361,6 +361,8 @@ export async function rejectClaim(db: Db, id: string, reason: string): Promise<v
 export interface PaymentInput {
   direction?: Direction; contactId?: string; date?: string; amount?: string; accountId?: string; method?: string; reference?: string;
   allocations?: { documentId: string; amount: string }[];
+  /** A supplier payment approved beforehand (approvals, 0026): the request it carries out. */
+  approvalRequestId?: string;
 }
 
 export async function recordPayment(db: Db, companyId: string, p: PaymentInput): Promise<string> {
@@ -390,9 +392,9 @@ export async function recordPayment(db: Db, companyId: string, p: PaymentInput):
     lines: postingForPayment(direction, amount, p.accountId!, await systemAccounts(db, companyId), Boolean(contact.isEmployee)),
   });
   await db.query(
-    `INSERT INTO payments (id, company_id, direction, number, contact_id, payment_date, amount, account_id, method, reference, journal_entry_id, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, app_user_id())`,
-    [id, companyId, direction, number, p.contactId, p.date, fromMinor(amount), p.accountId, method, p.reference?.trim() || null, entryId]);
+    `INSERT INTO payments (id, company_id, direction, number, contact_id, payment_date, amount, account_id, method, reference, journal_entry_id, created_by, approval_request_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, app_user_id(), $12)`,
+    [id, companyId, direction, number, p.contactId, p.date, fromMinor(amount), p.accountId, method, p.reference?.trim() || null, entryId, p.approvalRequestId || null]);
   for (const a of allocs) {
     await db.query('INSERT INTO payment_allocations (payment_id, document_id, amount) VALUES ($1, $2, $3)', [id, a.documentId, fromMinor(a.amount)]);
   }

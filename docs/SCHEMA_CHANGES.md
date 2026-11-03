@@ -242,3 +242,13 @@ Every change below is covered by a test in `test/`.
 | `contacts.building_number`, `district`, `postal_code` | The buyer's national address on standard (B2B) tax invoices. |
 | `einvoice_devices` (ZATCA EGS units: environment, key encrypted by the application, CSR, compliance and production CSIDs, compliance check results, the chain counter ICV and last hash PIH; one active per company; never deleted, retired instead) | Onboarding with ZATCA, and the invoice hash chain each device keeps. |
 | `einvoices` (per issued invoice or credit note: scheme `zatca` or `pint_ae`, standard or simplified, UUID, ICV, PIH, hash, XML, QR, status and ZATCA's answer; never deleted; only the answer changes; one per document unless rejected) | The record of what was sent to ZATCA (or prepared for the UAE service provider). A trigger takes the device's next counter and previous hash, so the chain cannot skip or repeat. |
+
+## 0026_approvals_forecast.sql
+| Change | Why |
+|---|---|
+| `app_can_approve()` (firm partner or reviewer, or a client role with "approve") | Who approves bills, supplier payments and credit notes, and sets the rules. |
+| `approval_rules` (per company: bill, payment, credit note; amount from which approval is needed; on or off) | Spending controls beyond employee claims. |
+| `approval_requests` (draft bill or credit note, or a supplier payment kept as data; pending, approved, rejected with a reason, withdrawn, done; never deleted while open; who sent, who decided) | The approval itself, with separation of duties (the sender never decides). |
+| Triggers: a draft waiting for approval (or approved, not yet issued) is locked; issuing a bill or credit note at or above the rule's amount needs an approved request; issuing marks the request done | Approval cannot be skipped or changed after the fact, even outside the screens. |
+| `payments.approval_request_id`; supplier payments at or above the rule's amount need an approved request for the same supplier and amount; recording it marks the request done | The same for money going out. |
+| `forecast_items` (money in or out the books cannot know, once or repeating; archived, never deleted) and `forecast_settings` (minimum cash to keep) | The cash flow forecast. |

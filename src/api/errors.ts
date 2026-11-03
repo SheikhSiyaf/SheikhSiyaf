@@ -78,6 +78,15 @@ const RAISED: [RegExp, string][] = [
   [/Choose a supplier \(goods received\)/, 'err.noteContact'],
   [/Only the person who sent these documents/, 'err.portalNotYours'],
   [/e-invoicing device is not active/, 'err.einvNoDevice'],
+  [/needs approval before it is issued/, 'err.needsApproval'],
+  [/payment needs approval before it is made/, 'err.paymentNeedsApproval'],
+  [/This is waiting for approval/, 'err.waitingApproval'],
+  [/someone else must approve or reject it/, 'err.selfApprove'],
+  [/Your role does not allow approving/, 'err.roleNoApprove'],
+  [/This payment is not approved/, 'err.approvalNotApproved'],
+  [/not the one that was approved/, 'err.approvalMismatch'],
+  [/Only drafts are sent for approval/, 'err.approvalDraft'],
+  [/An approval request (is never deleted|is not changed|cannot move)/, 'err.approvalFixed'],
   [/The e-invoice chain moved on/, 'err.einvChain'],
   [/An e-invoice is never changed|The authority has answered for this e-invoice/, 'err.einvFixed'],
   [/Only issued invoices and credit notes are e-invoiced/, 'err.einvDocType'],
@@ -116,6 +125,7 @@ const CONSTRAINTS: Record<string, [string, string]> = {
   contact_building_number: ['The building number has 4 digits.', 'err.buildingNumber'],
   contact_postal_code: ['The postal code has 5 digits.', 'err.postalCode'],
   einvoices_one_per_document: ['This invoice already has an e-invoice.', 'err.einvExists'],
+  approval_requests_open_document: ['This is already waiting for approval.', 'err.waitingApproval'],
 };
 
 interface PgError { code?: string; message: string; constraint?: string }

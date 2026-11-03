@@ -67,6 +67,9 @@ const RULES: Rule[] = [
   ['POST', new RegExp(`^/api/accounts/${UUID}$`), (db, m) => companyOf(db, 'accounts', m[1]!, ['Ledger'])],
   ['POST', new RegExp(`^/api/cost-centres/${UUID}$`), (db, m) => companyOf(db, 'cost_centres', m[1]!, ['Ledger'])],
   ['GET', new RegExp(`^/api/companies/${UUID}/reports/.*$`), c(['Reports'])],
+  ['*', new RegExp(`^/api/companies/${UUID}/forecast(/.*)?$`), c(['Reports'])],
+  ['*', new RegExp(`^/api/forecast/items/${UUID}$`), (db, m) => companyOf(db, 'forecast_items', m[1]!, ['Reports'])],
+  ['POST', new RegExp(`^/api/companies/${UUID}/approvals/payments$`), c(['Purchases', 'Expenses'])],
   // bank
   ['GET', new RegExp(`^/api/companies/${UUID}/bank-accounts$`), c(['Bank', 'Restaurant'])],
   ['*', new RegExp(`^/api/companies/${UUID}/(bank-accounts|bank-rules)(/.*)?$`), c(['Bank'])],

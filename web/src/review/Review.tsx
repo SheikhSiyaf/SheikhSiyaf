@@ -9,8 +9,6 @@ import { ConfirmBar, ErrorNote, Loading, errorText } from '../ui.tsx';
 import { useGo } from '../sales/common.tsx';
 import { moduleForType, pageForType } from '../books/nav.ts';
 
-const FIRM = ['partner', 'reviewer', 'staff_accountant'];
-const SIGNERS = ['partner', 'reviewer'];
 const lastMonthEnd = () => { const d = new Date(); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0)).toISOString().slice(0, 10); };
 const monthEndOf = (ym: string) => { const [y, m] = ym.split('-').map(Number) as [number, number]; return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); };
 
@@ -71,7 +69,7 @@ function ReviewOverview({ books, pe, picker }: { books: CompanyBooks; pe: string
   return (
     <>
       <div className="top" style={{ marginBottom: 10 }}>{picker}<span className="spacer" />
-        {d?.reviewedUpTo && <span className="badge good">{t(FIRM.includes(books.role) ? 'rv.signedUpTo' : 'rv.reviewedUpTo', { month: monthName(d.reviewedUpTo.periodEnd), name: d.reviewedUpTo.signedBy })}</span>}</div>
+        {d?.reviewedUpTo && <span className="badge good">{t(Boolean(books.review?.canReview) ? 'rv.signedUpTo' : 'rv.reviewedUpTo', { month: monthName(d.reviewedUpTo.periodEnd), name: d.reviewedUpTo.signedBy })}</span>}</div>
       {!d ? <Loading /> : <>
         <div className="grid">
           <Fig label={t('rv.findings')} value={d.openFindings} sub={t('rv.findingsSub')} tone={d.openFindings ? 'warn' : ''} onClick={() => go('Review', 'checks')} />
@@ -97,7 +95,7 @@ function ReviewOverview({ books, pe, picker }: { books: CompanyBooks; pe: string
 function Checks({ books, pe, picker }: { books: CompanyBooks; pe: string; picker: ReactNode }) {
   const { t } = useI18n();
   const go = useGo(books.company.id);
-  const firm = FIRM.includes(books.role);
+  const firm = Boolean(books.review?.canReview);
   const c = useApi<Check[]>(`/api/companies/${books.company.id}/review/checks?month=${pe}`);
   const [explain, setExplain] = useState<{ check: string; item: string; note: string }>();
   const [ask, setAsk] = useState<{ check: string; f: Finding }>();
@@ -196,7 +194,7 @@ function Queries({ books, pe, picker }: { books: CompanyBooks; pe: string; picke
   const { t } = useI18n();
   const go = useGo(books.company.id);
   const monthName = useMonthName();
-  const firm = FIRM.includes(books.role);
+  const firm = Boolean(books.review?.canReview);
   const [status, setStatus] = useState('unresolved');
   const [all, setAll] = useState(true);
   const [asking, setAsking] = useState(false);
@@ -243,7 +241,7 @@ function QueryPage({ books, id }: { books: CompanyBooks; id: string }) {
   const { t, lang } = useI18n();
   const go = useGo(books.company.id);
   const monthName = useMonthName();
-  const firm = FIRM.includes(books.role);
+  const firm = Boolean(books.review?.canReview);
   const q = useApi<QueryDetail & { messages: { id: string; body: string; createdAt: string; author: string | null; mine: boolean; fromFirm: boolean }[] }>(`/api/review/queries/${id}`);
   const [text, setText] = useState('');
   const { run, busy, notes } = useRun();
@@ -286,7 +284,7 @@ function QueryPage({ books, id }: { books: CompanyBooks; id: string }) {
 // ------------------------------------------------------------------ checklist
 function ChecklistPage({ books, pe, picker }: { books: CompanyBooks; pe: string; picker: ReactNode }) {
   const { t } = useI18n();
-  const firm = FIRM.includes(books.role);
+  const firm = Boolean(books.review?.canReview);
   const c = useApi<Checklist>(`/api/companies/${books.company.id}/review/checklist?month=${pe}`);
   const months = useApi<MonthRow[]>(`/api/companies/${books.company.id}/review/months?month=${pe}`);
   const [note, setNote] = useState<{ item: string; text: string }>();
@@ -332,7 +330,7 @@ function SignOff({ books, pe, setPe, picker }: { books: CompanyBooks; pe: string
   const { t } = useI18n();
   const go = useGo(books.company.id);
   const monthName = useMonthName();
-  const canSign = SIGNERS.includes(books.role);
+  const canSign = Boolean(books.review?.canSignOff);
   const m = useApi<MonthRow[]>(`/api/companies/${books.company.id}/review/months?month=${lastMonthEnd() > pe ? lastMonthEnd() : pe}`);
   const cl = useApi<Checklist>(`/api/companies/${books.company.id}/review/checklist?month=${pe}`);
   const [note, setNote] = useState('');
@@ -394,7 +392,7 @@ function SignOff({ books, pe, setPe, picker }: { books: CompanyBooks; pe: string
 export function ReviewedBadge({ books, go }: { books: CompanyBooks; go: (m: string, s?: string) => void }) {
   const { t } = useI18n();
   const monthName = useMonthName();
-  const firm = FIRM.includes(books.role);
+  const firm = Boolean(books.review?.canReview);
   const q = useApi<QueryRow[]>(`/api/companies/${books.company.id}/review/queries?status=${firm ? 'answered' : 'open'}`);
   const r = (books as CompanyBooks & { reviewedUpTo?: { periodEnd: string; signedBy: string } | null }).reviewedUpTo;
   const waiting = q.data?.length ?? 0;

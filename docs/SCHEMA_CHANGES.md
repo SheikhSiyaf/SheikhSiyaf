@@ -206,3 +206,18 @@ Every change below is covered by a test in `test/`.
 | `review_checklist` (ticks per month and item, fixed once the month is signed off) and `review_explained` (a note that a check finding is fine) | Monthly checklist and the record of what the reviewer accepted. |
 | `review_signoffs` (one standing sign-off per month; only partners and reviewers; the month must have ended and its queries be closed; never changed or deleted, only withdrawn with a reason); `reviewed_up_to()` | Period sign-off and the client's "reviewed by your accountant" status. |
 | `review_roles()`, `signoff_roles()`, `review_from_firm()`; audit triggers and row-level security on every review table | Who may do what is enforced in the database; rules 5 and 6. |
+
+## 0022_owner_kind.sql
+| Change | Why |
+|---|---|
+| `user_kind` gets `owner` | The platform owner (seller of Nusuh Books). On its own so 0023 can use it. |
+
+## 0023_tenants.sql
+| Change | Why |
+|---|---|
+| `firms.kind` (platform, firm, company), `firms.status`, `firms.created_at`; one platform row holds the owner | Customers are accounting firms or companies that run their own books. |
+| `app_is_owner()`, `app_acting_firm()`; `app_firm_id()` and `app_is_admin()` honour the owner's chosen customer (`app.acting_firm`), only for the owner | The owner works inside one customer's Administrator console at a time; everyone else stays in their own customer. |
+| Companies are inserted by the owner only; a company customer's details are changed by the owner only | "Company creation will be in my hand only." |
+| Trigger: owners only on the platform; no firm staff in a company customer | A company's people are company users with roles. |
+| `owner_tenants()`, `owner_create_tenant()`, `owner_update_tenant()`; `auth_user_by_email` returns the customer's status | The owner console; suspended customers cannot sign in. |
+| `client_roles.can_review`, `can_sign_off`; `app_can_review()`, `app_can_sign()` replace the firm-role checks in the review rules and policies; `app_client_role()` returns them | A company reviews and signs off its own months without an accounting firm. |

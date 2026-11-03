@@ -407,3 +407,4 @@ tr.sel td { background: var(--tealbg); }
 table.checklist tr.done b { color: var(--mut); }
 button.card.fig { text-align: start; font: inherit; color: inherit; cursor: pointer; }
 button.card.fig:hover { border-color: var(--teal); }
+.owner-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: var(--tealbg); }

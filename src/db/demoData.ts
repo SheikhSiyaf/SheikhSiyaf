@@ -1,11 +1,15 @@
 // Demo firm used by `npm run db:seed`. Fictional people and companies, for trying the app only.
 export const DEMO_PASSWORD = 'demo1234';
 export const DEMO_FIRM = 'Demo Accounting Firm';
+/** A customer that runs its own books (no accounting firm): its own Administrator and finance team. */
+export const DEMO_SELF = 'Desert Rose Trading';
 
 export interface DemoCompany {
   key: string; name: string; nameAr: string; country: 'SA' | 'AE'; currency: string; vatRate: string;
   crNumber: string; vatNumber: string; legalForm: string; address: string; city: string; invoicePrefix: string;
   industry: 'trading' | 'restaurant';
+  /** Which customer owns it: the demo accounting firm (default) or the company that runs its own books. */
+  tenant?: 'firm' | 'self';
 }
 
 export const DEMO_COMPANIES: DemoCompany[] = [
@@ -15,12 +19,18 @@ export const DEMO_COMPANIES: DemoCompany[] = [
     crNumber: 'DED-845210', vatNumber: '100234567800003', legalForm: 'LLC', address: 'Dubai Marina Walk', city: 'Dubai', invoicePrefix: 'MC-', industry: 'restaurant' },
   { key: 'riyadh', name: 'Riyadh Supplies Co', nameAr: 'شركة إمدادات الرياض', country: 'SA', currency: 'SAR', vatRate: '15.00',
     crNumber: '1010654321', vatNumber: '310987654300003', legalForm: 'Joint stock company', address: 'Prince Sultan St', city: 'Jeddah', invoicePrefix: 'RSC-', industry: 'trading' },
+  { key: 'desertrose', name: 'Desert Rose Trading', nameAr: 'وردة الصحراء للتجارة', country: 'SA', currency: 'SAR', vatRate: '15.00',
+    crNumber: '1010777888', vatNumber: '311122233300003', legalForm: 'LLC', address: 'Tahlia Street', city: 'Jeddah', invoicePrefix: 'DRT-', industry: 'trading', tenant: 'self' },
 ];
 
 export interface DemoUser {
   name: string; email: string;
-  kind: 'admin' | 'firm_staff' | 'client';
-  role: 'admin' | 'partner' | 'reviewer' | 'staff_accountant' | 'client_accountant' | 'client_viewer';
+  kind: 'owner' | 'admin' | 'firm_staff' | 'client';
+  role: 'owner' | 'admin' | 'partner' | 'reviewer' | 'staff_accountant' | 'client_accountant' | 'client_viewer';
+  /** Whose person: the platform (owner), the demo firm (default) or the company that runs its own books. */
+  tenant?: 'platform' | 'firm' | 'self';
+  /** For the self-managed company: the role (by name) the person is given. */
+  clientRole?: string;
   companies: string[];       // DemoCompany keys
   company?: string;          // display name for client users
 }
@@ -34,6 +44,10 @@ export const DEMO_USERS: DemoUser[] = [
   { name: 'Faisal Al Qahtani', email: 'faisal@alnoor.example', kind: 'client', role: 'client_viewer', companies: ['alnoor'], company: 'Al Noor Trading' },
   { name: 'Hana Rahman', email: 'hana@marinacafe.example', kind: 'client', role: 'client_accountant', companies: ['marina'], company: 'Marina Café LLC' },
   { name: 'Khalid Al Otaibi', email: 'khalid@riyadhsupplies.example', kind: 'client', role: 'client_viewer', companies: ['riyadh'], company: 'Riyadh Supplies Co' },
+  { name: 'Nusuh Books (owner)', email: 'owner@nusuhbooks.example', kind: 'owner', role: 'owner', companies: [], tenant: 'platform' },
+  { name: 'Hamad Al Zahrani', email: 'admin@desertrose.example', kind: 'admin', role: 'admin', companies: [], tenant: 'self', company: 'Desert Rose Trading' },
+  { name: 'Ali Hassan', email: 'ali@desertrose.example', kind: 'client', role: 'client_accountant', companies: ['desertrose'], tenant: 'self', company: 'Desert Rose Trading', clientRole: 'Accountant' },
+  { name: 'Noura Al Shehri', email: 'noura@desertrose.example', kind: 'client', role: 'client_accountant', companies: ['desertrose'], tenant: 'self', company: 'Desert Rose Trading', clientRole: 'Finance manager' },
 ];
 
 /** Sample restaurant (Marina Café): kitchen materials with their opening stock, the menu with recipes, and recent sales. */
@@ -74,4 +88,14 @@ export const DEMO_ROLES: { name: string; nameAr: string; description: string; pe
   { name: 'Store keeper', nameAr: 'أمين المخزن', description: 'Goods received and delivered', permissions: { Inventory: 'edit', Restaurant: 'edit', Purchases: 'view' }, canApprove: false },
   { name: 'Finance manager', nameAr: 'المدير المالي', description: 'Sees everything, approves claims',
     permissions: { Sales: 'view', Purchases: 'view', Expenses: 'view', Bank: 'view', Inventory: 'view', Restaurant: 'view', Assets: 'view', Projects: 'view', HRM: 'view', CRM: 'view', Journal: 'view', Ledger: 'view', Reports: 'view' }, canApprove: true },
+];
+
+/** The self-managed company's own roles: its finance manager reviews and signs off months. */
+export const DEMO_SELF_ROLES: { name: string; nameAr: string; description: string; permissions: Record<string, 'view' | 'edit'>; canApprove: boolean; canReview: boolean; canSignOff: boolean }[] = [
+  { name: 'Finance manager', nameAr: 'المدير المالي', description: 'Runs the books, approves claims, reviews and signs off each month',
+    permissions: { Sales: 'edit', Purchases: 'edit', Expenses: 'edit', Bank: 'edit', Inventory: 'edit', Restaurant: 'edit', Assets: 'edit', Projects: 'edit', HRM: 'edit', CRM: 'edit', Journal: 'edit', Ledger: 'edit', Reports: 'view' },
+    canApprove: true, canReview: true, canSignOff: true },
+  { name: 'Accountant', nameAr: 'محاسب', description: 'Daily entry',
+    permissions: { Sales: 'edit', Purchases: 'edit', Expenses: 'edit', Bank: 'edit', Inventory: 'edit', Assets: 'edit', Projects: 'edit', HRM: 'edit', CRM: 'edit', Journal: 'edit', Ledger: 'edit', Reports: 'view' },
+    canApprove: false, canReview: false, canSignOff: false },
 ];

@@ -46,7 +46,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
     }
   };
   const submit = (ev: FormEvent) => { ev.preventDefault(); void signIn(email, password); };
-  const groups: [string, string][] = [['admin', 'role.admin'], ['firm_staff', 'admin.staffTitle'], ['client', 'col.client']];
+  const groups: [string, string][] = [['owner', 'own.role'], ['admin', 'role.admin'], ['firm_staff', 'admin.staffTitle'], ['client', 'col.client']];
 
   return (
     <main>

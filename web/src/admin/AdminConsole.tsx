@@ -2,8 +2,8 @@
 // Clients (summary, search, add, manage), Staff (add, clients handled, suspend, sign-in links),
 // Activity (who changed clients, people and access) and Settings (firm name, sign-in security).
 import { DEFAULT_MODULES, INDUSTRIES, OPTIONAL_MODULES, ROLE_MODULES, type AccessLevel, type Industry } from '../../../src/books/modules.ts';
-import { useEffect, useState, type FormEvent } from 'react';
-import { api, useApi, type Me } from '../api.ts';
+import { createContext, useContext, useEffect, useState, type FormEvent } from 'react';
+import { api, setActingTenant, useApi, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { navigate } from '../router.ts';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
@@ -30,29 +30,50 @@ const LEGAL_FORMS = ['LLC', 'Sole establishment', 'Joint stock company', 'Partne
 const DERIVED = { SA: { currency: 'SAR', rate: 15 }, AE: { currency: 'AED', rate: 5 }, OM: { currency: 'OMR', rate: 5 } } as const;
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-export function AdminConsole({ me, path, onSignOut }: { me: Me; path: string; onSignOut: () => void }) {
+/** Which customer this console belongs to: an accounting firm or a company that runs its own books, and whether
+ *  the platform owner is working in it (only the owner adds companies and changes a company's details). */
+interface Tenant { kind: 'firm' | 'company'; owner: boolean; name: string }
+const TenantCtx = createContext<Tenant>({ kind: 'firm', owner: false, name: '' });
+const useTenant = () => useContext(TenantCtx);
+/** Company details may be changed by the owner, or by an accounting firm's Administrator for its clients. */
+const canEditDetails = (x: Tenant) => x.owner || x.kind === 'firm';
+
+export function AdminConsole({ me, path, onSignOut, owner }: { me: Me; path: string; onSignOut: () => void; owner?: boolean }) {
   const { t } = useI18n();
+  const settings = useApi<{ firmName: string; kind: 'firm' | 'company'; owner: boolean }>('/api/admin/settings');
+  const tenant: Tenant = { kind: settings.data?.kind ?? 'firm', owner: Boolean(settings.data?.owner), name: settings.data?.firmName ?? '' };
   const seg = path.split('/');                       // ['', 'admin', tab, id?]
-  const tab = (TABS.find((x) => x.toLowerCase() === seg[2]) ?? 'Clients');
+  const tabs = TABS.filter((x) => !(x === 'Staff' && tenant.kind === 'company'));
+  const tab = (tabs.find((x) => x.toLowerCase() === seg[2]) ?? 'Clients');
   const clientId = tab === 'Clients' && seg[3] && seg[3] !== 'new' ? seg[3] : null;
   const adding = tab === 'Clients' && seg[3] === 'new';
-  const title = adding ? t('reg.title') : t(`admin.${tab}` as Key);
+  const tabLabel = (x: string) => (x === 'Clients' && tenant.kind === 'company' ? t('admin.Companies') : t(`admin.${x}` as Key));
+  const title = adding ? t('reg.title') : tabLabel(tab);
+  if (!settings.data) return <main>{settings.error ? <ErrorNote error={settings.error} onRetry={settings.reload} /> : <Loading />}</main>;
   return (
     <div className="app">
-      <Sidebar subtitle={t('admin.console')} user={me.user} roleLabel={t('role.admin')} onSignOut={onSignOut}>
-        {TABS.map((x) => (
+      <Sidebar subtitle={owner ? tenant.name : t('admin.console')} user={me.user} roleLabel={owner ? t('own.role') : t('role.admin')} onSignOut={onSignOut}>
+        {tabs.map((x) => (
           <button key={x} className={x === tab ? 'on' : ''} onClick={() => navigate(`/admin/${x.toLowerCase()}`)} aria-current={x === tab ? 'page' : undefined}>
-            {t(`admin.${x}`)}
+            {tabLabel(x)}
           </button>
         ))}
       </Sidebar>
       <main>
+        {owner && (
+          <div className="notice owner-bar">
+            <span>{t('own.workingIn', { name: tenant.name, kind: t(`own.kind.${tenant.kind}`) })}</span>
+            <button className="b small" id="own-back" onClick={() => { setActingTenant(null); navigate('/owner'); }}>{t('own.back')}</button>
+          </div>
+        )}
         <div className="top">
           <h1>{clientId ? '' : title}</h1>
           <TopControls />
         </div>
+        <TenantCtx.Provider value={tenant}>
         {tab === 'Staff' ? <Staff /> : tab === 'Roles' ? <Roles /> : tab === 'Activity' ? <Activity /> : tab === 'Settings' ? <Settings />
-          : adding ? <AddClient /> : clientId ? <ClientPage id={clientId} /> : <Clients />}
+          : adding && tenant.owner ? <AddClient /> : clientId ? <ClientPage id={clientId} /> : <Clients />}
+        </TenantCtx.Provider>
       </main>
     </div>
   );
@@ -82,7 +103,8 @@ function Clients() {
       </div>
       <div className="top" style={{ marginBottom: 10 }}>
         <input type="search" placeholder={t('admin.searchClients')} value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: '1 1 240px' }} aria-label={t('search')} />
-        <button className="b p" onClick={() => navigate('/admin/clients/new')}>{t('admin.addClient')}</button>
+        {useTenant().owner ? <button className="b p" id="add-client" onClick={() => navigate('/admin/clients/new')}>{t(useTenant().kind === 'company' ? 'admin.addCompany' : 'admin.addClient')}</button>
+          : <span className="small mut">{t('admin.ownerAdds')}</span>}
       </div>
       <div className="card">
         <div className="wrap">
@@ -340,6 +362,8 @@ function AddClient() {
 // ------------------------------------------------------------------ Client page (Manage)
 function ClientPage({ id }: { id: string }) {
   const { t, has } = useI18n();
+  const tenantInfo = useTenant();
+  const editable = canEditDetails(tenantInfo);
   const local = useLocalName();
   const check = useCompanyCheck();
   const d = useApi<ClientDetail>(`/api/admin/companies/${id}`);
@@ -390,7 +414,7 @@ function ClientPage({ id }: { id: string }) {
       <div className="top">
         <h1 style={{ flex: '1 1 auto' }}>{local(c.name, c.nameAr ?? null)}</h1>
         <span className={`badge ${suspended ? 'bad' : 'good'}`}>{suspended ? t('admin.suspended') : t('admin.active')}</span>
-        {suspended
+        {!editable ? null : suspended
           ? <button className="b" disabled={busy} onClick={() => void run(() => api(`/api/admin/companies/${id}/status`, { body: { active: true } }))}>{t('admin.reactivate')}</button>
           : <button className="b" disabled={busy} onClick={() => setConfirmSuspend(true)}>{t('admin.suspend')}</button>}
       </div>
@@ -453,8 +477,11 @@ function ClientPage({ id }: { id: string }) {
 
       {/* Registration and entry settings */}
       <form onSubmit={save} noValidate>
-        <CompanyForm f={fields} set={(k, v) => setF((cur) => ({ ...(cur ?? fields), [k]: v }))} editing />
-        <button className="b p" type="submit" disabled={busy || !f}>{t('admin.saveDetails')}</button>
+        {!editable && <div className="notice small">{t('admin.detailsByOwner')}</div>}
+        <fieldset disabled={!editable} style={{ border: 0, padding: 0, margin: 0 }}>
+          <CompanyForm f={fields} set={(k, v) => setF((cur) => ({ ...(cur ?? fields), [k]: v }))} editing />
+          {editable && <button className="b p" type="submit" disabled={busy || !f}>{t('admin.saveDetails')}</button>}
+        </fieldset>
       </form>
     </>
   );
@@ -629,7 +656,7 @@ function Staff() {
 // ------------------------------------------------------------------ Roles and permissions (client users)
 interface ClientRole {
   id: string; name: string; nameAr: string | null; description: string | null;
-  permissions: Record<string, AccessLevel>; canApprove: boolean; status: 'active' | 'archived'; users: number;
+  permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; status: 'active' | 'archived'; users: number;
 }
 /** The role offered first when adding a person: the active role that enters in the most modules (usually Client accountant). */
 const firstRoleId = (roles?: ClientRole[]) => {
@@ -653,8 +680,8 @@ function AccessSummary({ permissions }: { permissions: Record<string, AccessLeve
   );
 }
 
-type RoleDraft = { id?: string; name: string; nameAr: string; description: string; permissions: Record<string, AccessLevel>; canApprove: boolean; status: 'active' | 'archived' };
-const emptyRole = (): RoleDraft => ({ name: '', nameAr: '', description: '', permissions: {}, canApprove: false, status: 'active' });
+type RoleDraft = { id?: string; name: string; nameAr: string; description: string; permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; status: 'active' | 'archived' };
+const emptyRole = (): RoleDraft => ({ name: '', nameAr: '', description: '', permissions: {}, canApprove: false, canReview: false, canSignOff: false, status: 'active' });
 
 function Roles() {
   const { t, has } = useI18n();
@@ -670,7 +697,7 @@ function Roles() {
     if (!draft.name.trim()) { setMsg({ bad: t('err.roleName') }); return; }
     setBusy(true); setMsg({});
     try {
-      const body = { name: draft.name, nameAr: draft.nameAr, description: draft.description, permissions: draft.permissions, canApprove: draft.canApprove, status: draft.status };
+      const body = { name: draft.name, nameAr: draft.nameAr, description: draft.description, permissions: draft.permissions, canApprove: draft.canApprove, canReview: draft.canReview, canSignOff: draft.canSignOff, status: draft.status };
       await api(draft.id ? `/api/admin/roles/${draft.id}` : '/api/admin/roles', { body });
       setEdit(undefined); setMsg({ ok }); list.reload();
     } catch (e) { setMsg({ bad: errorText(t, has, e) }); } finally { setBusy(false); }
@@ -718,6 +745,14 @@ function Roles() {
         <input type="checkbox" id="role-approve" checked={edit.canApprove} onChange={(e) => setEdit({ ...edit, canApprove: e.target.checked })} />
         {t('roles.canApprove')}
       </label>
+      <label className="check-one" style={{ marginTop: 6 }}>
+        <input type="checkbox" id="role-review" checked={edit.canReview} onChange={(e) => setEdit({ ...edit, canReview: e.target.checked, canSignOff: e.target.checked && edit.canSignOff })} />
+        {t('roles.canReview')}
+      </label>
+      <label className="check-one" style={{ marginTop: 6 }}>
+        <input type="checkbox" id="role-signoff" checked={edit.canSignOff} disabled={!edit.canReview} onChange={(e) => setEdit({ ...edit, canSignOff: e.target.checked })} />
+        {t('roles.canSignOff')}
+      </label>
       <div className="small mut" style={{ margin: '4px 0 10px' }}>{t('roles.levelsHint')}</div>
       <div className="actions">
         <button className="b p" type="submit" id="role-save" disabled={busy}>{t('roles.save')}</button>
@@ -746,11 +781,11 @@ function Roles() {
                   <td data-label={t('roles.title')}><b>{local(r.name, r.nameAr)}</b>{r.status === 'archived' && <> <span className="badge">{t('roles.archived')}</span></>}
                     {r.description && <div className="small mut">{r.description}</div>}</td>
                   <td data-label={t('roles.access')}><AccessSummary permissions={r.permissions} /></td>
-                  <td data-label={t('roles.approves')}>{r.canApprove ? t('yes') : t('no')}</td>
+                  <td data-label={t('roles.approves')}>{r.canApprove ? t('yes') : t('no')}{r.canSignOff ? <div className="small"><span className="badge good">{t('roles.signsOff')}</span></div> : r.canReview ? <div className="small"><span className="badge">{t('roles.reviews')}</span></div> : null}</td>
                   <td className="num" data-label={t('roles.people')}>{r.users}</td>
                   <td className="num">
                     <span className="actions" style={{ justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
-                      <button className="b small" disabled={busy} onClick={() => { setMsg({}); setEdit({ id: r.id, name: r.name, nameAr: r.nameAr ?? '', description: r.description ?? '', permissions: { ...r.permissions }, canApprove: r.canApprove, status: r.status }); }}>{t('roles.edit')}</button>
+                      <button className="b small" disabled={busy} onClick={() => { setMsg({}); setEdit({ id: r.id, name: r.name, nameAr: r.nameAr ?? '', description: r.description ?? '', permissions: { ...r.permissions }, canApprove: r.canApprove, canReview: r.canReview, canSignOff: r.canSignOff, status: r.status }); }}>{t('roles.edit')}</button>
                       {r.status === 'active'
                         ? <button className="b small" disabled={busy || r.users > 0} title={r.users > 0 ? t('err.roleInUse') : undefined}
                             onClick={() => void save({ ...r, nameAr: r.nameAr ?? '', description: r.description ?? '', status: 'archived' }, t('roles.archivedDone', { role: r.name }))}>{t('roles.archive')}</button>
@@ -811,6 +846,7 @@ interface SettingsData { firmName: string; users: { total: number; active: numbe
 
 function Settings() {
   const { t, has } = useI18n();
+  const tenantInfo = useTenant();
   const s = useApi<SettingsData>('/api/admin/settings');
   const [name, setName] = useState<string>();
   const [msg, setMsg] = useState<{ ok?: string; bad?: string }>({});
@@ -835,14 +871,14 @@ function Settings() {
   return (
     <>
       <form className="card" onSubmit={save} style={{ maxWidth: 620 }}>
-        <h2>{t('settings.firm')}</h2>
+        <h2>{t(tenantInfo.kind === 'company' ? 'settings.company' : 'settings.firm')}</h2>
         {msg.ok && <div className="notice">{msg.ok}</div>}
         {msg.bad && <div className="notice bad">{msg.bad}</div>}
         <div className="actions">
           <label className="f" style={{ flex: '1 1 240px' }}>{t('settings.firmName')}
-            <input id="firm-name" value={name ?? s.data.firmName} onChange={(e) => setName(e.target.value)} />
+            <input id="firm-name" value={name ?? s.data.firmName} disabled={!canEditDetails(tenantInfo)} onChange={(e) => setName(e.target.value)} />
           </label>
-          <button className="b p" type="submit" disabled={busy || name === undefined} style={{ alignSelf: 'flex-end' }}>{t('save')}</button>
+          {canEditDetails(tenantInfo) && <button className="b p" type="submit" disabled={busy || name === undefined} style={{ alignSelf: 'flex-end' }}>{t('save')}</button>}
         </div>
       </form>
       <div className="card" style={{ maxWidth: 620 }}>

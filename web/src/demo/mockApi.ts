@@ -7,7 +7,7 @@ import { toMinor, fromMinor, divRoundHalfUp } from '../../../src/money.ts';
 import { vatForLine } from '../../../src/vat/vat.ts';
 import * as Pay from '../../../src/books/payroll.ts';
 import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../../../src/books/chartTemplate.ts';
-import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_USERS } from '../../../src/db/demoData.ts';
+import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_SELF, DEMO_SELF_ROLES, DEMO_USERS } from '../../../src/db/demoData.ts';
 import { accessTo, cleanModules, DEFAULT_MODULES, isIndustry, ROLE_MODULES, type AccessLevel, type Industry } from '../../../src/books/modules.ts';
 import {
   addDays, AGE_BUCKETS, ageBucket, nextOccurrence, type Frequency, documentTotals, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, sideOf,
@@ -20,11 +20,11 @@ import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, pr
 
 type Role = 'partner' | 'reviewer' | 'staff_accountant' | 'client_accountant' | 'client_viewer';
 interface User {
-  id: string; name: string; email: string; kind: 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; twoFactor: boolean;
+  id: string; firmId: string; name: string; email: string; kind: 'owner' | 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; twoFactor: boolean;
   status: 'active' | 'suspended'; password: string | null; inviteToken: string | null;
 }
 interface Company {
-  id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string;
+  id: string; firmId: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string;
   vatStatus: 'registered' | 'unregistered'; vatNumber: string | null; crNumber: string; city: string;
   invoicePrefix: string; paymentTermsDays: number; status: 'active' | 'suspended';
   industry: string; modules: string[];
@@ -37,10 +37,14 @@ interface Period { companyId: string; startDate: string; endDate: string; locked
 interface Line { id: string; accountId: string; costCentreId: string | null; debit: bigint; credit: bigint }
 interface Entry { id: string; companyId: string; date: string; memo: string | null; createdBy: string; createdAt: string; reversesEntryId: string | null; lines: Line[]; manual?: boolean }
 interface Membership { userId: string; companyId: string; role: Role; clientRoleId?: string | null }
-interface ClientRole { id: string; name: string; nameAr: string | null; description: string | null; permissions: Record<string, AccessLevel>; canApprove: boolean; status: 'active' | 'archived' }
+interface ClientRole { id: string; firmId: string; name: string; nameAr: string | null; description: string | null; permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; status: 'active' | 'archived' }
+/** Customers (db/migrations/0023): the platform, accounting firms, and companies that run their own books. */
+interface Firm { id: string; name: string; kind: 'platform' | 'firm' | 'company'; status: 'active' | 'suspended'; createdAt: string }
+const firms: Firm[] = [];
+let acting: string | null = null;
 const rolesDb: ClientRole[] = [];
 /** The first active role with the same base, for a client user added without one. */
-const defaultRole = (base: Role) => rolesDb.find((r) => r.status === 'active' && roleBase(r.permissions) === base) ?? null;
+const defaultRole = (base: Role, firmId: string) => rolesDb.find((r) => r.firmId === firmId && r.status === 'active' && roleBase(r.permissions) === base) ?? null;
 const roleBase = (p: Record<string, AccessLevel>): Role => (Object.values(p).includes('edit') ? 'client_accountant' : 'client_viewer');
 /** The line of the profit and loss an account sits on (same defaults as db/migrations/0016). */
 function pnlGroupOf(a: Account): string | null {
@@ -65,8 +69,7 @@ const today = () => iso(new Date());
 const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return iso(d); };
 
 const db = {
-  firmName: DEMO_FIRM,
-  activity: [] as { id: string; at: string; actor: string | null; key: string; params: Record<string, string> }[],
+  activity: [] as { id: string; firmId: string; at: string; actor: string | null; key: string; params: Record<string, string> }[],
   users: [] as User[], companies: [] as Company[], memberships: [] as Membership[], accounts: [] as Account[],
   costCentres: [] as CostCentre[], periods: [] as Period[], entries: [] as Entry[],
 };
@@ -85,7 +88,7 @@ function roleOf(userId: string | null, companyId: string): Role | undefined {
   return db.memberships.find((m) => m.userId === userId && m.companyId === companyId)?.role;
 }
 function logActivity(key: string, params: Record<string, string>) {
-  db.activity.unshift({ id: uid(), at: new Date().toISOString(), actor: db.users.find((u) => u.id === session)?.name ?? null, key, params });
+  db.activity.unshift({ id: uid(), firmId: currentFirm(), at: new Date().toISOString(), actor: db.users.find((u) => u.id === session)?.name ?? null, key, params });
 }
 function newInvite(u: User) {
   u.inviteToken = `demo-${uid().slice(-6)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -140,18 +143,39 @@ function setupBooks(companyId: string) {
 }
 
 // ------------------------------------------------------------------ demo data (same as src/db/seed.ts)
+/** Each customer starts with Client accountant and Client management as ordinary roles (db/migrations/0018, 0019). */
+function addDefaultRoles(firmId: string) {
+  const all = (level: AccessLevel) => Object.fromEntries(ROLE_MODULES.map((m) => [m, level])) as Record<string, AccessLevel>;
+  rolesDb.push({ id: uid(), firmId, name: 'Client accountant', nameAr: 'محاسب العميل', description: 'Daily entry in every module the client has', permissions: all('edit'), canApprove: true, canReview: false, canSignOff: false, status: 'active' },
+    { id: uid(), firmId, name: 'Client management', nameAr: 'إدارة العميل', description: 'Sees everything, changes nothing', permissions: all('view'), canApprove: false, canReview: false, canSignOff: false, status: 'active' });
+}
+/** Who decides claims and signs off in sample data: the firm's partner, or the company's own finance manager. */
+const approverOf = (companyId: string) => (db.memberships.find((m) => m.companyId === companyId && m.role === 'partner')
+  ?? db.memberships.find((m) => m.companyId === companyId && rolesDb.find((r) => r.id === m.clientRoleId)?.canSignOff))!.userId;
+
 function seed() {
+  const now = new Date().toISOString();
+  firms.push({ id: uid(), name: 'Nusuh Books', kind: 'platform', status: 'active', createdAt: now }, { id: uid(), name: DEMO_FIRM, kind: 'firm', status: 'active', createdAt: now },
+    { id: uid(), name: DEMO_SELF, kind: 'company', status: 'active', createdAt: now });
+  const tenantOf = (t?: string) => firms.find((f) => f.kind === (t === 'self' ? 'company' : t === 'platform' ? 'platform' : 'firm'))!.id;
+  for (const f of firms.filter((x) => x.kind !== 'platform')) addDefaultRoles(f.id);
+  for (const r of DEMO_ROLES) rolesDb.push({ id: uid(), firmId: tenantOf('firm'), ...r, canReview: false, canSignOff: false, status: 'active' });
+  for (const r of DEMO_SELF_ROLES) rolesDb.push({ id: uid(), firmId: tenantOf('self'), ...r, status: 'active' });
   for (const u of DEMO_USERS) {
-    db.users.push({ id: uid(), name: u.name, email: u.email, kind: u.kind, staffRole: u.kind === 'firm_staff' ? (u.role as Role) : null,
+    db.users.push({ id: uid(), firmId: tenantOf(u.tenant), name: u.name, email: u.email, kind: u.kind, staffRole: u.kind === 'firm_staff' ? (u.role as Role) : null,
       twoFactor: false, status: 'active', password: DEMO_PASSWORD, inviteToken: null });
   }
   const userByEmail = (e: string) => db.users.find((u) => u.email === e)!;
   for (const c of DEMO_COMPANIES) {
     const id = uid();
-    db.companies.push({ id, name: c.name, nameAr: c.nameAr, country: c.country, currency: c.currency, vatRate: c.vatRate, vatStatus: 'registered',
+    db.companies.push({ id, firmId: tenantOf(c.tenant), name: c.name, nameAr: c.nameAr, country: c.country, currency: c.currency, vatRate: c.vatRate, vatStatus: 'registered',
       vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: 30, status: 'active',
       industry: c.industry, modules: [...DEFAULT_MODULES[c.industry]], fields: { legalForm: c.legalForm, address: c.address, fyEnd: '12-31' } });
-    for (const u of DEMO_USERS.filter((x) => x.companies.includes(c.key))) db.memberships.push({ userId: userByEmail(u.email).id, companyId: id, role: u.role as Role });
+    for (const u of DEMO_USERS.filter((x) => x.companies.includes(c.key))) {
+      const firm = tenantOf(c.tenant);
+      const cr = u.kind !== 'client' ? null : u.clientRole ? rolesDb.find((r) => r.firmId === firm && r.name === u.clientRole)! : defaultRole(u.role as Role, firm);
+      db.memberships.push({ userId: userByEmail(u.email).id, companyId: id, role: cr ? roleBase(cr.permissions) : u.role as Role, clientRoleId: cr?.id ?? null });
+    }
     setupBooks(id);
     db.costCentres.push({ id: uid(), companyId: id, name: 'Branch 1', nameAr: 'الفرع 1', kind: 'branch' }, { id: uid(), companyId: id, name: 'Project A', nameAr: 'المشروع أ', kind: 'project' });
 
@@ -182,7 +206,23 @@ const me = () => {
   if (!u || u.status !== 'active') return fail(401, 'Please sign in.', 'err.signIn');
   return u;
 };
-const admin = () => { const u = me(); if (u.kind !== 'admin') fail(403, 'Only the Administrator can do this.', 'err.adminOnly'); return u; };
+/** The customer this request works in: the owner's chosen customer, otherwise the person's own. */
+function currentFirm(): string {
+  const u = db.users.find((x) => x.id === session);
+  if (!u) return '';
+  if (u.kind === 'owner') return firms.some((f) => f.id === acting && f.kind !== 'platform') ? acting! : u.firmId;
+  return u.firmId;
+}
+const firmOf = (id: string) => firms.find((f) => f.id === id)!;
+const isOwner = () => db.users.find((x) => x.id === session)?.kind === 'owner';
+const admin = () => {
+  const u = me();
+  const ok = (u.kind === 'admin' && firmOf(u.firmId).status === 'active') || (u.kind === 'owner' && currentFirm() !== u.firmId);
+  if (!ok) fail(403, 'Only the Administrator can do this.', 'err.adminOnly');
+  return u;
+};
+const owner = () => { const u = me(); if (u.kind !== 'owner') fail(403, 'Only the platform owner can do this.', 'err.ownerOnly'); return u; };
+const canEditDetailsM = () => isOwner() || firmOf(currentFirm()).kind === 'firm';
 function member(companyId: string) {
   const u = me();
   const role = roleOf(u.id, companyId);
@@ -664,7 +704,7 @@ function seedSales(companyId: string, poster: string, c: { country: string; city
   const c1 = claim(yusuf, 20, 'Fuel and tolls for deliveries', '230.00', '5400', cc('Branch 1'));
   claim(mona, 8, 'Site materials bought on the spot', '640.00', '5000', fitOut);
   const c3 = claim(yusuf, 5, 'Lunch with customer', '180.00', '5400', null, 'zero');
-  session = db.memberships.find((m) => m.companyId === companyId && m.role === 'partner')!.userId;   // someone other than the submitter decides
+  session = approverOf(companyId);   // someone other than the submitter decides
   decideM(c1, true); decideM(c3, false, 'Customer lunches need a pre-approval form');
   session = poster;
   pay('made', yusuf, 16, c1, s(amountDue(sdb.docs.find((d) => d.id === c1)!)), '1010', 'cash');
@@ -1293,8 +1333,8 @@ function seedOps(companyId: string, poster: string, c: { country: string }, cont
 }
 
 // ------------------------------------------------------------------ admin helpers
-const company = (id: string) => db.companies.find((c) => c.id === id) ?? fail(404, 'Not found.', 'err.notFound');
-const user = (id: string) => db.users.find((u) => u.id === id) ?? fail(404, 'Not found.', 'err.notFound');
+const company = (id: string) => db.companies.find((c) => c.id === id && (!['admin', 'owner'].includes(db.users.find((u) => u.id === session)?.kind ?? '') || c.firmId === currentFirm())) ?? fail(404, 'Not found.', 'err.notFound');
+const user = (id: string) => db.users.find((u) => u.id === id && u.firmId === currentFirm()) ?? fail(404, 'Not found.', 'err.notFound');
 const staffOf = (companyId: string) => db.memberships.filter((m) => m.companyId === companyId)
   .map((m) => db.users.find((u) => u.id === m.userId)!).filter((u) => u.kind === 'firm_staff');
 const person = (u: User) => ({ id: u.id, name: u.name, email: u.email, status: u.status, invitePending: Boolean(u.inviteToken), passwordSet: Boolean(u.password), twoFactor: u.twoFactor });
@@ -1302,14 +1342,15 @@ function emailFree(email: string) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())) fail(400, 'Enter a valid email address.', 'err.email');
   if (db.users.some((u) => u.email.toLowerCase() === email.trim().toLowerCase())) fail(400, 'A user with this email already exists.', 'err.emailTaken');
 }
-function addUser(name: string, email: string, kind: User['kind'], staffRole: Role | null): User {
-  const u: User = { id: uid(), name: name.trim(), email: email.trim(), kind, staffRole, twoFactor: false, status: 'active', password: null, inviteToken: null };
+function addUser(name: string, email: string, kind: User['kind'], staffRole: Role | null, firmId = currentFirm()): User {
+  if (kind === 'firm_staff' && firmOf(firmId).kind === 'company') fail(400, 'A company runs its own books: add its people as company users with a role.', 'err.companyNoStaff');
+  const u: User = { id: uid(), firmId, name: name.trim(), email: email.trim(), kind, staffRole, twoFactor: false, status: 'active', password: null, inviteToken: null };
   db.users.push(u);
   logActivity('act.userAdded', { name: u.name, role: staffRole ?? 'client' });
   return u;
 }
 function assign(userId: string, companyId: string, on: boolean) {
-  const u = db.users.find((x) => x.id === userId && x.kind === 'firm_staff') ?? fail(404, 'Not found.', 'err.notFound');
+  const u = db.users.find((x) => x.id === userId && x.kind === 'firm_staff' && x.firmId === currentFirm()) ?? fail(404, 'Not found.', 'err.notFound');
   const c = company(companyId);
   const has = db.memberships.some((m) => m.userId === u.id && m.companyId === c.id);
   if (on && !has) { db.memberships.push({ userId: u.id, companyId: c.id, role: u.staffRole! }); logActivity('act.accessGiven', { name: u.name, client: c.name }); }
@@ -1350,6 +1391,7 @@ const routes: [string, RegExp, Handler][] = [
     const u = db.users.find((x) => x.email.toLowerCase() === String(b?.email ?? '').trim().toLowerCase());
     if (!u || !u.password || b?.password !== u.password) return fail(401, 'The email or password is not right.', 'err.login');
     if (u.status !== 'active') fail(403, 'This account is suspended. Contact the Administrator.', 'err.suspended');
+    if (firmOf(u.firmId).status !== 'active') fail(403, 'This organisation\'s access is suspended.', 'err.tenantSuspended');
     session = u.id;
     return { ok: true };
   }],
@@ -1357,7 +1399,7 @@ const routes: [string, RegExp, Handler][] = [
   ['GET', /^\/api\/me$/, () => {
     const u = me();
     return {
-      user: { id: u.id, name: u.name, email: u.email, kind: u.kind, staffRole: u.staffRole, firmName: db.firmName, twoFactor: u.twoFactor },
+      user: { id: u.id, name: u.name, email: u.email, kind: u.kind, staffRole: u.staffRole, firmName: firmOf(u.firmId).name, firmKind: firmOf(u.firmId).kind, twoFactor: u.twoFactor },
       companies: db.memberships.filter((m) => m.userId === u.id && roleOf(u.id, m.companyId))
         .map((m) => ({ ...companyView(db.companies.find((c) => c.id === m.companyId)!), role: m.role }))
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -1370,7 +1412,8 @@ const routes: [string, RegExp, Handler][] = [
       company: { ...companyView(c), vatStatus: c.vatStatus, vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: c.paymentTermsDays,
         industry: c.industry, modules: c.modules },
       role, canPost: POSTING.includes(role), canLock: role === 'partner', reviewedUpTo: reviewedUpToM(c.id),
-      access: (() => { const r = clientRoleIn(c.id); return r && { name: r.name, nameAr: r.nameAr, permissions: r.permissions, canApprove: r.canApprove }; })(),
+      access: (() => { const r = clientRoleIn(c.id); return r && { name: r.name, nameAr: r.nameAr, permissions: r.permissions, canApprove: r.canApprove, canReview: r.canReview, canSignOff: r.canSignOff }; })(),
+      review: { canReview: rvCan(c.id), canSignOff: rvSign(c.id) },
       accounts: db.accounts.filter((a) => a.companyId === c.id).sort((a, b) => a.code.localeCompare(b.code)),
       costCentres: db.costCentres.filter((x) => x.companyId === c.id).sort((a, b) => a.name.localeCompare(b.name)),
       periods: db.periods.filter((p) => p.companyId === c.id),
@@ -1721,7 +1764,7 @@ const routes: [string, RegExp, Handler][] = [
   }],
   ['GET', /^\/api\/admin\/companies$/, () => {
     admin();
-    return [...db.companies].sort((a, b) => a.name.localeCompare(b.name)).map((c) => ({
+    return db.companies.filter((c) => c.firmId === currentFirm()).sort((a, b) => a.name.localeCompare(b.name)).map((c) => ({
       ...companyView(c), crNumber: c.crNumber, vatStatus: c.vatStatus, vatNumber: c.vatNumber, city: c.city, status: c.status,
       clientUsers: db.memberships.filter((m) => m.companyId === c.id && db.users.find((u) => u.id === m.userId && u.kind === 'client' && u.status === 'active')).length,
       staff: staffOf(c.id).filter((u) => u.status === 'active').map((u) => u.name).sort(),
@@ -1736,12 +1779,13 @@ const routes: [string, RegExp, Handler][] = [
         paymentTermsDays: String(c.paymentTermsDays), status: c.status, industry: c.industry, modules: c.modules },
       users: db.memberships.filter((x) => x.companyId === c.id).map((x) => ({ x, u: db.users.find((u) => u.id === x.userId)! }))
         .filter(({ u }) => u.kind === 'client').map(({ x, u }) => ({ ...person(u), role: x.role, clientRoleId: x.clientRoleId ?? null })),
-      staff: db.users.filter((u) => u.kind === 'firm_staff').map((u) => ({ id: u.id, name: u.name, role: u.staffRole, status: u.status,
+      staff: db.users.filter((u) => u.kind === 'firm_staff' && u.firmId === currentFirm()).map((u) => ({ id: u.id, name: u.name, role: u.staffRole, status: u.status,
         assigned: db.memberships.some((x) => x.userId === u.id && x.companyId === c.id) })),
     };
   }],
   ['POST', /^\/api\/admin\/companies$/, (_m, b) => {
     admin();
+    if (!isOwner()) fail(403, 'Only Nusuh Books adds companies. Ask us to add one.', 'err.ownerOnly');
     const c = (b?.company ?? {}) as Record<string, string | undefined>;
     const country = (c.country ?? '').trim() as Company['country'];
     const d = { SA: ['SAR', '15.00'], AE: ['AED', '5.00'], OM: ['OMR', '5.00'] }[country];
@@ -1750,12 +1794,12 @@ const routes: [string, RegExp, Handler][] = [
     if (!(fu.name ?? '').trim() || !(fu.email ?? '').trim()) fail(400, 'Add the first client user (name and email).', 'err.firstClientUser');
     emailFree(fu.email!);
     const id = uid();
-    const co: Company = { id, country, currency: d![0]!, status: 'active', name: '', nameAr: null, vatRate: '0', vatStatus: 'registered', vatNumber: null,
+    const co: Company = { id, firmId: currentFirm(), country, currency: d![0]!, status: 'active', name: '', nameAr: null, vatRate: '0', vatStatus: 'registered', vatNumber: null,
       crNumber: '', city: '', invoicePrefix: 'INV-', paymentTermsDays: 30, industry: 'other', modules: [], fields: {} };
     applyCompany(co, c);
     db.companies.push(co);
     const user = addUser(fu.name!, fu.email!, 'client', null);
-    const fcr = rolesDb.find((r) => r.id === fu.clientRoleId) ?? defaultRole(fu.role === 'client_viewer' ? 'client_viewer' : 'client_accountant');
+    const fcr = rolesDb.find((r) => r.id === fu.clientRoleId && r.firmId === currentFirm()) ?? defaultRole(fu.role === 'client_viewer' ? 'client_viewer' : 'client_accountant', currentFirm());
     db.memberships.push({ userId: user.id, companyId: id, role: fcr ? roleBase(fcr.permissions) : 'client_accountant', clientRoleId: fcr?.id ?? null });
     logActivity('act.clientAdded', { client: co.name });
     for (const sid of (b?.staffIds as string[] | undefined) ?? []) assign(sid, id, true);
@@ -1765,6 +1809,7 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/admin\/companies\/([\w-]+)$/, (m, b) => {
     admin();
     const c = company(m[1]!);
+    if (!canEditDetailsM()) fail(403, 'Ask Nusuh Books to change the company details.', 'err.ownerDetails');
     applyCompany(c, { ...(b?.company as Record<string, string | undefined>), country: c.country });
     logActivity('act.clientUpdated', { client: c.name });
     return { ok: true };
@@ -1772,6 +1817,7 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/admin\/companies\/([\w-]+)\/status$/, (m, b) => {
     admin();
     const c = company(m[1]!);
+    if (!canEditDetailsM()) fail(403, 'Ask Nusuh Books to change the company details.', 'err.ownerDetails');
     c.status = b?.active ? 'active' : 'suspended';
     logActivity(b?.active ? 'act.clientReactivated' : 'act.clientSuspended', { client: c.name });
     return { ok: true };
@@ -1783,7 +1829,7 @@ const routes: [string, RegExp, Handler][] = [
     if (!name || !email) fail(400, 'Enter the name and email.', 'err.nameEmail');
     emailFree(email);
     const u = addUser(name, email, 'client', null);
-    const cr = b?.clientRoleId ? rolesDb.find((r) => r.id === b.clientRoleId) ?? fail(404, 'Not found.', 'err.notFound') : defaultRole(b?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant');
+    const cr = b?.clientRoleId ? rolesDb.find((r) => r.id === b.clientRoleId && r.firmId === currentFirm()) ?? fail(404, 'Not found.', 'err.notFound') : defaultRole(b?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant', currentFirm());
     db.memberships.push({ userId: u.id, companyId: c.id, role: cr ? roleBase(cr.permissions) : b?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant', clientRoleId: cr?.id ?? null });
     return { invite: newInvite(u) };
   }],
@@ -1792,19 +1838,19 @@ const routes: [string, RegExp, Handler][] = [
     const c = company(m[1]!);
     const ms = db.memberships.find((x) => x.companyId === c.id && x.userId === m[2] && db.users.find((u) => u.id === x.userId)?.kind === 'client') ?? fail(404, 'Not found.', 'err.notFound');
     if (!b?.clientRoleId) fail(400, 'Choose a role.', 'err.roleChoose');
-    const cr = rolesDb.find((r) => r.id === b!.clientRoleId) ?? fail(404, 'Not found.', 'err.notFound');
+    const cr = rolesDb.find((r) => r.id === b!.clientRoleId && r.firmId === currentFirm()) ?? fail(404, 'Not found.', 'err.notFound');
     ms.clientRoleId = cr.id;
     ms.role = roleBase(cr.permissions);
     logActivity('act.roleAssigned', { name: db.users.find((u) => u.id === ms.userId)!.name, client: c.name, role: cr.name });
     return { ok: true };
   }],
   ['GET', /^\/api\/admin\/roles$/, () => { admin();
-    return [...rolesDb].sort((a, b) => a.status.localeCompare(b.status))
+    return rolesDb.filter((r) => r.firmId === currentFirm()).sort((a, b) => a.status.localeCompare(b.status))
       .map((r) => ({ ...r, users: db.memberships.filter((x) => x.clientRoleId === r.id).length })); }],
-  ['POST', /^\/api\/admin\/roles$/, (_m, b) => { admin(); const r = { id: uid(), ...roleValues(b) }; rolesDb.push(r); logActivity('act.roleAdded', { role: r.name }); return { id: r.id }; }],
+  ['POST', /^\/api\/admin\/roles$/, (_m, b) => { admin(); const r = { id: uid(), firmId: currentFirm(), ...roleValues(b) }; rolesDb.push(r); logActivity('act.roleAdded', { role: r.name }); return { id: r.id }; }],
   ['POST', /^\/api\/admin\/roles\/([\w-]+)$/, (m, b) => {
     admin();
-    const r = rolesDb.find((x) => x.id === m[1]) ?? fail(404, 'Not found.', 'err.notFound');
+    const r = rolesDb.find((x) => x.id === m[1] && x.firmId === currentFirm()) ?? fail(404, 'Not found.', 'err.notFound');
     const v = roleValues(b, r.id);
     if (v.status === 'archived' && db.memberships.some((x) => x.clientRoleId === r.id)) fail(400, 'People still have this role. Give them another role first.', 'err.roleInUse');
     Object.assign(r, v);
@@ -1815,7 +1861,7 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/admin\/companies\/([\w-]+)\/staff$/, (m, b) => { admin(); return assign(String(b?.userId), m[1]!, Boolean(b?.assigned)); }],
   ['GET', /^\/api\/admin\/staff$/, () => {
     admin();
-    return db.users.filter((u) => u.kind === 'firm_staff').sort((a, b) => a.name.localeCompare(b.name)).map((u) => {
+    return db.users.filter((u) => u.kind === 'firm_staff' && u.firmId === currentFirm()).sort((a, b) => a.name.localeCompare(b.name)).map((u) => {
       const ms = db.memberships.filter((x) => x.userId === u.id);
       return { ...person(u), role: u.staffRole, clientIds: ms.map((x) => x.companyId),
         clients: ms.map((x) => db.companies.find((c) => c.id === x.companyId)!.name).sort() };
@@ -1852,11 +1898,13 @@ const routes: [string, RegExp, Handler][] = [
     logActivity('act.twoFactorReset', { name: u.name });
     return { ok: true };
   }],
-  ['GET', /^\/api\/admin\/activity$/, () => { admin(); return db.activity.slice(0, 300); }],
+  ['GET', /^\/api\/admin\/activity$/, () => { admin(); return db.activity.filter((a) => a.firmId === currentFirm()).slice(0, 300).map(({ firmId: _f, ...a }) => a); }],
   ['GET', /^\/api\/admin\/settings$/, () => {
     admin();
-    const active = db.users.filter((u) => u.status === 'active');
-    return { firmName: db.firmName, users: { total: db.users.length, active: active.length, suspended: db.users.length - active.length,
+    const mine = db.users.filter((u) => u.firmId === currentFirm());
+    const active = mine.filter((u) => u.status === 'active');
+    const f = firmOf(currentFirm());
+    return { firmName: f.name, kind: f.kind, owner: isOwner(), users: { total: mine.length, active: active.length, suspended: mine.length - active.length,
       twoFactor: active.filter((u) => u.twoFactor).length, invitesPending: active.filter((u) => u.inviteToken).length,
       neverSignedIn: active.filter((u) => !u.password).length } };
   }],
@@ -1864,7 +1912,8 @@ const routes: [string, RegExp, Handler][] = [
     admin();
     const name = String(b?.firmName ?? '').trim();
     if (!name) fail(400, 'Enter the firm name.', 'err.firmName');
-    db.firmName = name;
+    if (!canEditDetailsM()) fail(403, 'Ask Nusuh Books to change the company details.', 'err.ownerDetails');
+    firmOf(currentFirm()).name = name;
     logActivity('act.firmRenamed', { name });
     return { ok: true };
   }],
@@ -1879,19 +1928,19 @@ const routes: [string, RegExp, Handler][] = [
     const pw = String(b?.password ?? '');
     if (pw.length < 10) fail(400, 'Use at least 10 characters.', 'err.passwordShort');
     u.password = pw; u.inviteToken = null;
-    db.activity.unshift({ id: uid(), at: new Date().toISOString(), actor: u.name, key: 'act.passwordSet', params: { name: u.name } });
+    db.activity.unshift({ id: uid(), firmId: u.firmId, at: new Date().toISOString(), actor: u.name, key: 'act.passwordSet', params: { name: u.name } });
     return { ok: true };
   }],
 ];
 
-function roleValues(b: Body, id?: string): Omit<ClientRole, 'id'> {
+function roleValues(b: Body, id?: string): Omit<ClientRole, 'id' | 'firmId'> {
   const name = String(b?.name ?? '').trim();
   if (!name) fail(400, 'Enter the title.', 'err.roleName');
-  if (rolesDb.some((r) => r.id !== id && r.name.toLowerCase() === name.toLowerCase())) fail(400, 'Another role already has this title.', 'err.roleTaken');
+  if (rolesDb.some((r) => r.firmId === currentFirm() && r.id !== id && r.name.toLowerCase() === name.toLowerCase())) fail(400, 'Another role already has this title.', 'err.roleTaken');
   const permissions: Record<string, AccessLevel> = {};
   for (const m of ROLE_MODULES) { const v = (b?.permissions as Record<string, unknown> | undefined)?.[m]; if (v === 'view' || v === 'edit') permissions[m] = v; }
   return { name, nameAr: String(b?.nameAr ?? '').trim() || null, description: String(b?.description ?? '').trim() || null, permissions,
-    canApprove: Boolean(b?.canApprove), status: b?.status === 'archived' ? 'archived' : 'active' };
+    canApprove: Boolean(b?.canApprove), canReview: Boolean(b?.canReview) || Boolean(b?.canSignOff), canSignOff: Boolean(b?.canSignOff), status: b?.status === 'archived' ? 'archived' : 'active' };
 }
 
 // Access by client role, for requests about a company (same idea as src/api/permissions.ts, simplified).
@@ -2540,8 +2589,13 @@ const rvdb = { queries: [] as MQuery[], messages: [] as MMessage[], ticks: [] as
   explained: [] as { companyId: string; check: string; item: string; note: string; by: string; at: string }[], signoffs: [] as MSignoff[] };
 const RV_FIRM: Role[] = ['partner', 'reviewer', 'staff_accountant'];
 const RV_SIGN: Role[] = ['partner', 'reviewer'];
+/** Review rights: firm staff by role, client users by their role's review and sign-off rights (0023_tenants.sql). */
+const roleFor = (userId: string | null, companyId: string) => { const id = db.memberships.find((m) => m.userId === userId && m.companyId === companyId)?.clientRoleId;
+  return id ? rolesDb.find((r) => r.id === id && r.status === 'active') ?? null : null; };
+function rvCan(companyId: string, userId: string | null = session) { return RV_FIRM.includes(roleOf(userId, companyId)!) || Boolean(roleFor(userId, companyId)?.canReview); }
+function rvSign(companyId: string, userId: string | null = session) { return RV_SIGN.includes(roleOf(userId, companyId)!) || Boolean(roleFor(userId, companyId)?.canSignOff); }
 const rvRole = (companyId: string) => roleOf(session, companyId);
-const rvFirmOnly = (companyId: string) => { if (!RV_FIRM.includes(rvRole(companyId)!)) fail(403, 'Your role does not allow this.', 'err.forbidden'); };
+const rvFirmOnly = (companyId: string) => { if (!rvCan(companyId)) fail(403, 'Your role does not allow this.', 'err.forbidden'); };
 const rvMonth = (v: unknown) => { const p = String(v ?? ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(p) || monthEnd(p) !== p) fail(400, 'Choose the month.', 'err.date'); return p; };
 const prevEnd = (pe: string) => new Date(Date.UTC(+pe.slice(0, 4), +pe.slice(5, 7) - 1, 0)).toISOString().slice(0, 10);
 const grossOf = (d: MDoc) => d.lines.reduce((t, l) => t + l.net + l.vat, 0n);
@@ -2613,7 +2667,7 @@ function replyM(id: string, body: unknown) {
   const q = queryOf(id); const text = cstr(body) ?? fail(400, 'Write the reply.', 'err.queryBody');
   if (q.status === 'closed') fail(400, 'This query is closed. Reopen it to reply.', 'err.queryClosed');
   rvdb.messages.push({ id: uid(), companyId: q.companyId, queryId: id, author: session!, body: text, createdAt: new Date().toISOString() });
-  q.status = RV_FIRM.includes(rvRole(q.companyId)!) ? 'open' : 'answered';
+  q.status = rvCan(q.companyId) ? 'open' : 'answered';
 }
 function raiseQueryM(companyId: string, b: Body) {
   rvFirmOnly(companyId);
@@ -2629,7 +2683,7 @@ function raiseQueryM(companyId: string, b: Body) {
 }
 function setQueryStatusM(id: string, status: string) {
   const q = queryOf(id);
-  if (!RV_FIRM.includes(rvRole(q.companyId)!)) fail(400, 'Only the accounting firm closes or reopens a query.', 'err.queryFirmOnly');
+  if (!rvCan(q.companyId)) fail(400, 'Only the accounting firm closes or reopens a query.', 'err.queryFirmOnly');
   if (status === 'closed') { q.status = 'closed'; q.closedBy = session; q.closedAt = new Date().toISOString(); } else { q.status = 'open'; q.closedBy = null; q.closedAt = null; }
 }
 const activeSignoff = (companyId: string, pe: string) => rvdb.signoffs.find((x) => x.companyId === companyId && x.periodEnd === pe && !x.withdrawnAt) ?? null;
@@ -2678,7 +2732,7 @@ function monthsM(companyId: string, upTo: string) {
 }
 function signOffM(companyId: string, pe: string, note: unknown) {
   rvMonth(pe);
-  if (!RV_SIGN.includes(rvRole(companyId)!)) fail(400, 'Only a partner or reviewer signs off a month.', 'err.signoffRole');
+  if (!rvSign(companyId)) fail(400, 'Only a partner or reviewer signs off a month.', 'err.signoffRole');
   const cl = checklistM(companyId, pe); const missing = cl.items.filter((i) => !i.done).map((i) => i.item);
   if (missing.length) fail(400, 'Finish the checklist before signing off.', 'err.checklistOpen', missing);
   if (rvdb.queries.some((q) => q.companyId === companyId && q.periodEnd === pe && q.status !== 'closed')) fail(400, 'Close this month\'s queries first.', 'err.queriesOpen');
@@ -2714,7 +2768,7 @@ routes.push(
   ['POST', /^\/api\/companies\/([\w-]+)\/review\/queries$/, (m, b) => ({ id: raiseQueryM(inCo(m[1]!), b) })],
   ['GET', /^\/api\/review\/queries\/([\w-]+)$/, (m) => { const q = queryOf(m[1]!);
     return { ...queryRow(q), messages: rvdb.messages.filter((x) => x.queryId === q.id).map((x) => ({ id: x.id, body: x.body, createdAt: x.createdAt, author: userName(x.author), mine: x.author === session,
-      fromFirm: RV_FIRM.includes(roleOf(x.author, q.companyId)!) })) }; }],
+      fromFirm: rvCan(q.companyId, x.author) })) }; }],
   ['POST', /^\/api\/review\/queries\/([\w-]+)\/reply$/, (m, b) => { replyM(m[1]!, b?.body); return { ok: true }; }],
   ['POST', /^\/api\/review\/queries\/([\w-]+)\/status$/, (m, b) => { setQueryStatusM(m[1]!, String(b?.status)); return { ok: true }; }],
   ['GET', /^\/api\/companies\/([\w-]+)\/review\/checklist$/, (m, _b, q) => checklistM(inCo(m[1]!), rvMonth(q.get('month')))],
@@ -2723,7 +2777,7 @@ routes.push(
   ['POST', /^\/api\/companies\/([\w-]+)\/review\/sign-off$/, (m, b) => ({ id: signOffM(inCo(m[1]!), String(b?.month ?? ''), b?.note) })],
   ['POST', /^\/api\/review\/sign-offs\/([\w-]+)\/withdraw$/, (m, b) => {
     const so = rvdb.signoffs.find((x) => x.id === m[1] && roleOf(session, x.companyId) && !x.withdrawnAt) ?? fail(404, 'Not found.', 'err.notFound');
-    if (!RV_SIGN.includes(rvRole(so.companyId)!)) fail(400, 'Only a partner or reviewer withdraws a sign-off.', 'err.signoffRole');
+    if (!rvSign(so.companyId)) fail(400, 'Only a partner or reviewer withdraws a sign-off.', 'err.signoffRole');
     so.withdrawReason = cstr(b?.reason) ?? fail(400, 'Say why the sign-off is withdrawn.', 'err.withdrawReason');
     so.withdrawnBy = session; so.withdrawnAt = new Date().toISOString();
     return { ok: true };
@@ -2733,7 +2787,7 @@ routes.push(
 /** Sample review data, as in src/db/seed.ts. */
 function seedReview(companyId: string, poster: string) {
   const prev = session;
-  const partner = db.memberships.find((m) => m.companyId === companyId && m.role === 'partner')!.userId;
+  const partner = approverOf(companyId);
   const last = prevEnd(today()), before = prevEnd(last);
   session = partner;
   const q0 = raiseQueryM(companyId, { periodEnd: before, subject: 'Office water delivery posted twice', body: 'We see a reversal for the water delivery. Was it paid once only?' });
@@ -2750,18 +2804,50 @@ function seedReview(companyId: string, poster: string) {
   session = prev;
 }
 
+// ---------------------------------------------------------------- owner (same rules as src/api/owner.ts)
+routes.push(
+  ['GET', /^\/api\/owner\/tenants$/, () => { owner();
+    return firms.filter((f) => f.kind !== 'platform').sort((a, b) => a.name.localeCompare(b.name)).map((f) => ({ id: f.id, name: f.name, kind: f.kind, status: f.status, createdAt: f.createdAt,
+      companies: db.companies.filter((c) => c.firmId === f.id).length, users: db.users.filter((u) => u.firmId === f.id && u.status === 'active').length,
+      admins: db.users.filter((u) => u.firmId === f.id && u.kind === 'admin').map((u) => u.name).sort().join(', ') || null })); }],
+  ['POST', /^\/api\/owner\/tenants$/, (_m, b) => {
+    owner();
+    const name = String(b?.name ?? '').trim(), adminName = String(b?.adminName ?? '').trim(), adminEmail = String(b?.adminEmail ?? '').trim();
+    if (!name) fail(400, 'Enter the customer\'s name.', 'err.tenantName');
+    if (b?.kind !== 'firm' && b?.kind !== 'company') fail(400, 'Choose an accounting firm or a company.', 'err.tenantKind');
+    if (!adminName) fail(400, 'Enter the name and email.', 'err.nameEmail');
+    emailFree(adminEmail);
+    const f: Firm = { id: uid(), name, kind: b!.kind as 'firm' | 'company', status: 'active', createdAt: new Date().toISOString() };
+    firms.push(f); addDefaultRoles(f.id);
+    acting = f.id;
+    const u = addUser(adminName, adminEmail, 'admin', null, f.id);
+    return { id: f.id, invite: newInvite(u) };
+  }],
+  ['POST', /^\/api\/owner\/tenants\/([\w-]+)\/admins$/, (m, b) => {
+    owner();
+    const f = firms.find((x) => x.id === m[1] && x.kind !== 'platform') ?? fail(404, 'Not found.', 'err.notFound');
+    const name = String(b?.name ?? '').trim(), email = String(b?.email ?? '').trim();
+    if (!name) fail(400, 'Enter the name and email.', 'err.nameEmail');
+    emailFree(email);
+    acting = f.id;
+    return { invite: newInvite(addUser(name, email, 'admin', null, f.id)) };
+  }],
+  ['POST', /^\/api\/owner\/tenants\/([\w-]+)$/, (m, b) => {
+    owner();
+    const f = firms.find((x) => x.id === m[1] && x.kind !== 'platform') ?? fail(404, 'Not found.', 'err.notFound');
+    if (!String(b?.name ?? '').trim() || !['active', 'suspended'].includes(String(b?.status))) fail(400, 'Enter the name and status.', 'err.format');
+    f.name = String(b!.name).trim(); f.status = b!.status as Firm['status'];
+    return { ok: true };
+  }],
+);
+
 // Sample data is created once everything above is defined.
 seed();
-// Client accountant and Client management are ordinary, editable roles (db/migrations/0018); every client user has one.
-const all = (level: AccessLevel) => Object.fromEntries(ROLE_MODULES.map((m) => [m, level])) as Record<string, AccessLevel>;
-rolesDb.unshift({ id: uid(), name: 'Client accountant', nameAr: 'محاسب العميل', description: 'Daily entry in every module the client has', permissions: all('edit'), canApprove: true, status: 'active' },
-  { id: uid(), name: 'Client management', nameAr: 'إدارة العميل', description: 'Sees everything, changes nothing', permissions: all('view'), canApprove: false, status: 'active' });
-for (const r of DEMO_ROLES) rolesDb.push({ id: uid(), ...r, status: 'active' });
-for (const m of db.memberships) if (!m.clientRoleId && db.users.find((u) => u.id === m.userId)?.kind === 'client') m.clientRoleId = defaultRole(m.role)?.id ?? null;
-db.activity.push({ id: uid(), at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });
+db.activity.push({ id: uid(), firmId: firms.find((f) => f.name === DEMO_FIRM)!.id, at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });
 
-export function handle(method: string, url: string, body: unknown): { status: number; data: unknown } {
+export function handle(method: string, url: string, body: unknown, actingTenant?: string | null): { status: number; data: unknown } {
   const [path, qs] = url.split('?') as [string, string | undefined];
+  acting = actingTenant ?? null;
   try {
     const params = new URLSearchParams(qs ?? '');
     checkAccess(method, path, body as Body, params);

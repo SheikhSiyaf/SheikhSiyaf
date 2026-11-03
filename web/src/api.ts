@@ -7,11 +7,19 @@ export class ApiError extends Error {
   }
 }
 
+/** The customer the platform owner is working in (sent on every request; the server honours it for the owner only). */
+let actingTenant: string | null = (() => { try { return sessionStorage.getItem('nb_acting_tenant'); } catch { return null; } })();
+export const getActingTenant = () => actingTenant;
+export function setActingTenant(id: string | null) {
+  actingTenant = id;
+  try { if (id) sessionStorage.setItem('nb_acting_tenant', id); else sessionStorage.removeItem('nb_acting_tenant'); } catch { /* private window: kept in memory only */ }
+}
+
 export async function api<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
   if (import.meta.env.VITE_DEMO === '1') {
     // Demo build: the same rules, run in the browser against sample data (web/src/demo/mockApi.ts).
     const { handle } = await import('./demo/mockApi.ts');
-    const r = handle(init?.method ?? (init?.body !== undefined ? 'POST' : 'GET'), path, init?.body);
+    const r = handle(init?.method ?? (init?.body !== undefined ? 'POST' : 'GET'), path, init?.body, actingTenant);
     if (r.status >= 400) {
       const e = r.data as { error: string; key?: string; details?: string[] };
       throw new ApiError(r.status, e.error, e.key, e.details);
@@ -22,7 +30,7 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
   try {
     res = await fetch(path, {
       method: init?.method ?? (init?.body !== undefined ? 'POST' : 'GET'),
-      headers: init?.body !== undefined ? { 'content-type': 'application/json' } : undefined,
+      headers: { ...(init?.body !== undefined ? { 'content-type': 'application/json' } : {}), ...(actingTenant ? { 'x-acting-tenant': actingTenant } : {}) },
       body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
       credentials: 'same-origin',
     });
@@ -55,7 +63,7 @@ export function useApi<T>(path: string | null): Loaded<T> {
 // ------------------------------------------------------------------ types returned by the API
 export type Role = 'partner' | 'reviewer' | 'staff_accountant' | 'client_accountant' | 'client_viewer';
 export interface Me {
-  user: { id: string; name: string; email: string; kind: 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; firmName: string; twoFactor: boolean };
+  user: { id: string; name: string; email: string; kind: 'owner' | 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; firmName: string; firmKind?: 'platform' | 'firm' | 'company'; twoFactor: boolean };
   companies: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; role: Role }[];
 }
 export interface Account { id: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank?: boolean }
@@ -65,7 +73,9 @@ export interface CompanyBooks {
   company: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; vatStatus: string; invoicePrefix?: string; paymentTermsDays?: number; industry?: string; modules?: string[]; vatNumber?: string | null };
   role: Role; canPost: boolean; canLock: boolean;
   /** The person's client role, when they have one: access per module. Null = full access for their role. */
-  access?: { name: string; nameAr?: string | null; permissions: Record<string, string>; canApprove: boolean } | null;
+  access?: { name: string; nameAr?: string | null; permissions: Record<string, string>; canApprove: boolean; canReview?: boolean; canSignOff?: boolean } | null;
+  /** Review rights here: firm staff by their role, client users by their role's review and sign-off rights. */
+  review?: { canReview: boolean; canSignOff: boolean };
   accounts: Account[]; costCentres: CostCentre[]; periods: Period[];
   /** The latest month the accounting firm signed off ("reviewed by your accountant"). */
   reviewedUpTo?: { periodEnd: string; signedBy: string; signedAt: string } | null;

@@ -1,3 +1,5 @@
+import { OwnerConsole } from './admin/OwnerConsole.tsx';
+import { getActingTenant } from './api.ts';
 import { useEffect } from 'react';
 import { api, useApi, type Me } from './api.ts';
 import { DEMO, navigate, usePath } from './router.ts';
@@ -41,6 +43,11 @@ function Screens() {
   useEffect(() => {
     if (!user) return;
     if (path.startsWith('/invite/') || path === '/security') return;
+    if (user.kind === 'owner') {
+      if (path.startsWith('/admin') && !getActingTenant()) navigate('/owner');
+      else if (!path.startsWith('/owner') && !path.startsWith('/admin')) navigate('/owner');
+      return;
+    }
     if (user.kind === 'admin' && !path.startsWith('/admin')) navigate('/admin/clients');
     if (user.kind !== 'admin' && path.startsWith('/admin')) navigate('/');
     if (user.kind === 'client' && !path.startsWith('/c/') && me.data!.companies[0]) navigate(`/c/${me.data!.companies[0].id}/Home`);
@@ -60,6 +67,11 @@ function Screens() {
 
   if (path === '/security') {
     return <Security me={me.data} onSignOut={signOut} onChanged={me.reload} onBack={() => window.history.length > 1 && !DEMO ? window.history.back() : navigate('/')} />;
+  }
+  if (me.data.user.kind === 'owner') {
+    // The owner works inside one customer's Administrator console at a time, or on the customer list.
+    if (path.startsWith('/admin') && getActingTenant()) return <AdminConsole me={me.data} path={path} onSignOut={signOut} owner />;
+    return <OwnerConsole me={me.data} onSignOut={signOut} />;
   }
   if (me.data.user.kind === 'admin') return <AdminConsole me={me.data} path={path} onSignOut={signOut} />;
 

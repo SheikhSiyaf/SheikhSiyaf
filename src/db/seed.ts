@@ -23,7 +23,7 @@ import * as Review from '../books/reviewService.js';
 import * as Pay from '../books/payroll.js';
 import { monthEnd, nextMonthEnd, previousMonthEnd, targetDepreciation } from '../books/assets.js';
 import { toMinor } from '../money.js';
-import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_USERS } from './demoData.js';
+import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_SELF, DEMO_SELF_ROLES, DEMO_USERS } from './demoData.js';
 import { DEFAULT_MODULES } from '../books/modules.js';
 import * as Rest from '../books/restaurantService.js';
 
@@ -39,13 +39,17 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
     if ((await client.query('SELECT 1 FROM firms WHERE name = $1', [DEMO_FIRM])).rowCount) return 'exists';
     await client.query('BEGIN');
     const firmId: string = (await client.query('INSERT INTO firms (name) VALUES ($1) RETURNING id', [DEMO_FIRM])).rows[0].id;
+    // The company that runs its own books is a customer of its own; the owner lives on the platform.
+    const selfId: string = (await client.query(`INSERT INTO firms (name, kind) VALUES ($1, 'company') RETURNING id`, [DEMO_SELF])).rows[0].id;
+    const platformId: string = (await client.query(`SELECT id FROM firms WHERE kind = 'platform'`)).rows[0].id;
+    const tenantOf = (t?: string) => (t === 'self' ? selfId : t === 'platform' ? platformId : firmId);
     const hash = await hashPassword(DEMO_PASSWORD);
 
     const userIds: Record<string, string> = {};
     for (const u of DEMO_USERS) {
       userIds[u.email] = (await client.query(
         `INSERT INTO users (firm_id, kind, full_name, email, password_hash, staff_role, password_set_at) VALUES ($1,$2,$3,$4,$5,$6, now()) RETURNING id`,
-        [firmId, u.kind, u.name, u.email, hash, u.kind === 'firm_staff' ? u.role : null])).rows[0].id;
+        [tenantOf(u.tenant), u.kind, u.name, u.email, hash, u.kind === 'firm_staff' ? u.role : null])).rows[0].id;
     }
     const admin = userIds['admin@firm.example']!;
     await asUser(admin);
@@ -53,6 +57,13 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       await client.query('INSERT INTO client_roles (firm_id, name, name_ar, description, permissions, can_approve) VALUES ($1,$2,$3,$4,$5,$6)',
         [firmId, r.name, r.nameAr, r.description, JSON.stringify(r.permissions), r.canApprove]);
     }
+    await asUser(userIds['admin@desertrose.example']!);
+    const selfRoles: Record<string, string> = {};
+    for (const r of DEMO_SELF_ROLES) {
+      selfRoles[r.name] = (await client.query(`INSERT INTO client_roles (firm_id, name, name_ar, description, permissions, can_approve, can_review, can_sign_off)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, [selfId, r.name, r.nameAr, r.description, JSON.stringify(r.permissions), r.canApprove, r.canReview, r.canSignOff])).rows[0].id;
+    }
+    await asUser(admin);
 
     const companyIds: Record<string, string> = {};
     for (const c of DEMO_COMPANIES) {
@@ -60,12 +71,13 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
         `INSERT INTO companies (firm_id, name, name_ar, country, currency, cr_number, legal_form, vat_status, vat_number,
            vat_rate, address, city, fy_end_month, fy_end_day, invoice_prefix, industry, modules)
          VALUES ($1,$2,$3,$4,$5,$6,$7,'registered',$8,$9,$10,$11,12,31,$12,$13,$14) RETURNING id`,
-        [firmId, c.name, c.nameAr, c.country, c.currency, c.crNumber, c.legalForm, c.vatNumber, c.vatRate, c.address, c.city, c.invoicePrefix,
+        [tenantOf(c.tenant), c.name, c.nameAr, c.country, c.currency, c.crNumber, c.legalForm, c.vatNumber, c.vatRate, c.address, c.city, c.invoicePrefix,
          c.industry, DEFAULT_MODULES[c.industry]])).rows[0].id;
       companyIds[c.key] = id;
       for (const u of DEMO_USERS.filter((x) => x.companies.includes(c.key))) {
-        await client.query('INSERT INTO memberships (user_id, company_id, role) VALUES ($1,$2,$3)', [userIds[u.email], id, u.role]);
+        await client.query('INSERT INTO memberships (user_id, company_id, role, client_role_id) VALUES ($1,$2,$3,$4)', [userIds[u.email], id, u.role, u.clientRole ? selfRoles[u.clientRole] ?? null : null]);
       }
+      await asUser(c.tenant === 'self' ? userIds['admin@desertrose.example']! : admin);
       await client.query('SELECT setup_company_books($1, $2, $3)', [id, JSON.stringify(CHART_TEMPLATE), new Date().getUTCFullYear()]);
       await client.query(`INSERT INTO cost_centres (company_id, kind, name, name_ar) VALUES ($1,'branch','Branch 1','الفرع 1'), ($1,'project','Project A','المشروع أ')`, [id]);
     }
@@ -75,7 +87,8 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
     for (const c of DEMO_COMPANIES) {
       const id = companyIds[c.key]!;
       const poster = userIds[DEMO_USERS.find((u) => u.companies.includes(c.key) && ['client_accountant', 'staff_accountant'].includes(u.role))!.email]!;
-      const partner = userIds['omar@firm.example']!;
+      // Who approves and reviews: the firm's partner, or the company's own finance manager when it runs its own books.
+      const partner = c.tenant === 'self' ? userIds['noura@desertrose.example']! : userIds['omar@firm.example']!;
       const acct = Object.fromEntries((await client.query('SELECT code, id FROM accounts WHERE company_id = $1', [id])).rows.map((r) => [r.code, r.id]));
       const cc = Object.fromEntries((await client.query('SELECT name, id FROM cost_centres WHERE company_id = $1', [id])).rows.map((r) => [r.name, r.id]));
       const gross = (net: number) => fromMinor(BigInt(net) * 100n + vatForLine(BigInt(net) * 100n, c.vatRate));

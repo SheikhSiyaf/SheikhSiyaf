@@ -20,6 +20,8 @@ import { registerBankRoutes } from './bank.js';
 import { registerStockRoutes } from './stock.js';
 import { registerHrmRoutes } from './hrm.js';
 import { registerCrmRoutes } from './crm.js';
+import { registerReviewRoutes } from './review.js';
+import { reviewedUpTo } from '../books/reviewService.js';
 import { registerSetupRoutes } from './setup.js';
 import { profitAndLoss } from '../books/reportsService.js';
 import { registerPermissionCheck } from './permissions.js';
@@ -90,7 +92,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
        FROM periods WHERE company_id = $1 ORDER BY start_date`, [id]);
     const access = (await db.query('SELECT permissions, can_approve AS "canApprove", name, name_ar AS "nameAr" FROM app_client_role($1)', [id])).rows[0] ?? null;
     return {
-      company: rows[0], role, access,
+      company: rows[0], role, access, reviewedUpTo: await reviewedUpTo(db, id),
       canPost: POSTING_ROLES.includes(role), canLock: role === 'partner',
       accounts: accounts.rows, costCentres: costCentres.rows, periods: periods.rows,
     };
@@ -238,6 +240,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerStockRoutes(app, ctx);
   registerHrmRoutes(app, ctx);
   registerCrmRoutes(app, ctx);
+  registerReviewRoutes(app, ctx);
   registerSetupRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });

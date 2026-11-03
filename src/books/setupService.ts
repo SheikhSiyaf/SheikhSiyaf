@@ -96,17 +96,17 @@ export const MAX_ATTACHMENT = 10 * 1024 * 1024;
 
 export interface AttachmentInput { fileName?: string; contentType?: string; data?: string }   // data: base64
 
-export async function listAttachments(db: Db, owner: { documentId?: string; stockNoteId?: string }) {
+export async function listAttachments(db: Db, owner: { documentId?: string; stockNoteId?: string; employeeDocumentId?: string }) {
   const { rows } = await db.query(
     `SELECT a.id, a.file_name AS "fileName", a.content_type AS "contentType", a.size_bytes AS "size", a.uploaded_at AS "uploadedAt", person_name(a.uploaded_by) AS "uploadedBy"
      FROM attachments a
-     WHERE (a.document_id = $1 OR a.stock_note_id = $2) ORDER BY a.uploaded_at`, [owner.documentId ?? null, owner.stockNoteId ?? null]);
+     WHERE (a.document_id = $1 OR a.stock_note_id = $2 OR a.employee_document_id = $3) ORDER BY a.uploaded_at`, [owner.documentId ?? null, owner.stockNoteId ?? null, owner.employeeDocumentId ?? null]);
   return rows;
 }
 
-export async function addAttachment(db: Db, owner: { documentId?: string; stockNoteId?: string }, f: AttachmentInput): Promise<string> {
-  const table = owner.documentId ? 'documents' : 'stock_notes';
-  const ownerId = owner.documentId ?? owner.stockNoteId;
+export async function addAttachment(db: Db, owner: { documentId?: string; stockNoteId?: string; employeeDocumentId?: string }, f: AttachmentInput): Promise<string> {
+  const table = owner.documentId ? 'documents' : owner.stockNoteId ? 'stock_notes' : 'employee_documents';
+  const ownerId = owner.documentId ?? owner.stockNoteId ?? owner.employeeDocumentId;
   const company = (await db.query(`SELECT company_id FROM ${table} WHERE id = $1`, [ownerId])).rows[0]?.company_id ?? notFound();
   const fileName = String(f.fileName ?? '').trim().slice(-200);
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
@@ -125,8 +125,8 @@ export async function addAttachment(db: Db, owner: { documentId?: string; stockN
     : magic.subarray(0, 4).toString('latin1') === 'RIFF' && magic.subarray(8, 12).toString('latin1') === 'WEBP';
   if (!ok) bad('This file is not a real PDF or picture.', 'err.attachmentType');
   const id = (await db.query(
-    `INSERT INTO attachments (company_id, document_id, stock_note_id, file_name, content_type, size_bytes, uploaded_by) VALUES ($1,$2,$3,$4,$5,$6, app_user_id()) RETURNING id`,
-    [company, owner.documentId ?? null, owner.stockNoteId ?? null, fileName, type, data.length])).rows[0].id;
+    `INSERT INTO attachments (company_id, document_id, stock_note_id, employee_document_id, file_name, content_type, size_bytes, uploaded_by) VALUES ($1,$2,$3,$4,$5,$6,$7, app_user_id()) RETURNING id`,
+    [company, owner.documentId ?? null, owner.stockNoteId ?? null, owner.employeeDocumentId ?? null, fileName, type, data.length])).rows[0].id;
   await db.query('INSERT INTO attachment_files (attachment_id, company_id, data) VALUES ($1, $2, $3)', [id, company, data]);
   return id;
 }

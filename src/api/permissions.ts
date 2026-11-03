@@ -33,8 +33,8 @@ const RULES: Rule[] = [
   ['POST', new RegExp(`^/api/documents/${UUID}/(approve|reject)$`), async (db, m) => { const n = await docOwner(db, m[1]!); return n && { ...n, approve: true }; }],
   ['*', new RegExp(`^/api/documents/${UUID}(/.*)?$`), (db, m) => docOwner(db, m[1]!)],
   ['*', new RegExp(`^/api/attachments/${UUID}(/.*)?$`), async (db, m) => {
-    const r = (await db.query(`SELECT a.company_id, d.type, a.stock_note_id FROM attachments a LEFT JOIN documents d ON d.id = a.document_id WHERE a.id = $1`, [m[1]])).rows[0];
-    return r ? { companyId: r.company_id, modules: r.stock_note_id ? ['Inventory', 'Restaurant'] : docModules(r.type) } : null;
+    const r = (await db.query(`SELECT a.company_id, d.type, a.stock_note_id, a.employee_document_id FROM attachments a LEFT JOIN documents d ON d.id = a.document_id WHERE a.id = $1`, [m[1]])).rows[0];
+    return r ? { companyId: r.company_id, modules: r.employee_document_id ? ['HRM'] : r.stock_note_id ? ['Inventory', 'Restaurant'] : docModules(r.type) } : null;
   }],
   // customers, suppliers, employees (lists stay open to every member: they fill the pickers everywhere)
   ['POST', new RegExp(`^/api/companies/${UUID}/contacts$`), (_db, m, req) => {
@@ -80,6 +80,16 @@ const RULES: Rule[] = [
   // restaurant
   ['*', new RegExp(`^/api/companies/${UUID}/(recipes|restaurant)(/.*)?$`), c(['Restaurant'])],
   ['*', new RegExp(`^/api/recipes/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'recipes', m[1]!, ['Restaurant'])],
+  // HRM (salaries and personal details: HRM only)
+  ['*', new RegExp(`^/api/companies/${UUID}/(hr|payroll)(/.*)?$`), c(['HRM'])],
+  ['*', new RegExp(`^/api/employees/${UUID}/(hr|settlement|settlement-preview)$`), (db, m) => companyOf(db, 'contacts', m[1]!, ['HRM'])],
+  ['POST', new RegExp(`^/api/leave/${UUID}/status$`), async (db, m, req) => {
+    const n = await companyOf(db, 'leave_requests', m[1]!, ['HRM']);
+    return n && { ...n, approve: body(req).status === 'approved' || body(req).status === 'rejected' };
+  }],
+  ['*', new RegExp(`^/api/payroll/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'payroll_runs', m[1]!, ['HRM'])],
+  ['*', new RegExp(`^/api/payroll-lines/${UUID}$`), (db, m) => companyOf(db, 'payroll_lines', m[1]!, ['HRM'])],
+  ['*', new RegExp(`^/api/hr-documents/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'employee_documents', m[1]!, ['HRM'])],
   // assets and projects
   ['*', new RegExp(`^/api/companies/${UUID}/(assets|asset-summary|depreciation)(/.*)?$`), c(['Assets'])],
   ['*', new RegExp(`^/api/assets/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'fixed_assets', m[1]!, ['Assets'])],

@@ -18,6 +18,7 @@ import { registerExpenseRoutes } from './expenses.js';
 import { registerLedgerRoutes } from './ledger.js';
 import { registerBankRoutes } from './bank.js';
 import { registerStockRoutes } from './stock.js';
+import { registerHrmRoutes } from './hrm.js';
 import { registerSetupRoutes } from './setup.js';
 import { profitAndLoss } from '../books/reportsService.js';
 import { registerPermissionCheck } from './permissions.js';
@@ -234,6 +235,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerLedgerRoutes(app, ctx);
   registerBankRoutes(app, ctx);
   registerStockRoutes(app, ctx);
+  registerHrmRoutes(app, ctx);
   registerSetupRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });

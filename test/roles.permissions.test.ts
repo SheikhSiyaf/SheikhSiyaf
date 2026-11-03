@@ -95,6 +95,8 @@ describe('Roles and permissions', () => {
     expect((await get(c, `/api/companies/${f.a.id}/documents?type=bill`)).json()).toMatchObject({ key: 'err.roleNoAccess' });
     expect((await post(c, `/api/companies/${f.a.id}/documents`, { type: 'bill', contactId: supplier, issueDate: '2026-03-10', lines: [] })).statusCode).toBe(403);
     expect((await get(c, `/api/companies/${f.a.id}/entries`)).statusCode).toBe(403);
+    expect((await get(c, `/api/companies/${f.a.id}/payroll`)).statusCode).toBe(403);   // salaries: HRM only
+    expect((await get(c, `/api/companies/${f.a.id}/hr/employees`)).statusCode).toBe(403);
     // Reports: read only.
     expect((await get(c, `/api/companies/${f.a.id}/reports/trial-balance`)).statusCode).toBe(200);
   });

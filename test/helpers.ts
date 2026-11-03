@@ -15,6 +15,8 @@ afterAll(async () => {
 });
 
 export const as = <T>(userId: string, fn: (db: Db) => Promise<T>) => withUser(app, userId, fn);
+/** The platform owner working inside a customer (accounting firm or company). */
+export const asOwnerIn = <T>(ownerId: string, firmId: string, fn: (db: Db) => Promise<T>) => withUser(app, ownerId, fn, firmId);
 
 const digits = (n: number) => Array.from({ length: n }, () => randomInt(10)).join('');
 export const saCr = () => digits(10);
@@ -30,6 +32,8 @@ export interface Company {
 
 export interface Fixture {
   firmId: string;
+  /** The platform owner (seller of Nusuh Books). */
+  platformOwner: string;
   admin: string; partner: string; reviewer: string; staff: string;
   a: Company; // Saudi company: partner, reviewer and staff are all assigned
   b: Company; // UAE company: partner and reviewer assigned, staff is NOT
@@ -88,13 +92,15 @@ export async function seed(): Promise<Fixture> {
     await c.query('BEGIN');
     const firmId = (await c.query(`INSERT INTO firms (name) VALUES ('Test firm') RETURNING id`)).rows[0].id;
     const admin = await addUser(c, firmId, 'admin', 'Admin');
+    const platform = (await c.query(`SELECT id FROM firms WHERE kind = 'platform'`)).rows[0].id;
+    const platformOwner = await addUser(c, platform, 'owner', 'Platform Owner');
     const partner = await addUser(c, firmId, 'firm_staff', 'Partner', 'partner');
     const reviewer = await addUser(c, firmId, 'firm_staff', 'Reviewer', 'reviewer');
     const staff = await addUser(c, firmId, 'firm_staff', 'Staff', 'staff_accountant');
     const a = await addCompany(c, firmId, 'SA', [[partner, 'partner'], [reviewer, 'reviewer'], [staff, 'staff_accountant']]);
     const b = await addCompany(c, firmId, 'AE', [[partner, 'partner'], [reviewer, 'reviewer']]);
     await c.query('COMMIT');
-    return { firmId, admin, partner, reviewer, staff, a, b };
+    return { firmId, platformOwner, admin, partner, reviewer, staff, a, b };
   } catch (e) {
     await c.query('ROLLBACK');
     throw e;

@@ -16,7 +16,7 @@ const emails: Record<string, string> = {};
 beforeAll(async () => {
   f = await seed();
   const hash = await hashPassword('pw-123456');
-  for (const [k, id] of Object.entries({ admin: f.admin, partner: f.partner, staff: f.staff, clientA: f.a.clientAccountant, viewerA: f.a.clientViewer })) {
+  for (const [k, id] of Object.entries({ owner: f.platformOwner, admin: f.admin, partner: f.partner, staff: f.staff, clientA: f.a.clientAccountant, viewerA: f.a.clientViewer })) {
     const { rows } = await owner.query('UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING email', [hash, id]);
     emails[k] = rows[0].email;
   }
@@ -94,11 +94,12 @@ describe('API', () => {
 
   it('the Administrator registers a client with its first user, staff and books in one step', async () => {
     const a = await signIn('admin');
-    const res = await post(a, '/api/admin/companies', {
+    const o = await signIn('owner');
+    const res = await server.inject({ method: 'POST', url: '/api/admin/companies', headers: { cookie: o, 'x-acting-tenant': f.firmId }, payload: {
       company: { name: 'API Client', country: 'SA', industry: 'restaurant', crNumber: saCr(), legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'Street', city: 'Riyadh' },
       firstUser: { name: 'First User', email: `first.${Date.now()}@example.com` },
       staffIds: [f.partner],
-    });
+    } });
     expect(res.statusCode).toBe(200);
     const id = res.json().id;
     const p = await signIn('partner');
@@ -117,9 +118,9 @@ describe('API', () => {
       vatNumber: books.company.vatNumber, address: 'Street', city: 'Riyadh', industry: 'restaurant', modules: ['Restaurant', 'Inventory', 'Unknown'] } });
     expect(edit.statusCode).toBe(200);
     expect((await get(p, `/api/companies/${id}`)).json().company.modules).toEqual(['Inventory', 'Restaurant']);
-    const bad = await post(a, '/api/admin/companies', {
+    const bad = await server.inject({ method: 'POST', url: '/api/admin/companies', headers: { cookie: o, 'x-acting-tenant': f.firmId }, payload: {
       company: { name: 'Bad', country: 'SA', industry: 'trading', crNumber: '123', legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'S', city: 'R' },
-      firstUser: { name: 'X', email: `x.${Date.now()}@example.com` } });
+      firstUser: { name: 'X', email: `x.${Date.now()}@example.com` } } });
     expect(bad.json()).toMatchObject({ key: 'err.saCr' });
   });
 

@@ -17,7 +17,7 @@ const email: Record<string, string> = {};
 beforeAll(async () => {
   f = await seed();
   const hash = await hashPassword(PW);
-  for (const [k, id] of Object.entries({ admin: f.admin, partner: f.partner, staff: f.staff, reviewer: f.reviewer, clientA: f.a.clientAccountant })) {
+  for (const [k, id] of Object.entries({ owner: f.platformOwner, admin: f.admin, partner: f.partner, staff: f.staff, reviewer: f.reviewer, clientA: f.a.clientAccountant })) {
     email[k] = (await owner.query('UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING email', [hash, id])).rows[0].email;
   }
   server = buildServer({ pool: appPool, sessionSecret: 'admin-test-secret' });
@@ -134,9 +134,12 @@ describe('Administrator console (API)', () => {
 
   it('registers a client and adds another client user, each with an invitation', async () => {
     const a = await signIn(email.admin!);
-    const res = await post(a, '/api/admin/companies', {
+    const o = await signIn(email.owner!);
+    expect((await post(a, '/api/admin/companies', { company: { name: 'Not Mine', country: 'SA', industry: 'trading', crNumber: saCr(), legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'S', city: 'R' },
+      firstUser: { name: 'X', email: `x.${Date.now()}@example.com` } })).json()).toMatchObject({ key: 'err.ownerOnly' });
+    const res = await server.inject({ method: 'POST', url: '/api/admin/companies', headers: { cookie: o, 'x-acting-tenant': f.firmId }, payload: {
       company: { name: 'Invite Co', country: 'SA', industry: 'trading', crNumber: saCr(), legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'S', city: 'R' },
-      firstUser: { name: 'First', email: `first.${Date.now()}@example.com` } });
+      firstUser: { name: 'First', email: `first.${Date.now()}@example.com` } } });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json().invite.token).toBeTruthy();
     const add = await post(a, `/api/admin/companies/${res.json().id}/users`, { name: 'Second', email: `second.${Date.now()}@example.com`, role: 'client_viewer' });

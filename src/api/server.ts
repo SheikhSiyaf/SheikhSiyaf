@@ -21,6 +21,7 @@ import { registerStockRoutes } from './stock.js';
 import { registerHrmRoutes } from './hrm.js';
 import { registerCrmRoutes } from './crm.js';
 import { registerReviewRoutes } from './review.js';
+import { registerOwnerRoutes } from './owner.js';
 import { reviewedUpTo } from '../books/reviewService.js';
 import { registerSetupRoutes } from './setup.js';
 import { profitAndLoss } from '../books/reportsService.js';
@@ -58,7 +59,9 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   /** Runs fn as the signed-in user, inside one transaction. */
   const as = <T>(req: FastifyRequest, fn: (db: Db) => Promise<T>): Promise<T> => {
     if (!req.userId) throw new HttpError(401, 'Please sign in.', 'err.signIn');
-    return withUser(pool, req.userId, fn);
+    // The platform owner names the customer they are working in (only the owner's requests honour it: 0023_tenants.sql).
+    const acting = req.headers['x-acting-tenant'];
+    return withUser(pool, req.userId, fn, typeof acting === 'string' && /^[0-9a-f-]{36}$/i.test(acting) ? acting : null);
   };
   const ctx: Ctx = { pool, opts, as };
   registerPermissionCheck(app, ctx);
@@ -90,9 +93,10 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     const periods = await db.query(
       `SELECT start_date::text AS "startDate", end_date::text AS "endDate", locked_at AS "lockedAt"
        FROM periods WHERE company_id = $1 ORDER BY start_date`, [id]);
-    const access = (await db.query('SELECT permissions, can_approve AS "canApprove", name, name_ar AS "nameAr" FROM app_client_role($1)', [id])).rows[0] ?? null;
+    const access = (await db.query('SELECT permissions, can_approve AS "canApprove", name, name_ar AS "nameAr", can_review AS "canReview", can_sign_off AS "canSignOff" FROM app_client_role($1)', [id])).rows[0] ?? null;
     return {
       company: rows[0], role, access, reviewedUpTo: await reviewedUpTo(db, id),
+      review: (await db.query('SELECT app_can_review($1) AS "canReview", app_can_sign($1) AS "canSignOff"', [id])).rows[0],
       canPost: POSTING_ROLES.includes(role), canLock: role === 'partner',
       accounts: accounts.rows, costCentres: costCentres.rows, periods: periods.rows,
     };
@@ -241,6 +245,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerHrmRoutes(app, ctx);
   registerCrmRoutes(app, ctx);
   registerReviewRoutes(app, ctx);
+  registerOwnerRoutes(app, ctx);
   registerSetupRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });

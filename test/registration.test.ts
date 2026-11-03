@@ -1,6 +1,6 @@
 // CLAUDE.md > Client registration (decided)
 import { describe, it, expect, beforeAll } from 'vitest';
-import { as, seed, saCr, saVat, aeTrn, type Fixture } from './helpers.js';
+import { as, asOwnerIn, seed, saCr, saVat, aeTrn, type Fixture } from './helpers.js';
 import type { Db } from '../src/db/session.js';
 
 let f: Fixture;
@@ -31,11 +31,17 @@ async function register(db: Db, firmId: string, reg: Reg, withClientUser = true)
   return companyId;
 }
 
-const reg = (r: Reg, withUser = true) => as(f.admin, (db) => register(db, f.firmId, r, withUser));
+// Only the platform owner registers companies, working inside the customer (0023_tenants.sql).
+const reg = (r: Reg, withUser = true) => asOwnerIn(f.platformOwner, f.firmId, (db) => register(db, f.firmId, r, withUser));
 
 describe('Client registration', () => {
-  it('Administrator registers a Saudi client with all required details and a first client user', async () => {
+  it('the platform owner registers a Saudi client with all required details and a first client user', async () => {
     await expect(reg(base())).resolves.toBeTruthy();
+  });
+
+  it('a firm Administrator cannot register companies; the owner cannot outside the customer they work in', async () => {
+    await expect(as(f.admin, (db) => register(db, f.firmId, base()))).rejects.toThrow();
+    await expect(as(f.platformOwner, (db) => register(db, f.firmId, base()))).rejects.toThrow();
   });
 
   it('a client cannot be registered without its first client user', async () => {

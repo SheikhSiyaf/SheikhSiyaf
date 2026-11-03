@@ -12,11 +12,13 @@ export function createPool(connectionString: string): pg.Pool {
   return pool;
 }
 
-export async function withUser<T>(pool: pg.Pool, userId: string, fn: (db: Db) => Promise<T>): Promise<T> {
+/** actingFirm: the tenant the platform owner is working in on this request (ignored for everyone else by the database). */
+export async function withUser<T>(pool: pg.Pool, userId: string, fn: (db: Db) => Promise<T>, actingFirm?: string | null): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    if (actingFirm) await client.query("SELECT set_config('app.acting_firm', $1, true)", [actingFirm]);
     const result = await fn(client);
     await client.query('COMMIT');
     return result;

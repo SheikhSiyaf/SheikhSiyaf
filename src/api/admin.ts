@@ -22,7 +22,7 @@ async function requireAdmin(db: Db) {
 }
 
 /** Creates a one-time invitation for the user. Returns the token: it is shown once and never stored. */
-async function newInvite(db: Db, userId: string): Promise<string> {
+export async function newInvite(db: Db, userId: string): Promise<string> {
   const token = randomBytes(32).toString('base64url');
   const { rowCount } = await db.query(
     `UPDATE users SET invite_token_hash = $2, invite_expires_at = now() + make_interval(days => $3)
@@ -110,6 +110,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
   }));
 
   interface NewClient { company: Record<string, unknown>; firstUser: Record<string, unknown>; staffIds?: string[] }
+  // Only the platform owner adds companies (0023_tenants.sql); the owner works in the customer's console.
   app.post<{ Body: NewClient }>('/api/admin/companies', async (req) => {
     const b = req.body ?? ({} as NewClient);
     const c = b.company ?? {};
@@ -122,6 +123,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
     const staffIds = (b.staffIds ?? []).map((x) => uuidParam(String(x)));
 
     return admin(req, async (db) => {
+      if (!(await db.query('SELECT app_is_owner() AS o')).rows[0].o) throw new HttpError(403, 'Only Nusuh Books adds companies. Ask us to add one.', 'err.ownerOnly');
       const cols = Object.keys(v);
       const { rows } = await db.query(
         `INSERT INTO companies (firm_id, country, currency, ${cols.join(', ')})
@@ -150,9 +152,11 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
       if (!cur.rows[0]) throw new HttpError(404, 'Not found.', 'err.notFound');
       const v = companyValues(req.body?.company ?? {}, cur.rows[0].country);
       const cols = Object.keys(v);
-      await db.query(
+      const { rowCount } = await db.query(
         `UPDATE companies SET ${cols.map((k, i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1`,
         [id, ...Object.values(v)]);
+      // A company that runs its own books has its details changed by Nusuh Books only (0023_tenants.sql).
+      if (!rowCount) throw new HttpError(403, 'Ask Nusuh Books to change the company details.', 'err.ownerDetails');
       return { ok: true };
     });
   });
@@ -162,7 +166,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
     return admin(req, async (db) => {
       const { rowCount } = await db.query('UPDATE companies SET status = $2 WHERE id = $1 AND firm_id = app_firm_id()',
         [id, req.body?.active ? 'active' : 'suspended']);
-      if (!rowCount) throw new HttpError(404, 'Not found.', 'err.notFound');
+      if (!rowCount) throw new HttpError(403, 'Ask Nusuh Books to change the company details.', 'err.ownerDetails');
       return { ok: true };
     });
   });
@@ -199,7 +203,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
 
   // ------------------------------------------------------------ roles and permissions (for client users)
   app.get('/api/admin/roles', async (req) => admin(req, async (db) => (await db.query(
-    `SELECT r.id, r.name, r.name_ar AS "nameAr", r.description, r.permissions, r.can_approve AS "canApprove", r.status,
+    `SELECT r.id, r.name, r.name_ar AS "nameAr", r.description, r.permissions, r.can_approve AS "canApprove", r.can_review AS "canReview", r.can_sign_off AS "canSignOff", r.status,
             (SELECT count(*) FROM memberships m WHERE m.client_role_id = r.id)::int AS users
      FROM client_roles r WHERE r.firm_id = app_firm_id() ORDER BY r.status, r.created_at, r.name`)).rows));
   const roleValues = (b: Record<string, unknown>) => {
@@ -211,12 +215,12 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
       if (v === 'view' || v === 'edit') perms[m] = v;
     }
     return [name, String(b.nameAr ?? '').trim() || null, String(b.description ?? '').trim() || null, JSON.stringify(perms), Boolean(b.canApprove),
-      b.status === 'archived' ? 'archived' : 'active'];
+      b.status === 'archived' ? 'archived' : 'active', Boolean(b.canReview) || Boolean(b.canSignOff), Boolean(b.canSignOff)];
   };
   app.post<{ Body: Record<string, unknown> }>('/api/admin/roles', async (req) => {
     const v = roleValues(req.body ?? {});
     return admin(req, async (db) => ({ id: (await db.query(
-      `INSERT INTO client_roles (firm_id, name, name_ar, description, permissions, can_approve, status) VALUES (app_firm_id(), $1, $2, $3, $4, $5, $6) RETURNING id`, v)).rows[0].id }));
+      `INSERT INTO client_roles (firm_id, name, name_ar, description, permissions, can_approve, status, can_review, can_sign_off) VALUES (app_firm_id(), $1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`, v)).rows[0].id }));
   });
   app.post<{ Params: { id: string }; Body: Record<string, unknown> }>('/api/admin/roles/:id', async (req) => {
     const id = uuidParam(req.params.id);
@@ -226,7 +230,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
         throw new HttpError(400, 'People still have this role. Give them another role first.', 'err.roleInUse');
       }
       const { rowCount } = await db.query(
-        `UPDATE client_roles SET name=$2, name_ar=$3, description=$4, permissions=$5, can_approve=$6, status=$7 WHERE id = $1 AND firm_id = app_firm_id()`, [id, ...v]);
+        `UPDATE client_roles SET name=$2, name_ar=$3, description=$4, permissions=$5, can_approve=$6, status=$7, can_review=$8, can_sign_off=$9 WHERE id = $1 AND firm_id = app_firm_id()`, [id, ...v]);
       if (!rowCount) throw new HttpError(404, 'Not found.', 'err.notFound');
       return { ok: true };
     });
@@ -340,7 +344,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
 
   // ------------------------------------------------------------ settings
   app.get('/api/admin/settings', async (req) => admin(req, async (db) => {
-    const firm = await db.query('SELECT name FROM firms WHERE id = app_firm_id()');
+    const firm = await db.query('SELECT name, kind, app_is_owner() AS owner FROM firms WHERE id = app_firm_id()');
     const users = await db.query(
       `SELECT count(*)::int AS total,
               count(*) FILTER (WHERE status = 'active')::int AS active,
@@ -349,7 +353,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
               count(*) FILTER (WHERE status = 'active' AND invite_expires_at > now())::int AS "invitesPending",
               count(*) FILTER (WHERE status = 'active' AND password_hash IS NULL)::int AS "neverSignedIn"
        FROM users WHERE firm_id = app_firm_id()`);
-    return { firmName: firm.rows[0]?.name ?? '', users: users.rows[0] };
+    return { firmName: firm.rows[0]?.name ?? '', kind: firm.rows[0]?.kind ?? 'firm', owner: Boolean(firm.rows[0]?.owner), users: users.rows[0] };
   }));
 
   app.post<{ Body: { firmName?: string } }>('/api/admin/settings', async (req) => {

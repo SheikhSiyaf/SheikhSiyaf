@@ -53,7 +53,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
     const email = String(req.body?.email ?? '').trim().toLowerCase();
     const password = String(req.body?.password ?? '');
     throttle.check(email);
-    const { rows } = await pool.query('SELECT id, status, password_hash, totp_secret_enc FROM auth_user_by_email($1)', [email]);
+    const { rows } = await pool.query('SELECT id, status, password_hash, totp_secret_enc, firm_status FROM auth_user_by_email($1)', [email]);
     const u = rows[0];
     const ok = await verifyPassword(password, u?.password_hash);
     if (!ok || !u) {
@@ -61,6 +61,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
       throw new HttpError(401, 'The email or password is not right.', 'err.login');
     }
     if (u.status !== 'active') throw new HttpError(403, 'This account is suspended. Contact the Administrator.', 'err.suspended');
+    if (u.firm_status !== 'active') throw new HttpError(403, 'This organisation\'s access is suspended. Contact Nusuh Books.', 'err.tenantSuspended');
     throttle.clear(email);
     if (u.totp_secret_enc) {
       return { twoFactor: true, ticket: signToken(opts.sessionSecret, 'mfa', b64(`${u.id}:${email}`), 300) };
@@ -100,7 +101,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
   app.get('/api/me', async (req) => as(req, async (db) => {
     const u = await db.query(
       `SELECT u.id, u.full_name AS name, u.email, u.kind, u.staff_role AS "staffRole", u.status,
-              (u.totp_enabled_at IS NOT NULL) AS "twoFactor", f.name AS "firmName"
+              (u.totp_enabled_at IS NOT NULL) AS "twoFactor", f.name AS "firmName", f.kind AS "firmKind"
        FROM users u LEFT JOIN firms f ON f.id = u.firm_id WHERE u.id = app_user_id()`);
     const user = u.rows[0];
     if (!user || user.status !== 'active') throw new HttpError(401, 'Please sign in.', 'err.signIn');
@@ -110,7 +111,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
        FROM companies c JOIN memberships m ON m.company_id = c.id AND m.user_id = app_user_id()
        WHERE c.status = 'active'
        ORDER BY c.name`);
-    return { user, companies: user.kind === 'admin' ? [] : companies.rows };
+    return { user, companies: user.kind === 'admin' || user.kind === 'owner' ? [] : companies.rows };
   }));
 
   // -------------------------------------------------------------- invitations

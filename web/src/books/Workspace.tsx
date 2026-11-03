@@ -10,7 +10,9 @@ import { Home } from './Home.tsx';
 import { Journal } from './Journal.tsx';
 import { Reports } from './Reports.tsx';
 import { Vat } from './Vat.tsx';
-import { DOC_PAGES, NAV, isModuleBuilt, moduleOf, navFor } from './nav.ts';
+import { DOC_PAGES, NAV, hiddenFor, isModuleBuilt, moduleOf, navFor } from './nav.ts';
+import { Calendar } from '../calendar/Calendar.tsx';
+import { Portal } from '../portal/Portal.tsx';
 import { accessTo } from '../../../src/books/modules.ts';
 import { Overview } from '../sales/Overview.tsx';
 import { ContactList, ContactPage } from '../sales/Contacts.tsx';
@@ -74,7 +76,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
   return (
     <div className="app">
       <Sidebar subtitle={b ? local(b.company.name, b.company.nameAr) : ''} user={me.user} roleLabel={b ? (b.access ? local(b.access.name, b.access.nameAr ?? null) : t(`role.${b.role}`)) : undefined} onSignOut={onSignOut}>
-        {(b ? navFor(b.company.modules, b.access?.permissions) : NAV.filter((m) => m.key === 'Home')).map((m) => (
+        {(b ? navFor(b.company.modules, b.access?.permissions, hiddenFor(b.portal?.tenantKind)) : NAV.filter((m) => m.key === 'Home')).map((m) => (
           <div key={m.key}>
             <button className={`${m.key === mod.key ? 'on' : ''} ${isModuleBuilt(m) ? '' : 'soon'}`} aria-current={m.key === mod.key && !sub ? 'page' : undefined}
               aria-expanded={m.subs.length ? open === m.key : undefined} onClick={() => onModule(m)}>
@@ -96,7 +98,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
         {books.error && <ErrorNote error={books.error} onRetry={books.reload} />}
         {!b ? <Loading /> : (
           <>
-            {!b.canPost && mod.key !== 'Review' && <div className="notice warn">{t('viewOnly')}</div>}
+            {!b.canPost && !['Review', 'Portal', 'Calendar'].includes(mod.key) && <div className="notice warn">{t('viewOnly')}</div>}
             {b.access && accessTo(b.access.permissions, mod.key) === 'none' ? (
               <div className="card"><h2>{t('access.noneTitle')}</h2><p className="mut">{t('access.noneText', { role: local(b.access.name, b.access.nameAr ?? null) })}</p>
                 <button className="b p" onClick={() => goModule('Home')}>{t('mod.Home')}</button></div>
@@ -169,6 +171,8 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
       if (sub === 'depreciation') return <Depreciation books={books} />;
       return item ? <AssetPage key={item} books={books} id={item} /> : <AssetRegister books={books} />;
     case 'Review': return <Review books={books} sub={sub} item={item} />;
+    case 'Portal': return <Portal books={books} sub={sub} item={item} extra={extra} />;
+    case 'Calendar': return <Calendar books={books} sub={sub} />;
     case 'CRM':
       if (sub === 'leads') return <Leads books={books} id={item} />;
       if (sub === 'activities') return <Activities books={books} />;

@@ -76,6 +76,8 @@ export interface CompanyBooks {
   access?: { name: string; nameAr?: string | null; permissions: Record<string, string>; canApprove: boolean; canReview?: boolean; canSignOff?: boolean } | null;
   /** Review rights here: firm staff by their role, client users by their role's review and sign-off rights. */
   review?: { canReview: boolean; canSignOff: boolean };
+  /** Firm staff on this client (the portal's firm side), whether this person keeps the calendar, and the customer's kind. */
+  portal?: { firm: boolean; calendarEdit: boolean; tenantKind: 'firm' | 'company' | 'platform' | null };
   accounts: Account[]; costCentres: CostCentre[]; periods: Period[];
   /** The latest month the accounting firm signed off ("reviewed by your accountant"). */
   reviewedUpTo?: { periodEnd: string; signedBy: string; signedAt: string } | null;

@@ -410,3 +410,34 @@ button.card.fig { text-align: start; font: inherit; color: inherit; cursor: poin
 button.card.fig:hover { border-color: var(--teal); }
 .owner-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: var(--tealbg); }
 .good-text { color: var(--good); } button.link.drill { text-align: start; color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
+
+/* Compliance calendar and client portal */
+.card.fig.over { border-color: var(--bad); }
+.card.fig.over b { color: var(--bad); }
+.cal-date { width: 56px; text-align: center; }
+.cal-date b { display: block; font-size: 20px; line-height: 1.1; }
+.cal-date small { color: var(--mut); }
+.calgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.calhead { font-size: 12px; color: var(--mut); text-align: center; padding: 4px 0; }
+.calday { min-height: 84px; border: 1px solid var(--line); border-radius: 8px; padding: 4px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.calday.empty { border: 0; }
+.calday.today { border-color: var(--teal); box-shadow: inset 0 0 0 1px var(--teal); }
+.calnum { font-size: 12px; color: var(--mut); }
+.calitem { font-size: 11px; line-height: 1.25; padding: 2px 4px; border-radius: 4px; background: var(--tealbg, var(--line)); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calitem.bad { background: var(--badbg); color: var(--bad); }
+.calitem.warn { background: var(--warnbg); color: var(--warn); }
+.calitem.good { background: var(--goodbg); color: var(--good); text-decoration: line-through; }
+@media (max-width: 640px) {
+  .calday { min-height: 48px; padding: 2px; }
+  .calitem { font-size: 0; padding: 0; height: 6px; border-radius: 3px; }
+}
+.checks { display: grid; gap: 10px; }
+.checks .check-one { align-items: flex-start; font-weight: 600; }
+button.card.tile.wide { display: block; width: 100%; margin-bottom: 12px; }
+button.card.tile.wide b { display: block; font-size: 17px; margin: 2px 0; }
+.pt-files { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; }
+.letter { max-width: 760px; }
+.letter-text { white-space: pre-wrap; line-height: 1.6; margin-bottom: 14px; }
+table.cal td:nth-child(3) { width: 110px; }
+table.cal td:nth-child(4) { width: 280px; }
+@media (max-width: 640px) { table.cal td:nth-child(3), table.cal td:nth-child(4) { width: auto; } }

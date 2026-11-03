@@ -1,4 +1,6 @@
 import { ReviewedBadge } from '../review/Review.tsx';
+import { useDates, useDeadlineText, type CalItem } from '../calendar/Calendar.tsx';
+import { today } from '../router.ts';
 import { useApi, type CompanyBooks } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
 import { fmt, neg } from '../money.ts';
@@ -27,6 +29,7 @@ export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?:
   return (
     <>
       <ReviewedBadge books={books} go={go} />
+      <FromAccountant books={books} go={go} />
       <div className="grid">
         {figs.map(([label, value, note]) => (
           <div key={label} className="card fig">
@@ -36,6 +39,7 @@ export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?:
           </div>
         ))}
       </div>
+      <ComingUp books={books} go={go} />
       <div className="card">
         <h2>{t('home.todo')}</h2>
         <table>
@@ -59,5 +63,45 @@ export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?:
         </div>
       </div>
     </>
+  );
+}
+
+/** What the accounting firm is waiting for, and its latest monthly report (client users of a firm's client). */
+function FromAccountant({ books, go }: { books: CompanyBooks; go: (m: string, sub?: string) => void }) {
+  const { t } = useI18n();
+  const skip = books.portal?.firm || books.portal?.tenantKind === 'company';
+  const o = useApi<{ openRequests: number; unreadLetters: number }>(skip ? null : `/api/companies/${books.company.id}/portal/overview`);
+  if (skip || !o.data || (!o.data.openRequests && !o.data.unreadLetters)) return null;
+  return (
+    <div className="notice warn actions" id="home-portal">
+      {o.data.openRequests > 0 && <span>{t('home.asked', { n: o.data.openRequests })}</span>}
+      {o.data.unreadLetters > 0 && <span>{t('home.newReport')}</span>}
+      <span className="spacer" />
+      <button className="b small p" onClick={() => go('Portal', 'overview')}>{t('home.openPortal')}</button>
+    </div>
+  );
+}
+
+/** Deadlines overdue or due within 14 days. */
+function ComingUp({ books, go }: { books: CompanyBooks; go: (m: string, sub?: string) => void }) {
+  const { t } = useI18n();
+  const dt = useDates();
+  const text = useDeadlineText(books.company.country);
+  const c = useApi<CalItem[]>(`/api/companies/${books.company.id}/calendar`);
+  const now = today();
+  const open = (c.data ?? []).filter((i) => i.status === 'overdue' || i.status === 'soon');
+  const next = (c.data ?? []).find((i) => i.status === 'later' && i.due >= now);
+  if (!c.data) return null;
+  return (
+    <div className="card" id="home-deadlines">
+      <div className="actions" style={{ marginBottom: 6 }}><h2 style={{ margin: 0 }}>{t('home.deadlines')}</h2><span className="spacer" />
+        <button className="link" onClick={() => go('Calendar', 'upcoming')}>{t('home.openCalendar')}</button></div>
+      {open.length === 0 ? <div className="mut small">{next ? t('home.nextDeadline', { what: text(next).title, date: dt.day(next.due) }) : t('cal.none')}</div> : (
+        <table><tbody>{open.slice(0, 5).map((i) => (
+          <tr key={i.key}><td><b>{text(i).title}</b><div className="small mut">{text(i).detail}</div></td>
+            <td className="num"><span className={`badge ${i.status === 'overdue' ? 'bad' : 'warn'}`}>{i.status === 'overdue' ? t('cal.s.overdue') : dt.day(i.due)}</span></td></tr>
+        ))}</tbody></table>
+      )}
+    </div>
   );
 }

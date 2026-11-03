@@ -20,6 +20,10 @@ import * as Fa from '../books/assetsService.js';
 import * as Hr from '../books/hrmService.js';
 import * as Crm from '../books/crmService.js';
 import * as Review from '../books/reviewService.js';
+import * as Cal from '../books/calendarService.js';
+import * as Portal from '../books/portalService.js';
+import { addAttachment } from '../books/setupService.js';
+import { tinyPdfBase64 } from './tinyPdf.js';
 import * as Pay from '../books/payroll.js';
 import { monthEnd, nextMonthEnd, previousMonthEnd, targetDepreciation } from '../books/assets.js';
 import { toMinor } from '../money.js';
@@ -28,6 +32,7 @@ import { DEFAULT_MODULES } from '../books/modules.js';
 import * as Rest from '../books/restaurantService.js';
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
+const monthName = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 const daysAgo = (n: number) => { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return iso(d); };
 const firstOfNextMonth = () => { const d = new Date(); return iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1))); };
 
@@ -357,6 +362,30 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       await asUser(partner);
       await Review.tick(db, id, last, 'sales_complete', true);
       await Review.tick(db, id, last, 'purchases_complete', true);
+
+      // Calendar: earlier deadlines filed (the latest left to do), and the client's own licence renewal.
+      await asUser(poster);
+      const overdue = (await Cal.calendar(db, id, daysAgo(0))).filter((i) => i.status === 'overdue');
+      for (const [n, i] of overdue.slice(0, -1).entries()) await Cal.markDone(db, id, i.key, { reference: `${i.kind === 'vat_return' ? 'VAT' : 'REF'}-${2600 + n}` });
+      await Cal.saveCustom(db, id, { title: c.country === 'AE' ? 'Municipality permit renewal' : 'Baladiya licence renewal', titleAr: 'تجديد رخصة البلدية', firstDue: daysAgo(-20), repeat: 'yearly' });
+      await Cal.saveCustom(db, id, { title: 'Civil defence certificate', titleAr: 'شهادة الدفاع المدني', firstDue: daysAgo(-75), repeat: 'yearly' });
+
+      // Portal (clients of the accounting firm): requests, documents both ways, and last signed-off month's report.
+      const client1 = DEMO_USERS.find((u) => u.kind === 'client' && u.companies.includes(c.key));
+      if (c.tenant !== 'self' && client1) {
+        const clientId = userIds[client1.email]!;
+        await asUser(partner);
+        await Portal.createRequest(db, id, { title: `Bank statement for ${monthName(last)}`, category: 'bank_statement', periodEnd: last, dueDate: daysAgo(-5), details: 'All pages, as a PDF from online banking.' });
+        const lease = await Portal.createRequest(db, id, { title: 'Signed office lease', category: 'contract', details: 'We need it to spread the rent over the lease period.' });
+        const shared = await Portal.createUpload(db, id, { category: 'tax', periodEnd: before, note: 'VAT return as filed, for your records.' });
+        await addAttachment(db, { portalUploadId: shared }, { fileName: 'vat-return-filed.pdf', contentType: 'application/pdf', data: tinyPdfBase64([`VAT return - ${c.name}`, `Period ending ${before}`, 'Filed through the authority portal.']) });
+        await Portal.publishLetter(db, id, { periodEnd: before, commentary: `Hello,\n\nWe have finished ${monthName(before)}. Sales and costs are in line with the month before, and the VAT return is filed.\n\nPlease send the bank statement and the signed lease we asked for, so we can close ${monthName(last)} on time.\n\nKind regards,\nOmar` });
+        await asUser(clientId);
+        const sent = await Portal.createUpload(db, id, { requestId: lease, category: 'contract', note: 'Signed by both parties. Two years from January.' });
+        await addAttachment(db, { portalUploadId: sent }, { fileName: 'office-lease-signed.pdf', contentType: 'application/pdf', data: tinyPdfBase64(['Office lease agreement', c.name, 'Term: 24 months', 'Signed by landlord and tenant']) });
+        const receipts = await Portal.createUpload(db, id, { category: 'receipts', periodEnd: last, note: 'Fuel and parking receipts.' });
+        await addAttachment(db, { portalUploadId: receipts }, { fileName: 'receipts.pdf', contentType: 'application/pdf', data: tinyPdfBase64(['Receipts', 'Fuel 180.00', 'Parking 45.00']) });
+      }
       await asUser(poster);
       await client.query('COMMIT');
 

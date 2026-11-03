@@ -67,7 +67,10 @@ export function periodsFor(from: string, to: string, compare: Compare): { from: 
 }
 export async function pnlColumns(db: Db, companyId: string, from: string, to: string, compare: Compare) {
   const periods = periodsFor(from, to, compare);
-  return { compare, columns: await Promise.all(periods.map((p) => profitAndLoss(db, companyId, p.from, p.to))) };
+  // One query at a time: a transaction's connection runs them in order anyway.
+  const columns = [];
+  for (const p of periods) columns.push(await profitAndLoss(db, companyId, p.from, p.to));
+  return { compare, columns };
 }
 
 // ------------------------------------------------------------------ balance sheet
@@ -147,7 +150,7 @@ export async function ownerSummary(db: Db, companyId: string, asOf: string) {
   const monthStart = `${asOf.slice(0, 7)}-01`;
   const lastStart = addMonths(monthStart, -1), lastEnd = addDays(monthStart, -1);
   const yStart = await fyStart(db, companyId, asOf);
-  const [month, last, ytd] = await Promise.all([profitAndLoss(db, companyId, monthStart, asOf), profitAndLoss(db, companyId, lastStart, lastEnd), profitAndLoss(db, companyId, yStart, asOf)]);
+  const month = await profitAndLoss(db, companyId, monthStart, asOf), last = await profitAndLoss(db, companyId, lastStart, lastEnd), ytd = await profitAndLoss(db, companyId, yStart, asOf);
   const bs = await balanceSheet(db, companyId, asOf);
   const byCode = async (code: string) => toMinor((await db.query(
     `SELECT coalesce(sum(l.debit - l.credit), 0)::numeric(18,2)::text AS v FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id JOIN accounts a ON a.id = l.account_id

@@ -17,6 +17,8 @@ import {
 import { autoAllocate, netFromGross, milliToString, quantityToMilli } from '../../../src/books/documents.ts';
 import { bankFromIban, fingerprints, ibanValid, normaliseIban, similarity, type Layout, type StatementRow } from '../../../src/bank/statement.ts';
 import { averageCost, issueCost, notePrefix, receivedValue, type NoteType } from '../../../src/books/inventory.ts';
+import * as Comp from '../../../src/books/compliance.ts';
+import { tinyPdf } from '../../../src/db/tinyPdf.ts';
 import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, previousMonthEnd, targetDepreciation, type AssetTerms } from '../../../src/books/assets.ts';
 
 type Role = 'partner' | 'reviewer' | 'staff_accountant' | 'client_accountant' | 'client_viewer';
@@ -195,6 +197,7 @@ function seed() {
     seedSales(id, poster, c);
     p(1, 'Electricity', [L('5300', net(650), 0n), L('1000', 0n, net(650))]);
     seedReview(id, poster);
+    seedPortal(id, poster, c);
     const cutoff = new Date(); cutoff.setDate(1); cutoff.setMonth(cutoff.getMonth() - 1);
     for (const per of db.periods) if (per.companyId === id && per.endDate < iso(cutoff)) per.lockedAt = new Date().toISOString();
   }
@@ -1415,6 +1418,7 @@ const routes: [string, RegExp, Handler][] = [
       role, canPost: POSTING.includes(role), canLock: role === 'partner', reviewedUpTo: reviewedUpToM(c.id),
       access: (() => { const r = clientRoleIn(c.id); return r && { name: r.name, nameAr: r.nameAr, permissions: r.permissions, canApprove: r.canApprove, canReview: r.canReview, canSignOff: r.canSignOff }; })(),
       review: { canReview: rvCan(c.id), canSignOff: rvSign(c.id) },
+      portal: { firm: ptFirm(c.id), calendarEdit: calEdit(c.id), tenantKind: firmOf(c.firmId).kind },
       accounts: db.accounts.filter((a) => a.companyId === c.id).sort((a, b) => a.code.localeCompare(b.code)),
       costCentres: db.costCentres.filter((x) => x.companyId === c.id).sort((a, b) => a.name.localeCompare(b.name)),
       periods: db.periods.filter((p) => p.companyId === c.id),
@@ -2948,6 +2952,229 @@ routes.push(
   ['GET', /^\/api\/companies\/([\w-]+)\/reports\/owner-summary$/, (m, _b, q) => ownerSummaryM(inCo(m[1]!), q.get('asOf') || today())],
   ['GET', /^\/api\/companies\/([\w-]+)\/reports\/vat-return$/, (m, _b, q) => { const to = q.get('to') || today(); return vatReturnM(inCo(m[1]!), q.get('from') || `${to.slice(0, 4)}-01-01`, to); }],
 );
+
+
+// ---------------------------------------------------------------- calendar and portal (same rules as db/migrations/0024)
+interface MCustom { id: string; companyId: string; title: string; titleAr: string | null; firstDue: string; repeat: Comp.Repeat; notes: string | null; status: 'active' | 'archived'; createdBy: string }
+interface MDone { companyId: string; key: string; due: string; reference: string | null; note: string | null; by: string; at: string }
+interface MRequest { id: string; companyId: string; title: string; details: string | null; category: string; periodEnd: string | null; dueDate: string | null; status: 'open' | 'answered' | 'done';
+  requestedBy: string; requestedAt: string; closedBy: string | null; closedAt: string | null }
+interface MUpload { id: string; companyId: string; requestId: string | null; category: string; periodEnd: string | null; note: string | null; fromFirm: boolean; status: 'new' | 'processed';
+  uploadedBy: string; uploadedAt: string; processedBy: string | null; processedAt: string | null }
+interface MLetter { id: string; companyId: string; periodEnd: string; commentary: string; figures: Record<string, string>; publishedBy: string; publishedAt: string; readBy: string | null; readAt: string | null }
+const pdb = { settings: new Map<string, Comp.ComplianceSettings>(), custom: [] as MCustom[], done: [] as MDone[], requests: [] as MRequest[], uploads: [] as MUpload[], letters: [] as MLetter[], files: [] as (MAttachment & { uploadId: string })[] };
+const CAL_ROLES: Role[] = ['partner', 'reviewer', 'staff_accountant', 'client_accountant'];
+const PT_CATS = ['bank_statement', 'receipts', 'sales', 'purchases', 'payroll', 'contract', 'tax', 'other'];
+function calEdit(companyId: string) { return CAL_ROLES.includes(roleOf(session, companyId)!); }
+function ptFirm(companyId: string) { return RV_FIRM.includes(roleOf(session, companyId)!); }
+const calOnly = (id: string) => { if (!calEdit(id)) fail(403, 'Your role does not allow this.', 'err.forbidden'); };
+const ptFirmOnly = (id: string) => { if (!ptFirm(id)) fail(403, 'Only your accountant does this.', 'err.portalFirmOnly'); };
+const ptCat = (v: unknown) => (PT_CATS.includes(String(v)) ? String(v) : 'other');
+const ptMonth = (v: unknown) => (v == null || v === '' ? null : rvMonth(v));
+function compCompany(id: string): Comp.ComplianceCompany {
+  const c = db.companies.find((x) => x.id === id)!;
+  const [m, d] = (c.fields.fyEnd ?? '12-31').split('-').map(Number) as [number, number];
+  return { country: c.country, vatStatus: c.vatStatus, vatRegistrationDate: c.fields.vatRegistrationDate || null, fyEndMonth: m, fyEndDay: d, crExpiry: c.fields.crExpiry || null, modules: c.modules };
+}
+const calSettings = (id: string) => pdb.settings.get(id) ?? Comp.defaultSettings(compCompany(id));
+function deadlinesM(id: string, from: string, to: string) {
+  const co = compCompany(id);
+  const documents = co.modules.includes('HRM') ? hdb.docs.filter((d) => d.companyId === id && d.expiryDate && d.expiryDate >= from && d.expiryDate <= to)
+    .map((d) => ({ id: d.id, kind: d.kind, label: sdb.contacts.find((c) => c.id === d.contactId)?.name ?? '', expiry: d.expiryDate! })) : [];
+  const custom = pdb.custom.filter((c) => c.companyId === id && c.status === 'active').map((c) => ({ id: c.id, title: c.title, firstDue: c.firstDue, repeat: c.repeat }));
+  return Comp.deadlinesBetween(co, calSettings(id), from, to, { documents, custom });
+}
+function calendarM(id: string, from?: string | null, to?: string | null) {
+  const t = today();
+  const f = from || Comp.addDays(t, -120), e = to || Comp.addDays(t, 365);
+  return deadlinesM(id, f, e).map((d) => {
+    const x = pdb.done.find((y) => y.companyId === id && y.key === d.key);
+    return { ...d, ...(d.kind === 'custom' ? { labelAr: pdb.custom.find((c) => c.id === d.ref)?.titleAr ?? null } : {}), status: Comp.statusOf(d.due, Boolean(x), t),
+      done: x ? { by: userName(x.by), at: x.at, reference: x.reference, note: x.note } : null };
+  });
+}
+function markDoneM(id: string, key: unknown, reference?: unknown) {
+  calOnly(id);
+  const k = String(key ?? '');
+  if (!Comp.KEY.test(k)) fail(400, 'That deadline is not on this calendar.', 'err.calKey');
+  const date = k.slice(-10);
+  const d = deadlinesM(id, Comp.addDays(date, -1), Comp.addDays(date, 400)).find((x) => x.key === k) ?? fail(400, 'That deadline is not on this calendar.', 'err.calKey');
+  pdb.done = pdb.done.filter((x) => !(x.companyId === id && x.key === k));
+  pdb.done.push({ companyId: id, key: k, due: d.due, reference: cstr(reference), note: null, by: session!, at: new Date().toISOString() });
+}
+function saveCustomM(companyId: string, b: Body, id?: string) {
+  calOnly(companyId);
+  const title = cstr(b?.title) ?? fail(400, 'Give the deadline a name.', 'err.calTitle');
+  const firstDue = String(b?.firstDue ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(firstDue)) fail(400, 'Choose the date it is due.', 'err.date');
+  const v = { title, titleAr: cstr(b?.titleAr), firstDue, repeat: (Comp.REPEATS.includes(b?.repeat as Comp.Repeat) ? b!.repeat : 'none') as Comp.Repeat, notes: cstr(b?.notes),
+    status: (b?.status === 'archived' ? 'archived' : 'active') as 'active' | 'archived' };
+  if (id) { Object.assign(pdb.custom.find((c) => c.id === id && c.companyId === companyId) ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
+  const nid = uid(); pdb.custom.push({ id: nid, companyId, createdBy: session!, ...v }); return nid;
+}
+const requestRow = (r: MRequest) => ({ ...r, requestedBy: userName(r.requestedBy), closedBy: userName(r.closedBy), answers: pdb.uploads.filter((u) => u.requestId === r.id).length });
+const requestsM = (id: string, status?: string | null) => pdb.requests.filter((r) => r.companyId === id && (!status || r.status === status)).map(requestRow)
+  .sort((a, b) => ({ answered: 0, open: 1, done: 2 }[a.status] - { answered: 0, open: 1, done: 2 }[b.status]) || (a.dueDate ?? '9').localeCompare(b.dueDate ?? '9') || b.requestedAt.localeCompare(a.requestedAt));
+function createRequestM(companyId: string, b: Body) {
+  ptFirmOnly(companyId);
+  const id = uid();
+  pdb.requests.push({ id, companyId, title: cstr(b?.title) ?? fail(400, 'Say which documents you need.', 'err.portalTitle'), details: cstr(b?.details), category: ptCat(b?.category),
+    periodEnd: ptMonth(b?.periodEnd), dueDate: cstr(b?.dueDate), status: 'open', requestedBy: session!, requestedAt: new Date().toISOString(), closedBy: null, closedAt: null });
+  return id;
+}
+function createUploadM(companyId: string, b: Body) {
+  member(companyId);
+  const firm = ptFirm(companyId);
+  const requestId = cstr(b?.requestId);
+  if (requestId) {
+    const r = pdb.requests.find((x) => x.id === requestId && x.companyId === companyId) ?? fail(400, 'That belongs to a different company.', 'err.otherCompany');
+    if (r.status === 'done') fail(400, 'This request is already dealt with.', 'err.portalRequestDone');
+    if (!firm) r.status = 'answered';
+  }
+  const id = uid(); const now = new Date().toISOString();
+  pdb.uploads.push({ id, companyId, requestId, category: ptCat(b?.category), periodEnd: ptMonth(b?.periodEnd), note: cstr(b?.note), fromFirm: firm, status: firm ? 'processed' : 'new',
+    uploadedBy: session!, uploadedAt: now, processedBy: firm ? session : null, processedAt: firm ? now : null });
+  return id;
+}
+const uploadOf = (id: string) => pdb.uploads.find((u) => u.id === id && roleOf(session, u.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function addPortalFileM(uploadId: string, b: Body) {
+  const u = uploadOf(uploadId);
+  if (u.uploadedBy !== session) fail(400, 'Only the person who sent these documents adds files to them.', 'err.portalNotYours');
+  if (u.status === 'processed' && !u.fromFirm) fail(400, 'Your accountant has dealt with these documents. Send new ones instead.', 'err.portalDealt');
+  const fileName = String(b?.fileName ?? '').trim();
+  const type = ({ pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' } as Record<string, string>)[fileName.split('.').pop()?.toLowerCase() ?? ''];
+  if (!type) fail(400, 'Attach a PDF or a picture.', 'err.attachmentType');
+  const data = String(b?.data ?? ''); const size = Math.floor((data.length * 3) / 4);
+  if (!size) fail(400, 'The file is empty.', 'err.attachmentEmpty');
+  if (size > 10 * 1024 * 1024) fail(400, 'Files can be up to 10 MB.', 'err.attachmentSize');
+  const id = uid();
+  pdb.files.push({ id, uploadId, companyId: u.companyId, documentId: null, noteId: null, fileName, contentType: type!, size, dataUrl: `data:${type};base64,${data}`,
+    uploadedBy: userName(session) ?? '', uploadedAt: new Date().toISOString() });
+  return id;
+}
+const uploadsM = (id: string, f: { status?: string | null; requestId?: string | null }) => pdb.uploads
+  .filter((u) => u.companyId === id && (!f.status || u.status === f.status) && (!f.requestId || u.requestId === f.requestId))
+  .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))
+  .map((u) => ({ ...u, requestTitle: pdb.requests.find((r) => r.id === u.requestId)?.title ?? null, uploadedBy: userName(u.uploadedBy), mine: u.uploadedBy === session, processedBy: userName(u.processedBy),
+    files: pdb.files.filter((x) => x.uploadId === u.id).map(({ id: fid, fileName, contentType, size, dataUrl }) => ({ id: fid, fileName, contentType, size, dataUrl })) }));
+function publishLetterM(companyId: string, b: Body) {
+  ptFirmOnly(companyId);
+  const pe = ptMonth(b?.periodEnd) ?? fail(400, 'Choose the month.', 'err.date');
+  if (pe >= today()) fail(400, 'A monthly report is published after the month has ended.', 'err.letterEarly');
+  const commentary = cstr(b?.commentary) ?? fail(400, 'Write your comments for the client.', 'err.portalCommentary');
+  const sm = ownerSummaryM(companyId, pe);
+  const id = uid();
+  pdb.letters.push({ id, companyId, periodEnd: pe, commentary, publishedBy: session!, publishedAt: new Date().toISOString(), readBy: null, readAt: null,
+    figures: { revenue: sm.month.revenue, grossProfit: sm.month.grossProfit, netProfit: sm.month.netProfit, ytdNetProfit: sm.yearToDate.netProfit, cash: sm.position.cash,
+      receivables: sm.position.receivables, payables: sm.position.payables, vatDue: sm.position.vatDue } });
+  return id;
+}
+const lettersM = (id: string) => pdb.letters.filter((l) => l.companyId === id).sort((a, b) => b.periodEnd.localeCompare(a.periodEnd) || b.publishedAt.localeCompare(a.publishedAt))
+  .map((l) => ({ ...l, publishedBy: userName(l.publishedBy), readBy: userName(l.readBy) }));
+
+routes.push(
+  ['GET', /^\/api\/calendar\/my-clients$/, () => db.memberships.filter((m) => m.userId === session).map((m) => {
+    const t = today();
+    const open = calendarM(m.companyId, Comp.addDays(t, -120), Comp.addDays(t, 90)).filter((i) => i.status !== 'done');
+    const next = open.find((i) => i.due >= t) ?? null;
+    return { companyId: m.companyId, overdue: open.filter((i) => i.status === 'overdue').length, soon: open.filter((i) => i.status === 'soon').length,
+      next: next && { kind: next.kind, due: next.due, label: next.label ?? null, periodEnd: next.periodEnd ?? null, docKind: next.docKind ?? null } };
+  })],
+  ['GET', /^\/api\/companies\/([\w-]+)\/calendar$/, (m, _b, q) => calendarM(inCo(m[1]!), q.get('from'), q.get('to'))],
+  ['GET', /^\/api\/companies\/([\w-]+)\/calendar\/settings$/, (m) => { const id = inCo(m[1]!); return { ...calSettings(id), saved: pdb.settings.has(id), canEdit: calEdit(id) }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/calendar\/settings$/, (m, b) => {
+    const id = inCo(m[1]!); calOnly(id);
+    const v = { ...calSettings(id), ...(b ?? {}) } as Comp.ComplianceSettings;
+    pdb.settings.set(id, { vatFrequency: v.vatFrequency === 'monthly' ? 'monthly' : 'quarterly', vatQuarterEndMonth: [1, 2, 3].includes(Number(v.vatQuarterEndMonth)) ? Number(v.vatQuarterEndMonth) : 3,
+      zakat: Boolean(v.zakat), corporateTax: Boolean(v.corporateTax), payroll: Boolean(v.payroll), socialInsurance: Boolean(v.socialInsurance) });
+    return { ok: true };
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/calendar\/done$/, (m, b) => { markDoneM(inCo(m[1]!), b?.key, b?.reference); return { ok: true }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/calendar\/undo$/, (m, b) => { const id = inCo(m[1]!); calOnly(id); pdb.done = pdb.done.filter((x) => !(x.companyId === id && x.key === b?.key)); return { ok: true }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/calendar\/custom$/, (m, _b, q) => { const id = inCo(m[1]!);
+    return pdb.custom.filter((c) => c.companyId === id && (q.get('all') === '1' || c.status === 'active')).sort((a, b) => a.status.localeCompare(b.status) || a.firstDue.localeCompare(b.firstDue))
+      .map((c) => ({ ...c, createdBy: userName(c.createdBy) })); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/calendar\/custom$/, (m, b) => ({ id: saveCustomM(inCo(m[1]!), b) })],
+  ['POST', /^\/api\/calendar\/custom\/([\w-]+)$/, (m, b) => { const c = pdb.custom.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+    return { id: saveCustomM(c.companyId, b, c.id) }; }],
+  ['GET', /^\/api\/portal\/my-clients$/, () => db.memberships.filter((m) => m.userId === session).map((m) => ({ companyId: m.companyId,
+    newUploads: pdb.uploads.filter((u) => u.companyId === m.companyId && u.status === 'new').length,
+    openRequests: pdb.requests.filter((r) => r.companyId === m.companyId && r.status === 'open').length,
+    answeredRequests: pdb.requests.filter((r) => r.companyId === m.companyId && r.status === 'answered').length,
+    unreadLetters: pdb.letters.filter((l) => l.companyId === m.companyId && !l.readAt).length }))],
+  ['GET', /^\/api\/companies\/([\w-]+)\/portal\/overview$/, (m) => {
+    const id = inCo(m[1]!);
+    const latest = lettersM(id)[0];
+    return { openRequests: pdb.requests.filter((r) => r.companyId === id && r.status === 'open').length, answeredRequests: pdb.requests.filter((r) => r.companyId === id && r.status === 'answered').length,
+      newUploads: pdb.uploads.filter((u) => u.companyId === id && u.status === 'new').length, shared: pdb.uploads.filter((u) => u.companyId === id && u.fromFirm).length,
+      unreadLetters: pdb.letters.filter((l) => l.companyId === id && !l.readAt).length, firm: ptFirm(id),
+      latestLetter: latest ? { id: latest.id, periodEnd: latest.periodEnd, publishedAt: latest.publishedAt, readAt: latest.readAt } : null,
+      requests: requestsM(id).filter((r) => r.status !== 'done').slice(0, 8) };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/portal\/requests$/, (m, _b, q) => requestsM(inCo(m[1]!), q.get('status'))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/portal\/requests$/, (m, b) => ({ id: createRequestM(inCo(m[1]!), b) })],
+  ['POST', /^\/api\/portal\/requests\/([\w-]+)\/status$/, (m, b) => {
+    const r = pdb.requests.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+    ptFirmOnly(r.companyId);
+    if (b?.status !== 'done' && b?.status !== 'open') fail(400, 'Choose done or open.', 'err.format');
+    r.status = b!.status as 'done' | 'open';
+    r.closedBy = r.status === 'done' ? session : null; r.closedAt = r.status === 'done' ? new Date().toISOString() : null;
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/portal\/uploads$/, (m, _b, q) => uploadsM(inCo(m[1]!), { status: q.get('status'), requestId: q.get('request') })],
+  ['POST', /^\/api\/companies\/([\w-]+)\/portal\/uploads$/, (m, b) => ({ id: createUploadM(inCo(m[1]!), b) })],
+  ['GET', /^\/api\/portal-uploads\/([\w-]+)\/attachments$/, (m) => { uploadOf(m[1]!); return pdb.files.filter((x) => x.uploadId === m[1]).map(({ id, fileName, contentType, size, dataUrl, uploadedBy, uploadedAt }) => ({ id, fileName, contentType, size, dataUrl, uploadedBy, uploadedAt })); }],
+  ['POST', /^\/api\/portal-uploads\/([\w-]+)\/attachments$/, (m, b) => ({ id: addPortalFileM(m[1]!, b) })],
+  ['POST', /^\/api\/portal\/uploads\/([\w-]+)\/status$/, (m, b) => {
+    const u = uploadOf(m[1]!); ptFirmOnly(u.companyId);
+    if (u.fromFirm) fail(404, 'Not found.', 'err.notFound');
+    u.status = b?.status === 'processed' ? 'processed' : 'new';
+    u.processedBy = u.status === 'processed' ? session : null; u.processedAt = u.status === 'processed' ? new Date().toISOString() : null;
+    return { ok: true };
+  }],
+  ['POST', /^\/api\/portal\/uploads\/([\w-]+)\/delete$/, (m) => {
+    const u = uploadOf(m[1]!);
+    if (u.uploadedBy !== session) fail(403, 'Only the person who sent these can remove them.', 'err.portalNotYours');
+    if (u.status === 'processed' && !u.fromFirm) fail(400, 'Your accountant has dealt with these documents; they are kept.', 'err.portalDealt');
+    pdb.uploads = pdb.uploads.filter((x) => x.id !== u.id); pdb.files = pdb.files.filter((x) => x.uploadId !== u.id);
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/portal\/letters$/, (m) => lettersM(inCo(m[1]!))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/portal\/letters$/, (m, b) => ({ id: publishLetterM(inCo(m[1]!), b) })],
+  ['POST', /^\/api\/portal\/letters\/([\w-]+)\/read$/, (m) => {
+    const l = pdb.letters.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+    if (!l.readAt && !ptFirm(l.companyId)) { l.readBy = session; l.readAt = new Date().toISOString(); }
+    return { ok: true };
+  }],
+);
+
+/** Sample calendar and portal data, as in src/db/seed.ts. */
+function seedPortal(companyId: string, poster: string, c: { key: string; name: string; country: string; tenant?: string }) {
+  const prev = session;
+  const pdf = (lines: string[]) => btoa(tinyPdf(lines));
+  const monthName = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const last = prevEnd(today()), before = prevEnd(last);
+  session = poster;
+  const overdue = calendarM(companyId).filter((i) => i.status === 'overdue');
+  overdue.slice(0, -1).forEach((i, n) => markDoneM(companyId, i.key, `${i.kind === 'vat_return' ? 'VAT' : 'REF'}-${2600 + n}`));
+  saveCustomM(companyId, { title: c.country === 'AE' ? 'Municipality permit renewal' : 'Baladiya licence renewal', titleAr: 'تجديد رخصة البلدية', firstDue: daysAgo(-20), repeat: 'yearly' });
+  saveCustomM(companyId, { title: 'Civil defence certificate', titleAr: 'شهادة الدفاع المدني', firstDue: daysAgo(-75), repeat: 'yearly' });
+  const client = DEMO_USERS.find((u) => u.kind === 'client' && u.companies.includes(c.key));
+  if (c.tenant !== 'self' && client) {
+    session = approverOf(companyId);
+    createRequestM(companyId, { title: `Bank statement for ${monthName(last)}`, category: 'bank_statement', periodEnd: last, dueDate: daysAgo(-5), details: 'All pages, as a PDF from online banking.' });
+    const lease = createRequestM(companyId, { title: 'Signed office lease', category: 'contract', details: 'We need it to spread the rent over the lease period.' });
+    const shared = createUploadM(companyId, { category: 'tax', periodEnd: before, note: 'VAT return as filed, for your records.' });
+    addPortalFileM(shared, { fileName: 'vat-return-filed.pdf', data: pdf([`VAT return - ${c.name}`, `Period ending ${before}`, 'Filed through the authority portal.']) });
+    publishLetterM(companyId, { periodEnd: before, commentary: `Hello,\n\nWe have finished ${monthName(before)}. Sales and costs are in line with the month before, and the VAT return is filed.\n\nPlease send the bank statement and the signed lease we asked for, so we can close ${monthName(last)} on time.\n\nKind regards,\nOmar` });
+    session = db.users.find((u) => u.email === client.email)!.id;
+    const sent = createUploadM(companyId, { requestId: lease, category: 'contract', note: 'Signed by both parties. Two years from January.' });
+    addPortalFileM(sent, { fileName: 'office-lease-signed.pdf', data: pdf(['Office lease agreement', c.name, 'Term: 24 months', 'Signed by landlord and tenant']) });
+    const receipts = createUploadM(companyId, { category: 'receipts', periodEnd: last, note: 'Fuel and parking receipts.' });
+    addPortalFileM(receipts, { fileName: 'receipts.pdf', data: pdf(['Receipts', 'Fuel 180.00', 'Parking 45.00']) });
+  }
+  session = prev;
+}
 
 // Sample data is created once everything above is defined.
 seed();

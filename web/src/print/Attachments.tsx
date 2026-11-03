@@ -8,10 +8,10 @@ import { zatcaQrPayload, zatcaTimestamp } from '../../../src/einvoice/zatcaQr.ts
 import { printPdf } from './Print.tsx';
 import { NotePdf, PurchasePdf, SalePdf, fileUrl, type Attachment, type NotePrint, type PurchaseDoc, type SaleDoc } from './Pdf.tsx';
 
-const MAX = 10 * 1024 * 1024;
-const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp';
+export const MAX = 10 * 1024 * 1024;
+export const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp';
 
-function toBase64(file: File): Promise<string> {
+export function toBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ''));
@@ -19,7 +19,7 @@ function toBase64(file: File): Promise<string> {
     r.readAsDataURL(file);
   });
 }
-const sizeText = (n: number) => (n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+export const sizeText = (n: number) => (n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
 export function AttachmentsCard({ owner, id, canAdd, canRemove, hint }: { owner: 'documents' | 'stock-notes' | 'hr-documents'; id: string; canAdd: boolean; canRemove: boolean; hint?: string }) {
   const { t, has } = useI18n();

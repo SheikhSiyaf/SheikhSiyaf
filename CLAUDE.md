@@ -33,7 +33,8 @@ PostgreSQL, TypeScript (Node) API, React front end, Vitest for tests. One codeba
 - Client data must never mix: every row carries company_id, every query is scoped by the user's assigned companies, enforced in the database (row-level security) and tested.
 
 ## Client registration (decided)
-Required: company name, country, CR (or trade licence in UAE) number, legal form, VAT status, address, city, financial year end, first client user (name, email).
+Required: company name, country, industry, CR (or trade licence in UAE) number, legal form, VAT status, address, city, financial year end, first client user (name, email).
+The industry sets the optional modules (Inventory, Restaurant, Assets, Projects, HRM, CRM; a restaurant gets Restaurant instead of Inventory); the Administrator can change them.
 VAT number required only if VAT registered; "VAT unregistered" means VAT rate 0%.
 Optional: Arabic name, trade name, CR expiry, VAT registration date, phone, email, website, logo, compliance notes, staff assignment.
 Validation: SA CR 10 digits; SA VAT 15 digits starting and ending with 3; UAE TRN 15 digits; CR and VAT numbers unique across clients.

@@ -3,10 +3,11 @@
 // periods, roles, company separation, registration checks) so the preview behaves like the app.
 // It is NOT the source of truth: the real rules live in db/migrations and are covered by `npm test`.
 // Data resets when the page reloads.
-import { toMinor, fromMinor } from '../../../src/money.ts';
+import { toMinor, fromMinor, divRoundHalfUp } from '../../../src/money.ts';
 import { vatForLine } from '../../../src/vat/vat.ts';
 import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../../../src/books/chartTemplate.ts';
-import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_USERS } from '../../../src/db/demoData.ts';
+import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_USERS } from '../../../src/db/demoData.ts';
+import { cleanModules, DEFAULT_MODULES, isIndustry, type Industry } from '../../../src/books/modules.ts';
 import {
   addDays, AGE_BUCKETS, ageBucket, nextOccurrence, type Frequency, documentTotals, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, sideOf,
   type AgeBucket, type Direction, type DocType, type LineInput, type PricedLine,
@@ -25,6 +26,7 @@ interface Company {
   id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string;
   vatStatus: 'registered' | 'unregistered'; vatNumber: string | null; crNumber: string; city: string;
   invoicePrefix: string; paymentTermsDays: number; status: 'active' | 'suspended';
+  industry: string; modules: string[];
   fields: Record<string, string>;   // the rest of the registration form, as entered
 }
 interface Account { id: string; companyId: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank: boolean }
@@ -131,7 +133,7 @@ function seed() {
     const id = uid();
     db.companies.push({ id, name: c.name, nameAr: c.nameAr, country: c.country, currency: c.currency, vatRate: c.vatRate, vatStatus: 'registered',
       vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: 30, status: 'active',
-      fields: { legalForm: c.legalForm, address: c.address, fyEnd: '12-31' } });
+      industry: c.industry, modules: [...DEFAULT_MODULES[c.industry]], fields: { legalForm: c.legalForm, address: c.address, fyEnd: '12-31' } });
     for (const u of DEMO_USERS.filter((x) => x.companies.includes(c.key))) db.memberships.push({ userId: userByEmail(u.email).id, companyId: id, role: u.role as Role });
     setupBooks(id);
     db.costCentres.push({ id: uid(), companyId: id, name: 'Branch 1', nameAr: 'الفرع 1', kind: 'branch' }, { id: uid(), companyId: id, name: 'Project A', nameAr: 'المشروع أ', kind: 'project' });
@@ -1054,6 +1056,87 @@ function assetSummaryM(companyId: string) {
   };
 }
 
+// ---- restaurant (same rules as db/migrations/0013_restaurant.sql)
+interface MRecipe { id: string; companyId: string; name: string; nameAr: string | null; category: string | null; salePrice: string; vatCode: string; incomeAccountId: string;
+  status: 'active' | 'archived'; lines: { itemId: string; q: bigint }[] }
+interface MSale { id: string; companyId: string; documentId: string; noteId: string | null; paymentId: string | null; method: string; createdAt: string }
+const rdb = { recipes: [] as MRecipe[], sales: [] as MSale[] };
+const restaurantOn = (companyId: string) => { if (!db.companies.find((c) => c.id === companyId)?.modules.includes('Restaurant')) fail(400, 'The Restaurant module is not turned on for this client.', 'err.restaurantOff'); };
+function recipeRow(r: MRecipe) {
+  const lines = r.lines.map((l) => {
+    const it = odb.items.find((i) => i.id === l.itemId)!;
+    const last = odb.notes.filter((n) => n.type === 'grn' && n.status === 'posted').flatMap((n) => n.lines).filter((x) => x.itemId === it.id).at(-1)?.unitCost ?? 0n;
+    const cost = it.q > 0n ? divRoundHalfUp(l.q * it.v, it.q) : divRoundHalfUp(l.q * last, 1000n);
+    return { itemId: it.id, quantity: qtyStr(l.q), sku: it.sku, name: it.name, nameAr: it.nameAr, unit: it.unit, cost: s(cost) };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  const cost = lines.reduce((t, l) => t + toMinor(l.cost), 0n); const price = toMinor(r.salePrice);
+  return { id: r.id, name: r.name, nameAr: r.nameAr, category: r.category, salePrice: r.salePrice, vatCode: r.vatCode, incomeAccountId: r.incomeAccountId, status: r.status,
+    lines, cost: s(cost), margin: s(price - cost), foodCostPct: price > 0n ? Number((cost * 1000n) / price) / 10 : null };
+}
+const recipeOf = (id: string) => rdb.recipes.find((r) => r.id === id && roleOf(session, r.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function saveRecipeM(companyId: string, b: Record<string, unknown>, id?: string) {
+  canPostIn(companyId); restaurantOn(companyId);
+  const name = String(b.name ?? '').trim();
+  if (!name) fail(400, 'Enter the menu item name.', 'err.recipeName');
+  if (rdb.recipes.some((r) => r.companyId === companyId && r.id !== id && r.name === name)) fail(400, 'Another menu item already has this name.', 'err.recipeNameTaken');
+  let price: bigint; try { price = toMinor(String(b.salePrice ?? '').trim()); } catch { return fail(400, 'Enter the selling price.', 'err.recipePrice'); }
+  const lines = ((b.lines as { itemId?: string; quantity?: string }[]) ?? []).filter((l) => l.itemId).map((l) => {
+    try { return { itemId: String(l.itemId), q: quantityToMilli(String(l.quantity ?? '').trim()) }; } catch { return fail(400, 'Enter the quantity used in one portion.', 'err.recipeQty'); }
+  });
+  if (new Set(lines.map((l) => l.itemId)).size !== lines.length) fail(400, 'Each material appears once in a recipe.', 'err.recipeDuplicate');
+  const v = { name, nameAr: (b.nameAr as string)?.trim() || null, category: (b.category as string)?.trim() || null, salePrice: s(price),
+    vatCode: ['standard', 'zero', 'exempt', 'out_of_scope'].includes(String(b.vatCode)) ? String(b.vatCode) : 'standard',
+    incomeAccountId: (b.incomeAccountId as string) || acctBy(companyId, '4000').id, status: b.status === 'archived' ? 'archived' as const : 'active' as const, lines };
+  if (id) { Object.assign(recipeOf(id), v); return id; }
+  const nid = uid(); rdb.recipes.push({ id: nid, companyId, ...v }); return nid;
+}
+function sellM(companyId: string, b: Record<string, unknown>) {
+  canPostIn(companyId); restaurantOn(companyId);
+  const date = String(b.date ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(400, 'Enter the date.', 'err.date');
+  const method = String(b.method);
+  if (!['cash', 'card', 'bank_transfer', 'on_account'].includes(method)) fail(400, 'Choose how the customer paid.', 'err.saleMethod');
+  if (method !== 'on_account' && !b.accountId) fail(400, 'Choose the cash or bank account.', 'err.bankAccount');
+  const lines = ((b.lines as { recipeId: string; quantity: number }[]) ?? []).filter((l) => l.recipeId && Number(l.quantity) !== 0)
+    .map((l) => ({ r: rdb.recipes.find((x) => x.id === l.recipeId && x.companyId === companyId) ?? fail(400, 'Choose menu items of this client.', 'err.saleEmpty'), q: Number(l.quantity) }));
+  if (!lines.length) fail(400, 'Add at least one menu item.', 'err.saleEmpty');
+  if (lines.some((l) => !Number.isInteger(l.q) || l.q < 1 || l.q > 999)) fail(400, 'Quantities are whole portions.', 'err.saleQty');
+  if (lines.some((l) => l.r.status !== 'active')) fail(400, 'This menu item is no longer on the menu.', 'err.saleArchived');
+  if (method === 'on_account' && !b.contactId) fail(400, 'Choose the customer the sale is charged to.', 'err.saleOnAccount');
+  // Check the stock first, so nothing is recorded when a material runs out (the database does this with one transaction).
+  const used = new Map<string, bigint>();
+  for (const l of lines) for (const m of l.r.lines) used.set(m.itemId, (used.get(m.itemId) ?? 0n) + m.q * BigInt(l.q));
+  for (const [iid, q] of used) { const it = odb.items.find((i) => i.id === iid)!; if (q > it.q) fail(400, `Not enough stock of ${it.name} (${it.sku}).`, 'err.notEnoughStock'); }
+  const contactId = (b.contactId as string) || sdb.contacts.find((c) => c.companyId === companyId && c.isCustomer && c.name === 'Walk-in customer')?.id
+    || saveContactM(companyId, { isCustomer: true, name: 'Walk-in customer', nameAr: 'عميل نقدي', paymentTermsDays: 0 });
+  const invoiceId = saveDraftM(companyId, { type: 'invoice', contactId, issueDate: date, dueDate: date,
+    lines: lines.map((l) => ({ description: l.r.name, quantity: String(l.q), unitPrice: l.r.salePrice, accountId: l.r.incomeAccountId, costCentreId: (b.costCentreId as string) || null, vatCode: l.r.vatCode })) });
+  issueM(invoiceId);
+  const inv = sdb.docs.find((d) => d.id === invoiceId)!;
+  let noteId: string | null = null;
+  if (used.size) {
+    noteId = saveNoteM(companyId, { type: 'gdn', date, contactId, reference: inv.number, lines: [...used.entries()].map(([itemId, q]) => ({ itemId, quantity: qtyStr(q), costCentreId: (b.costCentreId as string) || null })) });
+    postNoteM(noteId);
+  }
+  let paymentId: string | null = null;
+  const gross = s(docTotals(inv).gross);
+  if (method !== 'on_account') paymentId = payM(companyId, { direction: 'received', contactId, date, amount: gross, accountId: b.accountId, method, reference: inv.number, allocations: [{ documentId: invoiceId, amount: gross }] });
+  rdb.sales.push({ id: uid(), companyId, documentId: invoiceId, noteId, paymentId, method, createdAt: new Date().toISOString() });
+  return { invoiceId, number: inv.number };
+}
+function salesM(companyId: string, from: string, to: string) {
+  const rows = rdb.sales.filter((x) => x.companyId === companyId).map((x) => {
+    const d = sdb.docs.find((y) => y.id === x.documentId)!; const c = sdb.contacts.find((y) => y.id === d.contactId)!; const t = docTotals(d);
+    const n = odb.notes.find((y) => y.id === x.noteId);
+    return { id: x.id, method: x.method, createdAt: x.createdAt, invoiceId: d.id, number: d.number, date: d.issueDate, contactName: c.name, contactNameAr: c.nameAr,
+      netTotal: s(t.net), vatTotal: s(t.vat), grossTotal: s(t.gross), foodCost: s(n?.total ?? 0n), amountDue: s(amountDue(d)),
+      items: d.lines.map((l) => `${Number(l.quantity)} × ${l.description}`).join(', ') };
+  }).filter((x) => x.date >= from && x.date <= to).sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+  const sum = (k: 'netTotal' | 'grossTotal' | 'foodCost') => rows.reduce((t, r) => t + toMinor(r[k]), 0n);
+  const net = sum('netTotal'), cost = sum('foodCost');
+  return { from, to, sales: rows, count: rows.length, netTotal: s(net), grossTotal: s(sum('grossTotal')), foodCost: s(cost), foodCostPct: net > 0n ? Number((cost * 1000n) / net) / 10 : null };
+}
+
 /** Sample bank, stock and asset data, as in src/db/seed.ts. */
 function seedOps(companyId: string, poster: string, c: { country: string }, contacts: { gulf: string; faisal: string; najd: string; fitOut: string }) {
   const prev = session; session = poster;
@@ -1073,16 +1156,30 @@ function seedOps(companyId: string, poster: string, c: { country: string }, cont
     usefulLifeMonths: x.life, openingDepreciation: s(opening[i]!), costCentreId: cc(x.centre), serialNo: x.serial }));
   for (let m = monthEnd(booksStart); m <= previousMonthEnd(today()); m = nextMonthEnd(m)) runM(companyId, m);
 
-  const item = (sku: string, name: string, nameAr: string, unit: string, salePrice: string, reorderLevel: string) => saveItemM(companyId, { sku, name, nameAr, unit, salePrice, reorderLevel });
-  const beam = item('ST-12', 'Steel beam 12m', 'عارضة حديد 12م', 'pcs', '650.00', '10');
-  const rebar = item('RB-16', 'Rebar 16mm', 'حديد تسليح 16مم', 'ton', '2600.00', '3');
-  const angle = item('AI-50', 'Angle iron 50x50', 'زاوية حديد 50×50', 'pcs', '45.00', '50');
-  const note = (type: NoteType, ago: number, contactId: string | null, lines: object[], reference: string, other?: string) =>
-    postNoteM(saveNoteM(companyId, { type, date: daysAgo(ago), contactId, reference, otherAccountId: other ? acct(other) : null, lines }));
-  note('grn', 110, null, [{ itemId: beam, quantity: '30', unitCost: '410.00' }, { itemId: rebar, quantity: '6', unitCost: '2150.00' }, { itemId: angle, quantity: '200', unitCost: '28.50' }], 'Opening stock count', '3000');
-  note('grn', 9, contacts.najd, [{ itemId: beam, quantity: '20', unitCost: '425.00' }, { itemId: angle, quantity: '100', unitCost: '29.00' }], 'NW-DN-5531');
-  note('gdn', 3, contacts.gulf, [{ itemId: beam, quantity: '15', costCentreId: cc('Head office') }, { itemId: angle, quantity: '40', costCentreId: cc('Head office') }], 'PO-4520');
-  note('gdn', 1, contacts.faisal, [{ itemId: rebar, quantity: '4', costCentreId: contacts.fitOut }], 'Warehouse fit-out');
+  if (db.companies.find((x) => x.id === companyId)!.industry === 'restaurant') {
+    const mats: Record<string, string> = {};
+    for (const m of DEMO_RESTAURANT.materials) mats[m.sku] = saveItemM(companyId, { sku: m.sku, name: m.name, nameAr: m.nameAr, unit: m.unit, reorderLevel: m.reorder });
+    postNoteM(saveNoteM(companyId, { type: 'grn', date: daysAgo(20), contactId: contacts.najd, reference: 'Weekly delivery',
+      lines: DEMO_RESTAURANT.materials.map((m) => ({ itemId: mats[m.sku], quantity: m.qty, unitCost: m.cost })) }));
+    const menu: Record<string, string> = {};
+    for (const r of DEMO_RESTAURANT.recipes) menu[r.name] = saveRecipeM(companyId, { name: r.name, nameAr: r.nameAr, category: r.category, salePrice: r.price,
+      lines: r.lines.map(([sku, quantity]) => ({ itemId: mats[sku], quantity })) });
+    for (const sale of DEMO_RESTAURANT.sales) {
+      sellM(companyId, { date: daysAgo(sale.ago), method: sale.method, accountId: sale.method === 'cash' ? acct('1010') : sale.method === 'card' ? acct('1000') : null,
+        contactId: sale.method === 'on_account' ? contacts.faisal : null, costCentreId: cc('Head office'), lines: sale.items.map(([name, quantity]) => ({ recipeId: menu[name], quantity })) });
+    }
+  } else {
+    const item = (sku: string, name: string, nameAr: string, unit: string, salePrice: string, reorderLevel: string) => saveItemM(companyId, { sku, name, nameAr, unit, salePrice, reorderLevel });
+    const beam = item('ST-12', 'Steel beam 12m', 'عارضة حديد 12م', 'pcs', '650.00', '10');
+    const rebar = item('RB-16', 'Rebar 16mm', 'حديد تسليح 16مم', 'ton', '2600.00', '3');
+    const angle = item('AI-50', 'Angle iron 50x50', 'زاوية حديد 50×50', 'pcs', '45.00', '50');
+    const note = (type: NoteType, ago: number, contactId: string | null, lines: object[], reference: string, other?: string) =>
+      postNoteM(saveNoteM(companyId, { type, date: daysAgo(ago), contactId, reference, otherAccountId: other ? acct(other) : null, lines }));
+    note('grn', 110, null, [{ itemId: beam, quantity: '30', unitCost: '410.00' }, { itemId: rebar, quantity: '6', unitCost: '2150.00' }, { itemId: angle, quantity: '200', unitCost: '28.50' }], 'Opening stock count', '3000');
+    note('grn', 9, contacts.najd, [{ itemId: beam, quantity: '20', unitCost: '425.00' }, { itemId: angle, quantity: '100', unitCost: '29.00' }], 'NW-DN-5531');
+    note('gdn', 3, contacts.gulf, [{ itemId: beam, quantity: '15', costCentreId: cc('Head office') }, { itemId: angle, quantity: '40', costCentreId: cc('Head office') }], 'PO-4520');
+    note('gdn', 1, contacts.faisal, [{ itemId: rebar, quantity: '4', costCentreId: contacts.fitOut }], 'Warehouse fit-out');
+  }
 
   const bank = banksOf(companyId).find((b) => b.accountId === acct('1000'))!;
   const sa = c.country === 'SA';
@@ -1143,7 +1240,11 @@ function applyCompany(co: Company, c: Record<string, string | undefined>) {
   if (db.companies.some((x) => x.id !== co.id && x.crNumber === v('crNumber'))) fail(400, 'A client with this registration number already exists.', 'err.crTaken');
   if (registered && db.companies.some((x) => x.id !== co.id && x.vatNumber === v('vatNumber'))) fail(400, 'A client with this VAT number already exists.', 'err.vatTaken');
   const rate = { SA: '15.00', AE: '5.00', OM: '5.00' }[co.country];
+  const industry = (c as Record<string, unknown>).industry;
+  if (!isIndustry(industry)) fail(400, 'Choose the industry.', 'err.industry');
+  const mods = (c as Record<string, unknown>).modules;
   Object.assign(co, {
+    industry, modules: Array.isArray(mods) ? cleanModules(mods) : [...DEFAULT_MODULES[industry as Industry]],
     name: v('name'), nameAr: v('nameAr') || null, crNumber: v('crNumber'), city: v('city'),
     vatStatus: registered ? 'registered' : 'unregistered', vatNumber: registered ? v('vatNumber') : null, vatRate: registered ? rate : '0.00',
     invoicePrefix: v('invoicePrefix') || 'INV-', paymentTermsDays: Number(v('paymentTermsDays') || 30),
@@ -1178,7 +1279,8 @@ const routes: [string, RegExp, Handler][] = [
     const { role } = member(m[1]!);
     const c = db.companies.find((x) => x.id === m[1])!;
     return {
-      company: { ...companyView(c), vatStatus: c.vatStatus, vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: c.paymentTermsDays },
+      company: { ...companyView(c), vatStatus: c.vatStatus, vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: c.paymentTermsDays,
+        industry: c.industry, modules: c.modules },
       role, canPost: POSTING.includes(role), canLock: role === 'partner',
       accounts: db.accounts.filter((a) => a.companyId === c.id).sort((a, b) => a.code.localeCompare(b.code)),
       costCentres: db.costCentres.filter((x) => x.companyId === c.id).sort((a, b) => a.name.localeCompare(b.name)),
@@ -1353,6 +1455,15 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/documents\/([\w-]+)\/quotation-status$/, (m, b) => { quoteStatusM(m[1]!, String(b?.status)); return { ok: true }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/convert$/, (m) => ({ id: convertM(m[1]!) })],
   ['POST', /^\/api\/documents\/([\w-]+)\/credit$/, (m) => ({ id: creditM(m[1]!) })],
+  // ---------------------------------------------------------------- restaurant
+  ['GET', /^\/api\/companies\/([\w-]+)\/recipes$/, (m, _b, q) => { const id = inCo(m[1]!); const n = (q.get('q') ?? '').trim().toLowerCase();
+    return rdb.recipes.filter((r) => r.companyId === id && (!n || [r.name, r.nameAr, r.category].join(' ').toLowerCase().includes(n))).map(recipeRow)
+      .sort((a, b) => a.status.localeCompare(b.status) || (a.category ?? '').localeCompare(b.category ?? '') || a.name.localeCompare(b.name)); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/recipes$/, (m, b) => ({ id: saveRecipeM(inCo(m[1]!), b ?? {}) })],
+  ['GET', /^\/api\/recipes\/([\w-]+)$/, (m) => recipeRow(recipeOf(m[1]!))],
+  ['POST', /^\/api\/recipes\/([\w-]+)$/, (m, b) => { const r = recipeOf(m[1]!); return { id: saveRecipeM(r.companyId, b ?? {}, r.id) }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/restaurant\/sales$/, (m, b) => sellM(inCo(m[1]!), b ?? {})],
+  ['GET', /^\/api\/companies\/([\w-]+)\/restaurant\/sales$/, (m, _b, q) => { const to = q.get('to') || today(); return salesM(inCo(m[1]!), q.get('from') || to, to); }],
   // ---------------------------------------------------------------- bank
   ['GET', /^\/api\/companies\/([\w-]+)\/bank-accounts$/, (m) => banksOf(inCo(m[1]!)).map(bankRow).sort((a, b) => a.status.localeCompare(b.status) || a.code.localeCompare(b.code))],
   ['POST', /^\/api\/companies\/([\w-]+)\/bank-accounts$/, (m, b) => ({ id: saveBankM(inCo(m[1]!), b ?? {}) })],
@@ -1394,7 +1505,7 @@ const routes: [string, RegExp, Handler][] = [
     const total = odb.items.filter((i) => i.companyId === id).reduce((t, i) => t + i.v, 0n); const books = ledgerSum(acctBy(id, '1300').id);
     return { items, total: s(total), booksValue: s(books), difference: s(books - total) }; }],
   ['GET', /^\/api\/companies\/([\w-]+)\/stock-notes$/, (m, _b, q) => { const id = inCo(m[1]!); const n = (q.get('q') ?? '').trim().toLowerCase();
-    return odb.notes.filter((x) => x.companyId === id && x.type === q.get('type')).map(noteRow).filter((x) => !n || [x.number, x.contactName, x.reference].join(' ').toLowerCase().includes(n))
+    return odb.notes.filter((x) => x.companyId === id && x.type === q.get('type') && (q.get('manual') !== '1' || !rdb.sales.some((r) => r.noteId === x.id))).map(noteRow).filter((x) => !n || [x.number, x.contactName, x.reference].join(' ').toLowerCase().includes(n))
       .sort((a, b) => Number(b.status === 'draft') - Number(a.status === 'draft') || b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)); }],
   ['POST', /^\/api\/companies\/([\w-]+)\/stock-notes$/, (m, b) => ({ id: saveNoteM(inCo(m[1]!), b ?? {}) })],
   ['GET', /^\/api\/stock-notes\/([\w-]+)$/, (m) => { const n = noteOf(m[1]!);
@@ -1497,7 +1608,7 @@ const routes: [string, RegExp, Handler][] = [
     return {
       company: { ...c.fields, id: c.id, name: c.name, nameAr: c.nameAr ?? '', country: c.country, currency: c.currency, crNumber: c.crNumber,
         vatStatus: c.vatStatus, vatNumber: c.vatNumber ?? '', vatRate: c.vatRate, city: c.city, invoicePrefix: c.invoicePrefix,
-        paymentTermsDays: String(c.paymentTermsDays), status: c.status },
+        paymentTermsDays: String(c.paymentTermsDays), status: c.status, industry: c.industry, modules: c.modules },
       users: db.memberships.filter((x) => x.companyId === c.id).map((x) => ({ x, u: db.users.find((u) => u.id === x.userId)! }))
         .filter(({ u }) => u.kind === 'client').map(({ x, u }) => ({ ...person(u), role: x.role })),
       staff: db.users.filter((u) => u.kind === 'firm_staff').map((u) => ({ id: u.id, name: u.name, role: u.staffRole, status: u.status,
@@ -1515,7 +1626,7 @@ const routes: [string, RegExp, Handler][] = [
     emailFree(fu.email!);
     const id = uid();
     const co: Company = { id, country, currency: d![0]!, status: 'active', name: '', nameAr: null, vatRate: '0', vatStatus: 'registered', vatNumber: null,
-      crNumber: '', city: '', invoicePrefix: 'INV-', paymentTermsDays: 30, fields: {} };
+      crNumber: '', city: '', invoicePrefix: 'INV-', paymentTermsDays: 30, industry: 'other', modules: [], fields: {} };
     applyCompany(co, c);
     db.companies.push(co);
     const user = addUser(fu.name!, fu.email!, 'client', null);

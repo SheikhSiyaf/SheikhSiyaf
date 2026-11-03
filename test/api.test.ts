@@ -95,7 +95,7 @@ describe('API', () => {
   it('the Administrator registers a client with its first user, staff and books in one step', async () => {
     const a = await signIn('admin');
     const res = await post(a, '/api/admin/companies', {
-      company: { name: 'API Client', country: 'SA', crNumber: saCr(), legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'Street', city: 'Riyadh' },
+      company: { name: 'API Client', country: 'SA', industry: 'restaurant', crNumber: saCr(), legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'Street', city: 'Riyadh' },
       firstUser: { name: 'First User', email: `first.${Date.now()}@example.com` },
       staffIds: [f.partner],
     });
@@ -106,8 +106,19 @@ describe('API', () => {
     expect(books.role).toBe('partner');
     expect(books.accounts.length).toBeGreaterThan(5);
     expect(books.periods).toHaveLength(12);
+    // A restaurant starts with the Restaurant module instead of Inventory.
+    expect(books.company).toMatchObject({ industry: 'restaurant', modules: ['Restaurant', 'Assets', 'HRM', 'CRM'] });
+    const noIndustry = await post(a, '/api/admin/companies', {
+      company: { name: 'No industry', country: 'SA', crNumber: saCr(), legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'S', city: 'R' },
+      firstUser: { name: 'Y', email: `y.${Date.now()}@example.com` } });
+    expect(noIndustry.json()).toMatchObject({ key: 'err.industry' });
+    // The Administrator can turn modules on and off.
+    const edit = await post(a, `/api/admin/companies/${id}`, { company: { name: 'API Client', crNumber: books.company.crNumber, legalForm: 'LLC', vatStatus: 'registered',
+      vatNumber: books.company.vatNumber, address: 'Street', city: 'Riyadh', industry: 'restaurant', modules: ['Restaurant', 'Inventory', 'Unknown'] } });
+    expect(edit.statusCode).toBe(200);
+    expect((await get(p, `/api/companies/${id}`)).json().company.modules).toEqual(['Inventory', 'Restaurant']);
     const bad = await post(a, '/api/admin/companies', {
-      company: { name: 'Bad', country: 'SA', crNumber: '123', legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'S', city: 'R' },
+      company: { name: 'Bad', country: 'SA', industry: 'trading', crNumber: '123', legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'S', city: 'R' },
       firstUser: { name: 'X', email: `x.${Date.now()}@example.com` } });
     expect(bad.json()).toMatchObject({ key: 'err.saCr' });
   });

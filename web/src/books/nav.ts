@@ -1,3 +1,4 @@
+import { OPTIONAL_MODULES } from '../../../src/books/modules.ts';
 // The client workspace menu: each module and its sub-pages, in order.
 // `built: false` pages show what comes next in the build order (CLAUDE.md).
 export interface SubPage { key: string; built: boolean }
@@ -11,7 +12,8 @@ export const NAV: Module[] = [
   { key: 'Purchases', subs: [s('overview'), s('suppliers'), s('bills'), s('supplier-credits'), s('payments-made')] },
   { key: 'Expenses', subs: [s('overview'), s('expenses'), s('recurring'), s('categories'), s('claims'), s('approvals')] },
   { key: 'Bank', subs: [s('accounts'), s('import'), s('reconcile'), s('rules')] },
-  { key: 'Inventory', subs: [s('items'), s('grn'), s('gdn'), s('stock-value'), s('recipes', false)] },
+  { key: 'Inventory', subs: [s('items'), s('grn'), s('gdn'), s('stock-value')] },
+  { key: 'Restaurant', subs: [s('food-sales'), s('menu'), s('materials'), s('materials-in'), s('wastage'), s('material-value')] },
   { key: 'Assets', subs: [s('register'), s('depreciation')] },
   { key: 'Projects', subs: [s('projects'), s('project-report')] },
   { key: 'HRM', subs: [s('employees'), s('payroll', false), s('leave', false), s('attendance', false), s('end-of-service', false), s('hr-documents', false)] },
@@ -24,6 +26,9 @@ export const NAV: Module[] = [
 ];
 
 export const moduleOf = (key: string) => NAV.find((m) => m.key === key) ?? NAV[0]!;
+/** The menu for one client: core modules always, optional ones only when turned on for that client. */
+export const navFor = (modules: string[] | undefined) =>
+  NAV.filter((m) => !(OPTIONAL_MODULES as readonly string[]).includes(m.key) || (modules ?? []).includes(m.key));
 export const isModuleBuilt = (m: Module) => m.subs.length === 0 || m.subs.some((x) => x.built);
 
 /** Document type behind each list page. */

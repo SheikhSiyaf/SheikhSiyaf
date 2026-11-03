@@ -19,7 +19,9 @@ import * as Inv from '../books/inventoryService.js';
 import * as Fa from '../books/assetsService.js';
 import { monthEnd, nextMonthEnd, previousMonthEnd, targetDepreciation } from '../books/assets.js';
 import { toMinor } from '../money.js';
-import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_USERS } from './demoData.js';
+import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_USERS } from './demoData.js';
+import { DEFAULT_MODULES } from '../books/modules.js';
+import * as Rest from '../books/restaurantService.js';
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const daysAgo = (n: number) => { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return iso(d); };
@@ -48,9 +50,10 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
     for (const c of DEMO_COMPANIES) {
       const id: string = (await client.query(
         `INSERT INTO companies (firm_id, name, name_ar, country, currency, cr_number, legal_form, vat_status, vat_number,
-           vat_rate, address, city, fy_end_month, fy_end_day, invoice_prefix)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'registered',$8,$9,$10,$11,12,31,$12) RETURNING id`,
-        [firmId, c.name, c.nameAr, c.country, c.currency, c.crNumber, c.legalForm, c.vatNumber, c.vatRate, c.address, c.city, c.invoicePrefix])).rows[0].id;
+           vat_rate, address, city, fy_end_month, fy_end_day, invoice_prefix, industry, modules)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'registered',$8,$9,$10,$11,12,31,$12,$13,$14) RETURNING id`,
+        [firmId, c.name, c.nameAr, c.country, c.currency, c.crNumber, c.legalForm, c.vatNumber, c.vatRate, c.address, c.city, c.invoicePrefix,
+         c.industry, DEFAULT_MODULES[c.industry]])).rows[0].id;
       companyIds[c.key] = id;
       for (const u of DEMO_USERS.filter((x) => x.companies.includes(c.key))) {
         await client.query('INSERT INTO memberships (user_id, company_id, role) VALUES ($1,$2,$3)', [userIds[u.email], id, u.role]);
@@ -187,21 +190,39 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       }
       for (let m = monthEnd(booksStart); m <= previousMonthEnd(daysAgo(0)); m = nextMonthEnd(m)) await Fa.runDepreciation(db, id, m);
 
-      // Inventory: opening stock, a delivery from a supplier (its bill comes later, so 2050 shows it), and goods delivered to a customer.
-      const item = (sku: string, name: string, nameAr: string, unit: string, salePrice: string, reorderLevel: string) =>
-        Inv.saveItem(db, id, { sku, name, nameAr, unit, salePrice, reorderLevel });
-      const beam = await item('ST-12', 'Steel beam 12m', 'عارضة حديد 12م', 'pcs', '650.00', '10');
-      const rebar = await item('RB-16', 'Rebar 16mm', 'حديد تسليح 16مم', 'ton', '2600.00', '3');
-      const angle = await item('AI-50', 'Angle iron 50x50', 'زاوية حديد 50×50', 'pcs', '45.00', '50');
-      const note = async (type: 'grn' | 'gdn', ago: number, contactId: string | null, lines: Inv.NoteLineInput[], reference?: string, otherCode?: string) => {
-        const nid = await Inv.saveNoteDraft(db, id, { type, date: daysAgo(ago), contactId, reference, otherAccountId: otherCode ? acct[otherCode] : null, lines });
-        await Inv.postNote(db, nid);
-      };
-      await note('grn', 110, null, [{ itemId: beam, quantity: '30', unitCost: '410.00' }, { itemId: rebar, quantity: '6', unitCost: '2150.00' }, { itemId: angle, quantity: '200', unitCost: '28.50' }],
-        'Opening stock count', '3000');
-      await note('grn', 9, najd, [{ itemId: beam, quantity: '20', unitCost: '425.00' }, { itemId: angle, quantity: '100', unitCost: '29.00' }], 'NW-DN-5531');
-      await note('gdn', 3, gulf, [{ itemId: beam, quantity: '15', costCentreId: cc['Head office'] }, { itemId: angle, quantity: '40', costCentreId: cc['Head office'] }], 'PO-4520');
-      await note('gdn', 1, faisal, [{ itemId: rebar, quantity: '4', costCentreId: fitOut }], 'Warehouse fit-out');
+      if (c.industry === 'restaurant') {
+        // Restaurant: kitchen materials in stock, the menu with recipes, and the last few days' food sales.
+        const mats: Record<string, string> = {};
+        for (const m of DEMO_RESTAURANT.materials) mats[m.sku] = await Inv.saveItem(db, id, { sku: m.sku, name: m.name, nameAr: m.nameAr, unit: m.unit, reorderLevel: m.reorder });
+        const grn = await Inv.saveNoteDraft(db, id, { type: 'grn', date: daysAgo(20), contactId: najd, reference: 'Weekly delivery',
+          lines: DEMO_RESTAURANT.materials.map((m) => ({ itemId: mats[m.sku]!, quantity: m.qty, unitCost: m.cost })) });
+        await Inv.postNote(db, grn);
+        const menu: Record<string, string> = {};
+        for (const r of DEMO_RESTAURANT.recipes) {
+          menu[r.name] = await Rest.saveRecipe(db, id, { name: r.name, nameAr: r.nameAr, category: r.category, salePrice: r.price,
+            lines: r.lines.map(([sku, quantity]) => ({ itemId: mats[sku]!, quantity })) });
+        }
+        for (const sale of DEMO_RESTAURANT.sales) {
+          await Rest.sellFood(db, id, { date: daysAgo(sale.ago), method: sale.method, accountId: sale.method === 'cash' ? acct['1010'] : sale.method === 'card' ? acct['1000'] : null,
+            contactId: sale.method === 'on_account' ? faisal : null, costCentreId: cc['Head office'], lines: sale.items.map(([name, quantity]) => ({ recipeId: menu[name]!, quantity })) });
+        }
+      } else {
+        // Inventory: opening stock, a delivery from a supplier (its bill comes later, so 2050 shows it), and goods delivered to a customer.
+        const item = (sku: string, name: string, nameAr: string, unit: string, salePrice: string, reorderLevel: string) =>
+          Inv.saveItem(db, id, { sku, name, nameAr, unit, salePrice, reorderLevel });
+        const beam = await item('ST-12', 'Steel beam 12m', 'عارضة حديد 12م', 'pcs', '650.00', '10');
+        const rebar = await item('RB-16', 'Rebar 16mm', 'حديد تسليح 16مم', 'ton', '2600.00', '3');
+        const angle = await item('AI-50', 'Angle iron 50x50', 'زاوية حديد 50×50', 'pcs', '45.00', '50');
+        const note = async (type: 'grn' | 'gdn', ago: number, contactId: string | null, lines: Inv.NoteLineInput[], reference?: string, otherCode?: string) => {
+          const nid = await Inv.saveNoteDraft(db, id, { type, date: daysAgo(ago), contactId, reference, otherAccountId: otherCode ? acct[otherCode] : null, lines });
+          await Inv.postNote(db, nid);
+        };
+        await note('grn', 110, null, [{ itemId: beam, quantity: '30', unitCost: '410.00' }, { itemId: rebar, quantity: '6', unitCost: '2150.00' }, { itemId: angle, quantity: '200', unitCost: '28.50' }],
+          'Opening stock count', '3000');
+        await note('grn', 9, najd, [{ itemId: beam, quantity: '20', unitCost: '425.00' }, { itemId: angle, quantity: '100', unitCost: '29.00' }], 'NW-DN-5531');
+        await note('gdn', 3, gulf, [{ itemId: beam, quantity: '15', costCentreId: cc['Head office'] }, { itemId: angle, quantity: '40', costCentreId: cc['Head office'] }], 'PO-4520');
+        await note('gdn', 1, faisal, [{ itemId: rebar, quantity: '4', costCentreId: fitOut }], 'Warehouse fit-out');
+      }
 
       // Bank: the client's bank account details, last month's statement imported, and two rules.
       const bankId = (await client.query('SELECT id FROM bank_accounts WHERE account_id = $1', [acct['1000']])).rows[0].id;

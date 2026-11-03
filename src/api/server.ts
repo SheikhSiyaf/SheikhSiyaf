@@ -72,7 +72,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     const { rows } = await db.query(
       `SELECT id, name, name_ar AS "nameAr", country, currency, vat_rate AS "vatRate", vat_status AS "vatStatus",
               vat_number AS "vatNumber", cr_number AS "crNumber", city, invoice_prefix AS "invoicePrefix",
-              payment_terms_days AS "paymentTermsDays"
+              payment_terms_days AS "paymentTermsDays", industry, modules
        FROM companies WHERE id = $1`, [id]);
     const accounts = await db.query(
       `SELECT id, code, name, name_ar AS "nameAr", type, cost_centre_required AS "costCentreRequired", is_bank AS "isBank"

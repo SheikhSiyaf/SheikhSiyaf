@@ -135,7 +135,7 @@ describe('Administrator console (API)', () => {
   it('registers a client and adds another client user, each with an invitation', async () => {
     const a = await signIn(email.admin!);
     const res = await post(a, '/api/admin/companies', {
-      company: { name: 'Invite Co', country: 'SA', crNumber: saCr(), legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'S', city: 'R' },
+      company: { name: 'Invite Co', country: 'SA', industry: 'trading', crNumber: saCr(), legalForm: 'LLC', vatStatus: 'registered', vatNumber: saVat(), address: 'S', city: 'R' },
       firstUser: { name: 'First', email: `first.${Date.now()}@example.com` } });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json().invite.token).toBeTruthy();

@@ -35,6 +35,11 @@ const SUFFIXES: Record<string, string> = { llc: 'ذ.م.م', 'l.l.c': 'ذ.م.م',
 
 /** Places, common words and names, spelled the usual way. */
 const WORDS: Record<string, string> = {
+  // food and drink (menu items and kitchen materials)
+  tea: 'شاي', karak: 'كرك', coffee: 'قهوة', latte: 'لاتيه', cappuccino: 'كابتشينو', espresso: 'إسبريسو', mocha: 'موكا', juice: 'عصير', water: 'ماء',
+  milk: 'حليب', chicken: 'دجاج', beef: 'لحم بقري', lamb: 'لحم ضأن', fish: 'سمك', shrimp: 'روبيان', burger: 'برجر', sandwich: 'ساندويتش', salad: 'سلطة',
+  soup: 'شوربة', rice: 'أرز', bread: 'خبز', cheese: 'جبن', eggs: 'بيض', egg: 'بيض', tomato: 'طماطم', tomatoes: 'طماطم', lettuce: 'خس', potato: 'بطاطس',
+  potatoes: 'بطاطس', fries: 'بطاطس مقلية', oil: 'زيت', sugar: 'سكر', flour: 'دقيق', cake: 'كيك', pizza: 'بيتزا', pasta: 'باستا', fresh: 'طازج',
   gulf: 'الخليج', desert: 'الصحراء', red: 'الأحمر', sea: 'البحر', east: 'الشرق', eastern: 'الشرقية', west: 'الغرب', western: 'الغربية',
   north: 'الشمال', northern: 'الشمالية', south: 'الجنوب', southern: 'الجنوبية', arabian: 'العربية', arab: 'العربية', saudi: 'السعودية',
   emirates: 'الإمارات', riyadh: 'الرياض', jeddah: 'جدة', dubai: 'دبي', makkah: 'مكة', mecca: 'مكة', madinah: 'المدينة', medina: 'المدينة',

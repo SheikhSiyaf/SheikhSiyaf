@@ -1,5 +1,6 @@
 // Administrator console: clients, client users, firm staff, access, suspension, invitations,
 // activity log and firm settings. The Administrator never reaches the books (RLS + no memberships).
+import { cleanModules, DEFAULT_MODULES, isIndustry, type Industry } from '../books/modules.js';
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
@@ -55,6 +56,9 @@ function companyValues(c: Record<string, unknown>, country: string) {
     phone: text(c, 'phone'), email: text(c, 'email'), website: text(c, 'website'),
     compliance_notes: text(c, 'complianceNotes'),
     invoice_prefix: text(c, 'invoicePrefix') ?? 'INV-',
+    industry: isIndustry(c.industry) ? c.industry : (() => { throw new HttpError(400, 'Choose the industry.', 'err.industry'); })(),
+    // The modules chosen; when none are sent, the industry's defaults.
+    modules: Array.isArray(c.modules) ? cleanModules(c.modules) : DEFAULT_MODULES[c.industry as Industry],
     payment_terms_days: terms === null ? 30 : Number(terms),
   };
 }
@@ -73,7 +77,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
   // ------------------------------------------------------------ clients
   app.get('/api/admin/companies', async (req) => admin(req, async (db) => (await db.query(
     `SELECT c.id, c.name, c.name_ar AS "nameAr", c.country, c.currency, c.cr_number AS "crNumber",
-            c.vat_status AS "vatStatus", c.vat_number AS "vatNumber", c.vat_rate AS "vatRate", c.city, c.status,
+            c.vat_status AS "vatStatus", c.vat_number AS "vatNumber", c.vat_rate AS "vatRate", c.city, c.status, c.industry,
             c.created_at AS "createdAt",
             (SELECT count(*) FROM memberships m JOIN users u ON u.id = m.user_id
                WHERE m.company_id = c.id AND u.kind = 'client' AND u.status = 'active')::int AS "clientUsers",
@@ -89,7 +93,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
               vat_registration_date::text AS "vatRegistrationDate", vat_rate AS "vatRate", address, city,
               lpad(fy_end_month::text, 2, '0') || '-' || lpad(fy_end_day::text, 2, '0') AS "fyEnd",
               phone, email, website, compliance_notes AS "complianceNotes", invoice_prefix AS "invoicePrefix",
-              payment_terms_days::text AS "paymentTermsDays", status, created_at AS "createdAt"
+              payment_terms_days::text AS "paymentTermsDays", industry, modules, status, created_at AS "createdAt"
        FROM companies WHERE id = $1 AND firm_id = app_firm_id()`, [id]);
     if (!rows[0]) throw new HttpError(404, 'Not found.', 'err.notFound');
     const users = await db.query(

@@ -1,6 +1,7 @@
 // Administrator console: separate from the books.
 // Clients (summary, search, add, manage), Staff (add, clients handled, suspend, sign-in links),
 // Activity (who changed clients, people and access) and Settings (firm name, sign-in security).
+import { DEFAULT_MODULES, INDUSTRIES, OPTIONAL_MODULES, type Industry } from '../../../src/books/modules.ts';
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, useApi, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
@@ -114,6 +115,8 @@ function Clients() {
 
 // ------------------------------------------------------------------ Registration form (add and edit)
 type Fields = Record<string, string>;
+/** The form keeps the chosen modules as "Restaurant,Assets"; the API takes a list. */
+const toBody = (f: Fields) => ({ ...f, modules: (f.modules ?? '').split(',').filter(Boolean) });
 
 function useCompanyCheck() {
   const { t } = useI18n();
@@ -123,7 +126,7 @@ function useCompanyCheck() {
     const v = (k: string) => (f[k] ?? '').trim();
     const missing: string[] = [];
     const need = (k: string, label: Key) => { if (!v(k)) missing.push(t(label).replace(' *', '')); };
-    need('name', 'reg.name'); need('crNumber', `reg.cr${country}` as Key);
+    need('name', 'reg.name'); need('industry', 'reg.industry'); need('crNumber', `reg.cr${country}` as Key);
     if (registered) need('vatNumber', `reg.vatNumber${country}` as Key);
     need('address', 'reg.addressLine'); need('city', 'reg.city');
     if (missing.length) return t('v.required', { fields: missing.join(', ') });
@@ -165,6 +168,32 @@ function CompanyForm({ f, set, editing }: { f: Fields; set: (k: string, v: strin
             </select>
           </label>
         </div>
+        <div className="row">
+          <label className="f">{t('reg.industry')}
+            <select id="reg-industry" value={v('industry')} onChange={(e) => { set('industry', e.target.value); set('modules', DEFAULT_MODULES[e.target.value as Industry]?.join(',') ?? ''); }}>
+              <option value="">{t('reg.chooseIndustry')}</option>
+              {INDUSTRIES.map((x) => <option key={x} value={x}>{t(`industry.${x}` as Key)}</option>)}
+            </select>
+          </label>
+        </div>
+        {v('industry') && (
+          <fieldset className="modules" aria-label={t('reg.modules')}>
+            <legend className="small">{t('reg.modules')}</legend>
+            <div className="chips">
+              {OPTIONAL_MODULES.map((m) => {
+                const chosen = v('modules').split(',').filter(Boolean);
+                const on = chosen.includes(m);
+                return (
+                  <label key={m} className={`chip ${on ? 'on' : ''}`}>
+                    <input type="checkbox" checked={on} onChange={() => set('modules', (on ? chosen.filter((x) => x !== m) : [...chosen, m]).join(','))} />
+                    {t(`mod.${m}` as Key)}
+                  </label>
+                );
+              })}
+            </div>
+            <span className="small mut">{t('reg.modulesHint')}</span>
+          </fieldset>
+        )}
         <div className="mut small">
           {t('reg.derived', { currency: DERIVED[country].currency, rate: registered ? DERIVED[country].rate : 0, einv: t(`einv.${country}`) })}
           {editing && <> · {t('admin.countryFixed')}</>}
@@ -246,7 +275,7 @@ function AddClient() {
     setBusy(true);
     try {
       const { userName, userEmail, userRole, ...company } = f;
-      setDone(await api('/api/admin/companies', { body: { company, firstUser: { name: userName, email: userEmail, role: userRole }, staffIds } }));
+      setDone(await api('/api/admin/companies', { body: { company: toBody(company), firstUser: { name: userName, email: userEmail, role: userRole }, staffIds } }));
       window.scrollTo(0, 0);
     } catch (err) {
       setError(errorText(t, has, err));
@@ -327,7 +356,7 @@ function ClientPage({ id }: { id: string }) {
   if (d.error) return <ErrorNote error={d.error} onRetry={d.reload} />;
   if (!d.data) return <Loading />;
   const c = d.data.company;
-  const fields: Fields = f ?? Object.fromEntries(Object.entries(c).map(([k, v]) => [k, v ?? '']));
+  const fields: Fields = f ?? Object.fromEntries(Object.entries(c).map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v ?? '']));
   const suspended = c.status !== 'active';
 
   const run = async (fn: () => Promise<unknown>, ok?: string) => {
@@ -338,7 +367,7 @@ function ClientPage({ id }: { id: string }) {
     e.preventDefault();
     const problem = check(fields);
     if (problem) { setMsg({ bad: problem }); return; }
-    void run(async () => { await api(`/api/admin/companies/${id}`, { body: { company: fields } }); setF(undefined); }, t('admin.saved'));
+    void run(async () => { await api(`/api/admin/companies/${id}`, { body: { company: toBody(fields) } }); setF(undefined); }, t('admin.saved'));
   };
   const addUser = async (e: FormEvent) => {
     e.preventDefault();

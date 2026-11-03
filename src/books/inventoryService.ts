@@ -84,12 +84,13 @@ const NOTE_COLS = `n.id, n.company_id AS "companyId", n.type, n.status, n.number
   n.journal_entry_id AS "journalEntryId", n.created_at AS "createdAt",
   (SELECT count(*) FROM stock_note_lines l WHERE l.note_id = n.id)::int AS "lineCount"`;
 
-export async function listNotes(db: Db, companyId: string, type: NoteType, q = '') {
+/** Goods notes of one type. `manualOnly` leaves out the notes made by restaurant food sales. */
+export async function listNotes(db: Db, companyId: string, type: NoteType, q = '', manualOnly = false) {
   const { rows } = await db.query(
     `SELECT ${NOTE_COLS} FROM stock_notes n LEFT JOIN contacts c ON c.id = n.contact_id JOIN accounts a ON a.id = n.other_account_id
-     WHERE n.company_id = $1 AND n.type = $2
+     WHERE n.company_id = $1 AND n.type = $2 AND (NOT $4 OR NOT EXISTS (SELECT 1 FROM restaurant_sales rs WHERE rs.stock_note_id = n.id))
        AND ($3 = '' OR coalesce(n.number, '') ILIKE '%' || $3 || '%' OR coalesce(c.name, '') ILIKE '%' || $3 || '%' OR coalesce(n.reference, '') ILIKE '%' || $3 || '%')
-     ORDER BY (n.status = 'draft') DESC, n.note_date DESC, n.created_at DESC`, [companyId, type, q.trim()]);
+     ORDER BY (n.status = 'draft') DESC, n.note_date DESC, n.created_at DESC`, [companyId, type, q.trim(), manualOnly]);
   return rows;
 }
 

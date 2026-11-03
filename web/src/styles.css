@@ -251,3 +251,21 @@ table.notelines { min-width: 760px; }
   .bl-sugg { padding-inline-start: 0; }
   table.notelines { min-width: 0; }
 }
+
+/* Restaurant order pad: menu tiles on the left, the order on the right (stacked on phones). */
+.pos { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; align-items: start; }
+.pos-order { position: sticky; top: 10px; }
+.menu-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.menu-tile { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; text-align: start; min-height: 78px; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--card); color: var(--ink); font: inherit; cursor: pointer; }
+.menu-tile:hover { border-color: var(--teal); }
+.menu-tile.on { border-color: var(--teal); background: var(--tealbg); }
+.menu-tile span { font-variant-numeric: tabular-nums; }
+.qty-step { white-space: nowrap; display: flex; gap: 6px; align-items: center; justify-content: center; }
+.qty-step span { min-width: 22px; text-align: center; font-weight: 600; }
+button.wide { width: 100%; padding-block: 12px; font-size: 16px; }
+/* Module checklist when registering a client */
+fieldset.modules { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin: 0 0 10px; }
+label.chip { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); border-radius: 20px; padding: 6px 12px; cursor: pointer; }
+label.chip.on { border-color: var(--teal); background: var(--tealbg); color: var(--teal); font-weight: 600; }
+@media (max-width: 960px) { .pos { grid-template-columns: 1fr; } .pos-order { position: static; } }

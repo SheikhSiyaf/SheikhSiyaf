@@ -9,7 +9,7 @@ import { Home } from './Home.tsx';
 import { Journal } from './Journal.tsx';
 import { Reports } from './Reports.tsx';
 import { Vat } from './Vat.tsx';
-import { DOC_PAGES, NAV, isModuleBuilt, moduleOf } from './nav.ts';
+import { DOC_PAGES, NAV, isModuleBuilt, moduleOf, navFor } from './nav.ts';
 import { Overview } from '../sales/Overview.tsx';
 import { ContactList, ContactPage } from '../sales/Contacts.tsx';
 import { DocEditor, DocList, DocView } from '../sales/Documents.tsx';
@@ -25,6 +25,7 @@ import { EmployeeList, EmployeePage } from '../hrm/Employees.tsx';
 import { BankAccountForm, BankAccountList, BankAccountPage, ImportStatement, Reconcile, Rules } from '../bank/Bank.tsx';
 import { ItemList, ItemPage, NoteEditor, NoteList, StockValue } from '../inventory/Inventory.tsx';
 import { AssetPage, AssetRegister, Depreciation } from '../assets/Assets.tsx';
+import { FoodSale, FoodSales, MenuList, RecipePage } from '../restaurant/Restaurant.tsx';
 
 export const MODULES = NAV.map((m) => m.key);
 
@@ -66,7 +67,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
   return (
     <div className="app">
       <Sidebar subtitle={b ? local(b.company.name, b.company.nameAr) : ''} user={me.user} roleLabel={b ? t(`role.${b.role}`) : undefined} onSignOut={onSignOut}>
-        {NAV.map((m) => (
+        {(b ? navFor(b.company.modules) : NAV.filter((m) => m.key === 'Home')).map((m) => (
           <div key={m.key}>
             <button className={`${m.key === mod.key ? 'on' : ''} ${isModuleBuilt(m) ? '' : 'soon'}`} aria-current={m.key === mod.key && !sub ? 'page' : undefined}
               aria-expanded={m.subs.length ? open === m.key : undefined} onClick={() => onModule(m)}>
@@ -132,12 +133,21 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
       if (item === 'new') return <BankAccountForm books={books} />;
       return item ? <BankAccountPage key={item} books={books} id={item} filter={extra} /> : <BankAccountList books={books} />;
     case 'Inventory':
-      if (sub === 'grn' || sub === 'gdn') {
-        if (item === 'new') return <NoteEditor key={`new-${sub}-${extra ?? ''}`} books={books} type={sub} presetItemId={extra} />;
-        return item ? <NoteEditor key={item} books={books} type={sub} id={item} /> : <NoteList key={sub} books={books} type={sub} />;
+    case 'Restaurant': {
+      const mod = module as 'Inventory' | 'Restaurant';
+      if (sub === 'food-sales') {
+        if (item === 'new') return <FoodSale books={books} />;
+        return item ? <DocView key={item} books={books} id={item} /> : <FoodSales books={books} />;
       }
-      if (sub === 'stock-value') return <StockValue books={books} />;
-      return item ? <ItemPage key={item} books={books} id={item} /> : <ItemList books={books} />;
+      if (sub === 'menu') return item ? <RecipePage key={item} books={books} id={item} /> : <MenuList books={books} />;
+      const type = sub === 'grn' || sub === 'materials-in' ? 'grn' : sub === 'gdn' || sub === 'wastage' ? 'gdn' : null;
+      if (type) {
+        if (item === 'new') return <NoteEditor key={`new-${sub}-${extra ?? ''}`} books={books} type={type} presetItemId={extra} mod={mod} />;
+        return item ? <NoteEditor key={item} books={books} type={type} id={item} mod={mod} /> : <NoteList key={sub} books={books} type={type} mod={mod} />;
+      }
+      if (sub === 'stock-value' || sub === 'material-value') return <StockValue books={books} mod={mod} />;
+      return item ? <ItemPage key={item} books={books} id={item} mod={mod} /> : <ItemList books={books} mod={mod} />;
+    }
     case 'Assets':
       if (sub === 'depreciation') return <Depreciation books={books} />;
       return item ? <AssetPage key={item} books={books} id={item} /> : <AssetRegister books={books} />;

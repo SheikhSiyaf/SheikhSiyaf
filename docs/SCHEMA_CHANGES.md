@@ -138,3 +138,11 @@ Every change below is covered by a test in `test/`.
 | `depreciation_due()`: by the end of month n an asset has `round((cost - residual) x n / life, 2)`, all of it from the last month; a month books that target less what is already booked | Monthly straight-line depreciation (PRODUCT_SPEC). Missed months are caught up and the total never passes cost less residual. |
 | `depreciation_runs` (one per company per month, in order, never for a future month) and `depreciation_lines` (amount recomputed by the database) with one journal entry per run: Dr depreciation (with cost centre) / Cr 1590 | Rules 1-3: balanced, never changed, refused in locked periods. |
 | Disposal: depreciation must be up to date to the month before; one entry removes cost and accumulated depreciation, proceeds to bank, gain or loss to 4900; a disposed asset never changes | Selling or scrapping an asset leaves the books correct. |
+
+## 0013_restaurant.sql
+| Change | Why |
+|---|---|
+| `companies.industry` (trading, retail, restaurant, services, construction, manufacturing, other) and `companies.modules` (the optional modules turned on: Inventory, Restaurant, Assets, Projects, HRM, CRM) | Registration asks the industry, which sets the modules: a restaurant gets Restaurant instead of Inventory. The Administrator can change the modules. Existing clients keep every module they had. |
+| `recipes` (menu items: selling price before VAT, VAT treatment, income account, category, on or off the menu) and `recipe_lines` (materials and quantity per portion) | The menu and its recipes, so each portion's food cost comes from the materials' average cost. |
+| `restaurant_sales` linking the tax invoice, the goods delivery note for the materials used, and the payment; refused unless the client has the Restaurant module; never changed | Selling food issues the invoice, takes the materials out of stock (Dr 5000 / Cr 1300) and records the payment in one transaction: all three or none. |
+| Audit triggers and row-level security on the three tables | Rules 5 and 6. |

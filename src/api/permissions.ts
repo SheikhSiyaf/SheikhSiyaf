@@ -8,7 +8,7 @@ import { HttpError } from './errors.js';
 import type { Ctx } from './context.js';
 import { accessTo, type AccessLevel } from '../books/modules.js';
 
-type Need = { companyId: string; modules: string[]; approve?: boolean } | null;
+type Need = { companyId: string; modules: string[]; approve?: boolean; also?: string[] } | null;
 type Rule = [method: 'GET' | 'POST' | '*', path: RegExp, resolve: (db: Db, m: RegExpMatchArray, req: FastifyRequest) => Promise<Need> | Need];
 
 const UUID = '([0-9a-f-]{36})';
@@ -90,6 +90,13 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/payroll/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'payroll_runs', m[1]!, ['HRM'])],
   ['*', new RegExp(`^/api/payroll-lines/${UUID}$`), (db, m) => companyOf(db, 'payroll_lines', m[1]!, ['HRM'])],
   ['*', new RegExp(`^/api/hr-documents/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'employee_documents', m[1]!, ['HRM'])],
+  // CRM (a quotation made from a deal also needs Sales)
+  ['POST', new RegExp(`^/api/crm/deals/${UUID}/quotation$`), async (db, m) => { const n = await companyOf(db, 'crm_deals', m[1]!, ['CRM']); return n && { ...n, modules: ['CRM'], also: ['Sales'] }; }],
+  ['*', new RegExp(`^/api/companies/${UUID}/crm(/.*)?$`), c(['CRM'])],
+  ['*', new RegExp(`^/api/crm/leads/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_leads', m[1]!, ['CRM'])],
+  ['*', new RegExp(`^/api/crm/deals/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_deals', m[1]!, ['CRM'])],
+  ['*', new RegExp(`^/api/crm/activities/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_activities', m[1]!, ['CRM'])],
+  ['*', new RegExp(`^/api/crm/campaigns/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_campaigns', m[1]!, ['CRM'])],
   // assets and projects
   ['*', new RegExp(`^/api/companies/${UUID}/(assets|asset-summary|depreciation)(/.*)?$`), c(['Assets'])],
   ['*', new RegExp(`^/api/assets/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'fixed_assets', m[1]!, ['Assets'])],
@@ -113,6 +120,8 @@ export function registerPermissionCheck(app: FastifyInstance, { as }: Ctx) {
       const wanted = req.method === 'GET' ? 'view' : 'edit';
       const best = Math.max(...need.modules.map((m) => rank[accessTo(r.permissions, m)]));
       if (best < rank[wanted]) throw new HttpError(403, 'Your role does not allow this.', 'err.roleNoAccess');
+      // Some actions touch a second module too (a deal's quotation is a Sales document): both are needed.
+      if (need.also?.some((m) => rank[accessTo(r.permissions, m)] < rank[wanted])) throw new HttpError(403, 'Your role does not allow this.', 'err.roleNoAccess');
       if (need.approve && !r.can_approve) throw new HttpError(403, 'Your role does not allow approving claims.', 'err.roleNoApprove');
     }).catch((e) => {
       if (e instanceof HttpError && (e.key === 'err.roleNoAccess' || e.key === 'err.roleNoApprove')) throw e;

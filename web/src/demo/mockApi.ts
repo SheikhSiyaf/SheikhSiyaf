@@ -38,6 +38,8 @@ interface Entry { id: string; companyId: string; date: string; memo: string | nu
 interface Membership { userId: string; companyId: string; role: Role; clientRoleId?: string | null }
 interface ClientRole { id: string; name: string; nameAr: string | null; description: string | null; permissions: Record<string, AccessLevel>; canApprove: boolean; status: 'active' | 'archived' }
 const rolesDb: ClientRole[] = [];
+/** The first active role with the same base, for a client user added without one. */
+const defaultRole = (base: Role) => rolesDb.find((r) => r.status === 'active' && roleBase(r.permissions) === base) ?? null;
 const roleBase = (p: Record<string, AccessLevel>): Role => (Object.values(p).includes('edit') ? 'client_accountant' : 'client_viewer');
 /** The line of the profit and loss an account sits on (same defaults as db/migrations/0016). */
 function pnlGroupOf(a: Account): string | null {
@@ -1746,7 +1748,8 @@ const routes: [string, RegExp, Handler][] = [
     applyCompany(co, c);
     db.companies.push(co);
     const user = addUser(fu.name!, fu.email!, 'client', null);
-    db.memberships.push({ userId: user.id, companyId: id, role: fu.role === 'client_viewer' ? 'client_viewer' : 'client_accountant' });
+    const fcr = rolesDb.find((r) => r.id === fu.clientRoleId) ?? defaultRole(fu.role === 'client_viewer' ? 'client_viewer' : 'client_accountant');
+    db.memberships.push({ userId: user.id, companyId: id, role: fcr ? roleBase(fcr.permissions) : 'client_accountant', clientRoleId: fcr?.id ?? null });
     logActivity('act.clientAdded', { client: co.name });
     for (const sid of (b?.staffIds as string[] | undefined) ?? []) assign(sid, id, true);
     setupBooks(id);
@@ -1773,7 +1776,7 @@ const routes: [string, RegExp, Handler][] = [
     if (!name || !email) fail(400, 'Enter the name and email.', 'err.nameEmail');
     emailFree(email);
     const u = addUser(name, email, 'client', null);
-    const cr = b?.clientRoleId ? rolesDb.find((r) => r.id === b.clientRoleId) ?? fail(404, 'Not found.', 'err.notFound') : null;
+    const cr = b?.clientRoleId ? rolesDb.find((r) => r.id === b.clientRoleId) ?? fail(404, 'Not found.', 'err.notFound') : defaultRole(b?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant');
     db.memberships.push({ userId: u.id, companyId: c.id, role: cr ? roleBase(cr.permissions) : b?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant', clientRoleId: cr?.id ?? null });
     return { invite: newInvite(u) };
   }],
@@ -1781,14 +1784,15 @@ const routes: [string, RegExp, Handler][] = [
     admin();
     const c = company(m[1]!);
     const ms = db.memberships.find((x) => x.companyId === c.id && x.userId === m[2] && db.users.find((u) => u.id === x.userId)?.kind === 'client') ?? fail(404, 'Not found.', 'err.notFound');
-    const cr = b?.clientRoleId ? rolesDb.find((r) => r.id === b.clientRoleId) ?? fail(404, 'Not found.', 'err.notFound') : null;
-    ms.clientRoleId = cr?.id ?? null;
-    ms.role = cr ? roleBase(cr.permissions) : b?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant';
-    logActivity('act.roleAssigned', { name: db.users.find((u) => u.id === ms.userId)!.name, client: c.name, role: cr?.name ?? ms.role });
+    if (!b?.clientRoleId) fail(400, 'Choose a role.', 'err.roleChoose');
+    const cr = rolesDb.find((r) => r.id === b!.clientRoleId) ?? fail(404, 'Not found.', 'err.notFound');
+    ms.clientRoleId = cr.id;
+    ms.role = roleBase(cr.permissions);
+    logActivity('act.roleAssigned', { name: db.users.find((u) => u.id === ms.userId)!.name, client: c.name, role: cr.name });
     return { ok: true };
   }],
   ['GET', /^\/api\/admin\/roles$/, () => { admin();
-    return [...rolesDb].sort((a, b) => a.status.localeCompare(b.status) || a.name.localeCompare(b.name))
+    return [...rolesDb].sort((a, b) => a.status.localeCompare(b.status))
       .map((r) => ({ ...r, users: db.memberships.filter((x) => x.clientRoleId === r.id).length })); }],
   ['POST', /^\/api\/admin\/roles$/, (_m, b) => { admin(); const r = { id: uid(), ...roleValues(b) }; rolesDb.push(r); logActivity('act.roleAdded', { role: r.name }); return { id: r.id }; }],
   ['POST', /^\/api\/admin\/roles\/([\w-]+)$/, (m, b) => {
@@ -1925,7 +1929,12 @@ function checkAccess(method: string, path: string, body: Body, q: URLSearchParam
 
 // Sample data is created once everything above is defined.
 seed();
+// Client accountant and Client management are ordinary, editable roles (db/migrations/0018); every client user has one.
+const all = (level: AccessLevel) => Object.fromEntries(ROLE_MODULES.map((m) => [m, level])) as Record<string, AccessLevel>;
+rolesDb.unshift({ id: uid(), name: 'Client accountant', nameAr: 'محاسب العميل', description: 'Daily entry in every module the client has', permissions: all('edit'), canApprove: true, status: 'active' },
+  { id: uid(), name: 'Client management', nameAr: 'إدارة العميل', description: 'Sees everything, changes nothing', permissions: all('view'), canApprove: false, status: 'active' });
 for (const r of DEMO_ROLES) rolesDb.push({ id: uid(), ...r, status: 'active' });
+for (const m of db.memberships) if (!m.clientRoleId && db.users.find((u) => u.id === m.userId)?.kind === 'client') m.clientRoleId = defaultRole(m.role)?.id ?? null;
 db.activity.push({ id: uid(), at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });
 
 export function handle(method: string, url: string, body: unknown): { status: number; data: unknown } {

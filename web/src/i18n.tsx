@@ -1458,8 +1458,7 @@ const en = {
   'admin.Roles': 'Roles and permissions',
   'admin.roleChanged': '{name} now has the new role.',
   'admin.rolesHint': 'Choose each person\'s role. To make a new job title with its own access, go to',
-  'roles.hint': 'Job titles for client users and what each one can do. Firm staff keep their own roles (partner, reviewer, staff accountant). A change applies at the person\'s next click.',
-  'roles.firmRoles': 'Roles you made',
+  'roles.hint': 'Job titles for client users and what each one can do. Every role can be changed, including Client accountant and Client management. Firm staff keep their own roles (partner, reviewer, staff accountant). A change applies at the person\'s next click.',
   'roles.new': 'New role',
   'roles.editTitle': 'Change {role}',
   'roles.title': 'Title',
@@ -1486,11 +1485,6 @@ const en = {
   'roles.restored': 'Restored {role}.',
   'roles.empty': 'No roles of your own yet. Make one with New role.',
   'roles.noModules': 'No modules',
-  'roles.builtInBadge': 'Built in',
-  'roles.builtIn.client_accountant': 'Daily entry in every module the client has.',
-  'roles.builtIn.client_viewer': 'Sees everything, changes nothing.',
-  'roles.allModulesEdit': 'All modules · View and enter',
-  'roles.allModulesView': 'All modules · View only',
   'roles.about.Sales': 'Customers, quotations, invoices, receipts',
   'roles.about.Purchases': 'Suppliers, bills, payments',
   'roles.about.Expenses': 'Expenses and employee claims',
@@ -1510,6 +1504,7 @@ const en = {
   'reports.netLoss': 'Net loss',
   'access.noneTitle': 'Not part of your role',
   'access.noneText': 'Your role ({role}) does not include this module. Ask your accounting firm if you need it.',
+  'err.roleChoose': 'Choose a role.',
 };
 
 export type Key = keyof typeof en;
@@ -2971,8 +2966,7 @@ const ar: Record<Key, string> = {
   'admin.Roles': 'الأدوار والصلاحيات',
   'admin.roleChanged': 'تم تغيير دور {name}.',
   'admin.rolesHint': 'اختر دور كل شخص. لإنشاء مسمى وظيفي جديد بصلاحيات خاصة به، انتقل إلى',
-  'roles.hint': 'المسميات الوظيفية لمستخدمي العملاء وما يمكن لكل منها فعله. يحتفظ موظفو المكتب بأدوارهم (شريك، مراجع، محاسب). يسري أي تغيير مع النقرة التالية للشخص.',
-  'roles.firmRoles': 'الأدوار التي أنشأتها',
+  'roles.hint': 'المسميات الوظيفية لمستخدمي العملاء وما يمكن لكل منها فعله. يمكن تعديل كل الأدوار، بما فيها محاسب العميل وإدارة العميل. يحتفظ موظفو المكتب بأدوارهم (شريك، مراجع، محاسب). يسري أي تغيير مع النقرة التالية للشخص.',
   'roles.new': 'دور جديد',
   'roles.editTitle': 'تعديل {role}',
   'roles.title': 'المسمى',
@@ -2999,11 +2993,6 @@ const ar: Record<Key, string> = {
   'roles.restored': 'تمت استعادة {role}.',
   'roles.empty': 'لا توجد أدوار خاصة بك بعد. أنشئ دوراً من "دور جديد".',
   'roles.noModules': 'بدون وحدات',
-  'roles.builtInBadge': 'أساسي',
-  'roles.builtIn.client_accountant': 'الإدخال اليومي في كل وحدات العميل.',
-  'roles.builtIn.client_viewer': 'يرى كل شيء ولا يغيّر شيئاً.',
-  'roles.allModulesEdit': 'كل الوحدات · عرض وإدخال',
-  'roles.allModulesView': 'كل الوحدات · عرض فقط',
   'roles.about.Sales': 'العملاء، عروض الأسعار، الفواتير، المقبوضات',
   'roles.about.Purchases': 'الموردون، فواتير المشتريات، المدفوعات',
   'roles.about.Expenses': 'المصروفات ومطالبات الموظفين',
@@ -3023,6 +3012,7 @@ const ar: Record<Key, string> = {
   'reports.netLoss': 'صافي الخسارة',
   'access.noneTitle': 'ليست ضمن دورك',
   'access.noneText': 'دورك ({role}) لا يشمل هذه الوحدة. اطلب من مكتب المحاسبة إن كنت تحتاجها.',
+  'err.roleChoose': 'اختر دوراً.',
 };
 
 export type Lang = 'en' | 'ar';

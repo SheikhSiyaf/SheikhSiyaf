@@ -97,7 +97,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
               <div className="card"><h2>{t('access.noneTitle')}</h2><p className="mut">{t('access.noneText', { role: local(b.access.name, b.access.nameAr ?? null) })}</p>
                 <button className="b p" onClick={() => goModule('Home')}>{t('mod.Home')}</button></div>
             ) : <>
-            {b.access && <div className="notice small">{t('roleAccess', { role: local(b.access.name, b.access.nameAr ?? null), level: t(`access.${accessTo(b.access.permissions, mod.key)}` as Key) })}</div>}
+            {b.access && b.canPost && accessTo(b.access.permissions, mod.key) === 'view' && <div className="notice small">{t('roleAccess', { role: local(b.access.name, b.access.nameAr ?? null), level: t(`access.${accessTo(b.access.permissions, mod.key)}` as Key) })}</div>}
             <Page books={{ ...b, canPost: b.canPost && accessTo(b.access?.permissions, mod.key) === 'edit' }} module={mod.key} sub={sub?.key ?? ''} built={sub?.built ?? true} item={item} extra={extra} extra2={extra2} reloadBooks={books.reload} goModule={goModule} />
             </>}
           </>

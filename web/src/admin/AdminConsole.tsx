@@ -258,7 +258,8 @@ function AddClient() {
   const { t, has } = useI18n();
   const check = useCompanyCheck();
   const staff = useApi<StaffRow[]>('/api/admin/staff');
-  const [f, setF] = useState<Fields>({ country: 'SA', legalForm: 'LLC', vatStatus: 'registered', fyEnd: '12-31', invoicePrefix: 'INV-', paymentTermsDays: '30', userRole: 'client_accountant' });
+  const roles = useApi<ClientRole[]>('/api/admin/roles');
+  const [f, setF] = useState<Fields>({ country: 'SA', legalForm: 'LLC', vatStatus: 'registered', fyEnd: '12-31', invoicePrefix: 'INV-', paymentTermsDays: '30', userRole: '' });
   const [staffIds, setStaffIds] = useState<string[]>([]);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -275,7 +276,7 @@ function AddClient() {
     setBusy(true);
     try {
       const { userName, userEmail, userRole, ...company } = f;
-      setDone(await api('/api/admin/companies', { body: { company: toBody(company), firstUser: { name: userName, email: userEmail, role: userRole }, staffIds } }));
+      setDone(await api('/api/admin/companies', { body: { company: toBody(company), firstUser: { name: userName, email: userEmail, clientRoleId: userRole || firstRoleId(roles.data) }, staffIds } }));
       window.scrollTo(0, 0);
     } catch (err) {
       setError(errorText(t, has, err));
@@ -313,9 +314,8 @@ function AddClient() {
           <label className="f">{t('reg.firstUserName')}<input id="reg-user-name" value={f.userName ?? ''} onChange={(e) => set('userName', e.target.value)} /></label>
           <label className="f">{t('reg.firstUserEmail')}<input id="reg-user-email" type="email" value={f.userEmail ?? ''} onChange={(e) => set('userEmail', e.target.value)} dir="ltr" /></label>
           <label className="f">{t('reg.firstUserRole')}
-            <select id="reg-user-role" value={f.userRole} onChange={(e) => set('userRole', e.target.value)}>
-              <option value="client_accountant">{t('role.client_accountant')}</option>
-              <option value="client_viewer">{t('role.client_viewer')}</option>
+            <select id="reg-user-role" value={f.userRole || firstRoleId(roles.data)} onChange={(e) => set('userRole', e.target.value)}>
+              <RoleOptions roles={roles.data} />
             </select>
           </label>
         </div>
@@ -349,7 +349,7 @@ function ClientPage({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [confirmSuspend, setConfirmSuspend] = useState(false);
   const [invite, setInvite] = useState<Invite>();
-  const [nu, setNu] = useState({ name: '', email: '', role: 'client_accountant' });
+  const [nu, setNu] = useState({ name: '', email: '', role: '' });
   const [nuError, setNuError] = useState<string>();
   const [ticks, setTicks] = useState<Record<string, boolean>>({});   // shown at once, confirmed by the server
   useEffect(() => setTicks({}), [d.data]);
@@ -377,8 +377,8 @@ function ClientPage({ id }: { id: string }) {
     setNuError(undefined);
     setBusy(true);
     try {
-      const r = await api<{ invite: Invite }>(`/api/admin/companies/${id}/users`, { body: { name: nu.name, email: nu.email, ...roleBody(nu.role) } });
-      setInvite(r.invite); setNu({ name: '', email: '', role: 'client_accountant' }); d.reload();
+      const r = await api<{ invite: Invite }>(`/api/admin/companies/${id}/users`, { body: { name: nu.name, email: nu.email, clientRoleId: nu.role || firstRoleId(roles.data) } });
+      setInvite(r.invite); setNu({ name: '', email: '', role: '' }); d.reload();
     } catch (err) { setNuError(errorText(t, has, err)); } finally { setBusy(false); }
   };
 
@@ -409,8 +409,9 @@ function ClientPage({ id }: { id: string }) {
         <h2>{t('admin.clientUsersTitle')}</h2>
         <PeopleTable people={d.data.users} onChanged={d.reload} onInvite={setInvite}
           roleOf={(u) => (
-            <select aria-label={t('admin.role')} value={u.clientRoleId ?? u.role} disabled={busy}
-              onChange={(e) => void run(() => api(`/api/admin/companies/${id}/users/${u.id}/role`, { body: roleBody(e.target.value) }), t('admin.roleChanged', { name: u.name }))}>
+            <select aria-label={t('admin.role')} value={u.clientRoleId ?? ''} disabled={busy}
+              onChange={(e) => void run(() => api(`/api/admin/companies/${id}/users/${u.id}/role`, { body: { clientRoleId: e.target.value } }), t('admin.roleChanged', { name: u.name }))}>
+              {!u.clientRoleId && <option value="">{t(`role.${u.role}` as Key)}</option>}
               <RoleOptions roles={roles.data} current={u.clientRoleId} />
             </select>
           )} />
@@ -422,7 +423,7 @@ function ClientPage({ id }: { id: string }) {
             <label className="f">{t('reg.firstUserName')}<input id="nu-name" value={nu.name} onChange={(e) => setNu({ ...nu, name: e.target.value })} /></label>
             <label className="f">{t('reg.firstUserEmail')}<input id="nu-email" type="email" dir="ltr" value={nu.email} onChange={(e) => setNu({ ...nu, email: e.target.value })} /></label>
             <label className="f">{t('reg.firstUserRole')}
-              <select id="nu-role" value={nu.role} onChange={(e) => setNu({ ...nu, role: e.target.value })}>
+              <select id="nu-role" value={nu.role || firstRoleId(roles.data)} onChange={(e) => setNu({ ...nu, role: e.target.value })}>
                 <RoleOptions roles={roles.data} />
               </select>
             </label>
@@ -630,28 +631,15 @@ interface ClientRole {
   id: string; name: string; nameAr: string | null; description: string | null;
   permissions: Record<string, AccessLevel>; canApprove: boolean; status: 'active' | 'archived'; users: number;
 }
-const BUILT_IN = ['client_accountant', 'client_viewer'] as const;
-
-/** A select value is a built-in role key or a custom role id. */
-function roleBody(value: string): { role: string; clientRoleId: string | null } {
-  return (BUILT_IN as readonly string[]).includes(value) ? { role: value, clientRoleId: null } : { role: 'client_accountant', clientRoleId: value };
-}
+/** The role offered first when adding a person: the active role that enters in the most modules (usually Client accountant). */
+const firstRoleId = (roles?: ClientRole[]) => {
+  const edits = (r: ClientRole) => Object.values(r.permissions).filter((v) => v === 'edit').length;
+  return [...(roles ?? [])].filter((r) => r.status === 'active').sort((x, y) => edits(y) - edits(x))[0]?.id ?? '';
+};
 
 function RoleOptions({ roles, current }: { roles?: ClientRole[]; current?: string | null }) {
-  const { t } = useI18n();
   const local = useLocalName();
-  const custom = (roles ?? []).filter((r) => r.status === 'active' || r.id === current);
-  return (
-    <>
-      <option value="client_accountant">{t('role.client_accountant')}</option>
-      <option value="client_viewer">{t('role.client_viewer')}</option>
-      {custom.length > 0 && (
-        <optgroup label={t('roles.firmRoles')}>
-          {custom.map((r) => <option key={r.id} value={r.id}>{local(r.name, r.nameAr)}</option>)}
-        </optgroup>
-      )}
-    </>
-  );
+  return <>{(roles ?? []).filter((r) => r.status === 'active' || r.id === current).map((r) => <option key={r.id} value={r.id}>{local(r.name, r.nameAr)}</option>)}</>;
 }
 
 function AccessSummary({ permissions }: { permissions: Record<string, AccessLevel> }) {
@@ -688,7 +676,6 @@ function Roles() {
     } catch (e) { setMsg({ bad: errorText(t, has, e) }); } finally { setBusy(false); }
   };
   const setAll = (level: AccessLevel) => edit && setEdit({ ...edit, permissions: Object.fromEntries(ROLE_MODULES.map((m) => [m, level])) });
-  const builtIn = BUILT_IN.map((k) => ({ key: k, permissions: Object.fromEntries(ROLE_MODULES.map((m) => [m, k === 'client_accountant' ? 'edit' : 'view'])) as Record<string, AccessLevel> }));
 
   const form = edit && (
     <form className="card inset" id="role-form" onSubmit={(e) => { e.preventDefault(); void save(edit, t('roles.saved', { role: edit.name })); }}>
@@ -754,15 +741,6 @@ function Roles() {
           <table className="roles">
             <thead><tr><th>{t('roles.title')}</th><th>{t('roles.access')}</th><th>{t('roles.approves')}</th><th className="num">{t('roles.people')}</th><th /></tr></thead>
             <tbody>
-              {builtIn.map((b) => (
-                <tr key={b.key}>
-                  <td data-label={t('roles.title')}><b>{t(`role.${b.key}`)}</b><div className="small mut">{t(`roles.builtIn.${b.key}`)}</div></td>
-                  <td data-label={t('roles.access')}><span className="small">{t(b.key === 'client_accountant' ? 'roles.allModulesEdit' : 'roles.allModulesView')}</span></td>
-                  <td data-label={t('roles.approves')}>{b.key === 'client_accountant' ? t('yes') : t('no')}</td>
-                  <td className="num mut">—</td>
-                  <td><span className="badge">{t('roles.builtInBadge')}</span></td>
-                </tr>
-              ))}
               {list.data.map((r) => (
                 <tr key={r.id} className={r.status === 'archived' ? 'mut' : ''}>
                   <td data-label={t('roles.title')}><b>{local(r.name, r.nameAr)}</b>{r.status === 'archived' && <> <span className="badge">{t('roles.archived')}</span></>}

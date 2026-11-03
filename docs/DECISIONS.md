@@ -19,7 +19,7 @@
 - In reports, projects are kept apart from cost centres: P&L by cost centre shows branches and departments, with projects as one line pointing to the Projects report.
 
 - Reports show account names, not account codes. The profit and loss reads: Sales, less Cost of sales = Gross profit, less Indirect expenses, add Indirect income = Net profit. Each income and expense account has its line (set automatically, changeable in Ledger > Chart of accounts).
-- Client roles: the Administrator defines job titles for client users in Roles and permissions, each with None, View or View and enter per module, and whether it may approve expense claims. Client accountant (everything) and Client management (view everything) stay as built-in roles. Firm staff keep their fixed roles. A role in use cannot be archived.
+- Client roles: the Administrator defines job titles for client users in Roles and permissions, each with None, View or View and enter per module, and whether it may approve expense claims. Every role is editable: Client accountant (everything) and Client management (view everything) are created for each firm as ordinary roles, and every client user has a role. Firm staff keep their fixed roles. A role in use cannot be archived.
 
 ## Open
 - Restaurant POS integration (importing sales from the restaurant's own POS instead of entering them in Nusuh Books): which POS systems.

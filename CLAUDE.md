@@ -27,10 +27,10 @@ PostgreSQL, TypeScript (Node) API, React front end, Vitest for tests. One codeba
 1 Foundation (db, logins, roles, audit, cost centres, ledger, period lock) -> 2 Sales/purchases/inventory/assets/bank -> 3 Reports and review layer -> 4 ZATCA, then UAE -> 5 Portal, calendar, approvals, forecast -> 6 HRM, CRM, restaurant -> 7 Pilot.
 
 ## Users and access (decided)
-- Four kinds of people: Administrator (separate admin console, never sees books), firm staff (Firm partner, Reviewer, Staff accountant; see only clients assigned to them), client users (Client accountant, Client management view-only; see only their own company).
+- Four kinds of people: Administrator (separate admin console, never sees books), firm staff (Firm partner, Reviewer, Staff accountant; see only clients assigned to them), client users (each with a client role; see only their own company).
 - No client or role switcher inside the app. Login decides everything.
 - Roles: partner/staff accountant/client accountant can post; reviewer reviews and signs off; only partner locks periods; only Administrator adds clients, staff and users.
-- Client roles: the Administrator defines job titles for client users (Admin > Roles and permissions) with None/View/View and enter per module and an "approve claims" right. Checked in the API per module; the database still blocks writes for view-only roles.
+- Client roles: the Administrator defines job titles for client users (Admin > Roles and permissions) with None/View/View and enter per module and an "approve claims" right. Every role is editable: Client accountant and Client management are created for each firm as ordinary roles, and every client user has a role. Checked in the API per module; the database still blocks writes for view-only roles.
 - Client data must never mix: every row carries company_id, every query is scoped by the user's assigned companies, enforced in the database (row-level security) and tested.
 
 ## Client registration (decided)

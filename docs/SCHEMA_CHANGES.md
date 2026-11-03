@@ -167,3 +167,9 @@ Every change below is covered by a test in `test/`.
 | `client_roles` (per firm: title in English and Arabic, description, access per module as none, view or edit, can approve claims, active or archived); audited, never deleted; only the Administrator adds or changes them | The Administrator defines job titles for client users (Cashier, Store keeper, ...) with their own access. |
 | `memberships.client_role_id`; a trigger sets the membership's base role from the role (any "edit" = client accountant, otherwise client management) and keeps it in step when the role changes | The database still refuses every write from someone whose role only views. The API checks each module against the role. |
 | `app_client_role(company)`; Administrator-only update of a client user's role; the activity page includes role changes | The books know the person's access; changes are audited and visible to the Administrator. |
+
+## 0018_editable_client_roles.sql
+| Change | Why |
+|---|---|
+| Each firm gets "Client accountant" (all modules: view and enter; approves claims) and "Client management" (all modules: view only) as ordinary rows in `client_roles`, also for new firms (trigger on `firms`) | The Administrator can change every role; there are no fixed roles any more. |
+| Every client user's membership gets a role: existing ones and new ones added without a role get the firm's first active role with the same base | Access always comes from a role the Administrator can see and change. |

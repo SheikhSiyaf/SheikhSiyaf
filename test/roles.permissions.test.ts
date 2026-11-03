@@ -123,9 +123,26 @@ describe('Roles and permissions', () => {
     await post(a, `/api/admin/roles/${cashier}`, { name: 'Cashier', permissions: { Expenses: 'edit' }, canApprove: true });
     expect((await post(c, `/api/documents/${claim}/approve`, {})).statusCode).toBe(200);
     const viewer = await signIn('viewerA');
-    expect((await get(viewer, `/api/companies/${f.a.id}/entries`)).statusCode).toBe(200);   // client management (built-in) reads everything
-    await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { role: 'client_accountant', clientRoleId: null });
-    expect((await get(await signIn('clientA'), `/api/companies/${f.a.id}`)).json().access).toBeNull();
+    expect((await get(viewer, `/api/companies/${f.a.id}/entries`)).statusCode).toBe(200);   // Client management reads everything
+  });
+
+  it('Client accountant and Client management are ordinary roles: every client user has one and they can be changed', async () => {
+    const a = await signIn('admin');
+    const roles = (await get(a, '/api/admin/roles')).json() as { id: string; name: string; permissions: Record<string, string>; canApprove: boolean }[];
+    const accountant = roles.find((r) => r.name === 'Client accountant')!, management = roles.find((r) => r.name === 'Client management')!;
+    expect(accountant.permissions.Journal).toBe('edit');
+    expect(management).toMatchObject({ canApprove: false, permissions: { Sales: 'view', Reports: 'view' } });
+    expect((await get(await signIn('viewerA'), `/api/companies/${f.a.id}`)).json().access).toMatchObject({ name: 'Client management' });
+    // A new client user without a role named gets one; asking for no role is refused.
+    const nu = (await post(a, `/api/admin/companies/${f.a.id}/users`, { name: 'New Person', email: `np.${Date.now()}@example.com`, role: 'client_viewer' })).json();
+    expect((await owner.query('SELECT r.name FROM memberships m JOIN client_roles r ON r.id = m.client_role_id WHERE m.user_id = $1', [nu.invite.userId])).rows[0].name).toBe('Client management');
+    expect((await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: null })).json()).toMatchObject({ key: 'err.roleChoose' });
+    // Change the default accountant role: no Journal any more.
+    await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: accountant.id });
+    await post(a, `/api/admin/roles/${accountant.id}`, { name: 'Client accountant', permissions: { ...accountant.permissions, Journal: 'none' }, canApprove: true });
+    const c = await signIn('clientA');
+    expect((await get(c, `/api/companies/${f.a.id}/entries`)).json()).toMatchObject({ key: 'err.roleNoAccess' });
+    expect((await get(c, `/api/companies/${f.a.id}/documents?type=invoice`)).statusCode).toBe(200);
   });
 
   it('roles in use cannot be archived; the activity page shows role changes', async () => {

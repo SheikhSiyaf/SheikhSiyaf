@@ -118,6 +118,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
     let first: { name: string; email: string };
     try { first = person(b.firstUser); } catch { throw new HttpError(400, 'Add the first client user (name and email).', 'err.firstClientUser'); }
     const firstRole = b.firstUser?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant';
+    const firstClientRole = b.firstUser?.clientRoleId ? uuidParam(String(b.firstUser.clientRoleId)) : null;
     const staffIds = (b.staffIds ?? []).map((x) => uuidParam(String(x)));
 
     return admin(req, async (db) => {
@@ -130,7 +131,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
       const u = await db.query(
         `INSERT INTO users (firm_id, kind, full_name, email) VALUES (app_firm_id(), 'client', $1, $2) RETURNING id`,
         [first.name, first.email]);
-      await db.query('INSERT INTO memberships (user_id, company_id, role) VALUES ($1, $2, $3)', [u.rows[0].id, companyId, firstRole]);
+      await db.query('INSERT INTO memberships (user_id, company_id, role, client_role_id) VALUES ($1, $2, $3, $4)', [u.rows[0].id, companyId, firstRole, firstClientRole]);
       for (const staffId of staffIds) {
         await db.query(
           `INSERT INTO memberships (user_id, company_id, role)
@@ -181,11 +182,12 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
     });
   });
 
-  // A client user's role: one of the two built-in ones, or a role made in Roles and permissions.
+  // A client user's role: one of the roles in Roles and permissions (every client user has one).
   app.post<{ Params: { id: string; userId: string }; Body: { role?: string; clientRoleId?: string | null } }>('/api/admin/companies/:id/users/:userId/role', async (req) => {
     const id = uuidParam(req.params.id), userId = uuidParam(req.params.userId);
-    const clientRoleId = req.body?.clientRoleId ? uuidParam(String(req.body.clientRoleId)) : null;
-    const role = CLIENT_ROLES.includes(String(req.body?.role)) ? String(req.body?.role) : 'client_accountant';
+    if (!req.body?.clientRoleId) throw new HttpError(400, 'Choose a role.', 'err.roleChoose');
+    const clientRoleId = uuidParam(String(req.body.clientRoleId));
+    const role = 'client_accountant';   // the database sets it from the role
     return admin(req, async (db) => {
       const { rowCount } = await db.query(
         `UPDATE memberships m SET role = $3, client_role_id = $4 FROM users u
@@ -199,7 +201,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
   app.get('/api/admin/roles', async (req) => admin(req, async (db) => (await db.query(
     `SELECT r.id, r.name, r.name_ar AS "nameAr", r.description, r.permissions, r.can_approve AS "canApprove", r.status,
             (SELECT count(*) FROM memberships m WHERE m.client_role_id = r.id)::int AS users
-     FROM client_roles r WHERE r.firm_id = app_firm_id() ORDER BY r.status, r.name`)).rows));
+     FROM client_roles r WHERE r.firm_id = app_firm_id() ORDER BY r.status, r.created_at, r.name`)).rows));
   const roleValues = (b: Record<string, unknown>) => {
     const name = String(b.name ?? '').trim();
     if (!name) throw new HttpError(400, 'Enter the title.', 'err.roleName');

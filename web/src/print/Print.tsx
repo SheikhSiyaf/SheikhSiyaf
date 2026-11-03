@@ -40,7 +40,14 @@ export async function printPdf(title: string, build: () => ReactNode | Promise<R
   show?.({ node, title });
 }
 
-function download(bytes: Uint8Array, fileName: string, type: string) {
+/** In the Claude preview the viewer is asked to save the file (the page itself may not download); in the app, a normal download. */
+async function download(bytes: Uint8Array, fileName: string, type: string) {
+  const name = fileName.replace(/[\\/:*?"<>|]/g, '-');
+  const claude = (window as unknown as { claude?: { use?: (n: string) => Promise<{ save: (r: { filename: string; data: Blob }) => Promise<unknown> } | null> } }).claude;
+  if (claude?.use) {
+    const downloads = await claude.use('downloads').catch(() => null);
+    if (downloads) { await downloads.save({ filename: name, data: new Blob([bytes as BlobPart], { type }) }).catch(() => undefined); return; }
+  }
   const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }));
   const a = document.createElement('a');
   a.href = url; a.download = fileName.replace(/[\\/:*?"<>|]/g, '-');
@@ -85,7 +92,7 @@ export function ExportBar({ books, title, period: fixed, target }: { books: Comp
     const el = target.current; if (!el) return;
     const period = periodOf(el); const name = `${title} ${period} - ${company}`;
     const { header, rows } = readTables(el);
-    download(writeXlsx({ title: [company, `${title} · ${period}`, `${t('pdf.printedOn')} ${new Date().toISOString().slice(0, 10)}`], header, rows,
+    void download(writeXlsx({ title: [company, `${title} · ${period}`, `${t('pdf.printedOn')} ${new Date().toISOString().slice(0, 10)}`], header, rows,
       rightToLeft: lang === 'ar', sheetName: title }), `${name}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   };
   return (

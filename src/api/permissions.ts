@@ -33,7 +33,8 @@ const RULES: Rule[] = [
   ['POST', new RegExp(`^/api/documents/${UUID}/(approve|reject)$`), async (db, m) => { const n = await docOwner(db, m[1]!); return n && { ...n, approve: true }; }],
   ['*', new RegExp(`^/api/documents/${UUID}(/.*)?$`), (db, m) => docOwner(db, m[1]!)],
   ['*', new RegExp(`^/api/attachments/${UUID}(/.*)?$`), async (db, m) => {
-    const r = (await db.query(`SELECT a.company_id, d.type, a.stock_note_id, a.employee_document_id FROM attachments a LEFT JOIN documents d ON d.id = a.document_id WHERE a.id = $1`, [m[1]])).rows[0];
+    const r = (await db.query(`SELECT a.company_id, d.type, a.stock_note_id, a.employee_document_id, a.portal_upload_id FROM attachments a LEFT JOIN documents d ON d.id = a.document_id WHERE a.id = $1`, [m[1]])).rows[0];
+    if (r?.portal_upload_id) return null;   // portal files: open to everyone on the client (the database decides who sent them)
     return r ? { companyId: r.company_id, modules: r.employee_document_id ? ['HRM'] : r.stock_note_id ? ['Inventory', 'Restaurant'] : docModules(r.type) } : null;
   }],
   // customers, suppliers, employees (lists stay open to every member: they fill the pickers everywhere)

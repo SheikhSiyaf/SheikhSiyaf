@@ -134,4 +134,28 @@ describe('API', () => {
       entryDate: '2026-09-10', lines: [{ accountId: f.a.cash, debit: '1.00' }, { accountId: f.a.sales, credit: '1.00' }] });
     expect(r.json()).toMatchObject({ key: 'err.periodLocked' });
   });
+
+  it('calendar and portal through the API: roles, files and separation', async () => {
+    const c = await signIn('clientA'), v = await signIn('viewerA'), st = await signIn('staff');
+    const books = (await get(v, `/api/companies/${f.a.id}`)).json();
+    expect(books.portal).toEqual({ firm: false, calendarEdit: false, tenantKind: 'firm' });
+    expect((await get(st, `/api/companies/${f.a.id}`)).json().portal).toMatchObject({ firm: true, calendarEdit: true });
+    const cal = (await get(v, `/api/companies/${f.a.id}/calendar?from=2026-10-01&to=2026-10-31`)).json();
+    expect(cal.map((d: { key: string }) => d.key)).toContain('vat:2026-09-30');
+    expect((await post(v, `/api/companies/${f.a.id}/calendar/done`, { key: 'vat:2026-09-30' })).statusCode).toBe(403);
+    expect((await post(c, `/api/companies/${f.a.id}/calendar/done`, { key: 'vat:2026-09-30', reference: 'R-1' })).statusCode).toBe(200);
+    expect((await get(c, `/api/companies/${f.b.id}/calendar`)).statusCode).toBe(404);
+    // The firm asks; the view-only client user sends a file; the firm sees it.
+    expect((await post(c, `/api/companies/${f.a.id}/portal/requests`, { title: 'x' })).statusCode).toBe(403);
+    const req = (await post(st, `/api/companies/${f.a.id}/portal/requests`, { title: 'October receipts', category: 'receipts' })).json().id;
+    const up = (await post(v, `/api/companies/${f.a.id}/portal/uploads`, { requestId: req, note: 'Here' })).json().id;
+    const file = await post(v, `/api/portal-uploads/${up}/attachments`, { fileName: 'r.png', contentType: 'image/png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]).toString('base64') });
+    expect(file.statusCode).toBe(200);
+    const list = (await get(st, `/api/companies/${f.a.id}/portal/uploads?status=new`)).json();
+    expect(list[0]).toMatchObject({ id: up, requestTitle: 'October receipts', files: [{ fileName: 'r.png' }] });
+    expect((await get(st, `/api/attachments/${list[0].files[0].id}`)).statusCode).toBe(200);
+    expect((await post(v, `/api/portal/uploads/${up}/status`, { status: 'processed' })).statusCode).toBe(403);
+    expect((await post(st, `/api/portal/uploads/${up}/status`, { status: 'processed' })).statusCode).toBe(200);
+    expect((await get(st, `/api/portal/my-clients`)).json()).toEqual([{ companyId: f.a.id, newUploads: 0, openRequests: 0, answeredRequests: 1, unreadLetters: 0 }]);
+  });
 });

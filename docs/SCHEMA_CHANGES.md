@@ -221,3 +221,16 @@ Every change below is covered by a test in `test/`.
 | Trigger: owners only on the platform; no firm staff in a company customer | A company's people are company users with roles. |
 | `owner_tenants()`, `owner_create_tenant()`, `owner_update_tenant()`; `auth_user_by_email` returns the customer's status | The owner console; suspended customers cannot sign in. |
 | `client_roles.can_review`, `can_sign_off`; `app_can_review()`, `app_can_sign()` replace the firm-role checks in the review rules and policies; `app_client_role()` returns them | A company reviews and signs off its own months without an accounting firm. |
+
+## 0024_calendar_portal.sql
+| Change | Why |
+|---|---|
+| `calendar_roles()` (partner, reviewer, staff accountant, client accountant) | Who keeps the compliance calendar; view-only people read it. |
+| `compliance_settings` (VAT monthly or quarterly and when quarters end; zakat, corporate tax, payroll and social insurance deadlines on or off) | The deadlines are worked out from the company and these settings (`src/books/compliance.ts`), so a change moves the dates at once. |
+| `compliance_custom` (the client's own deadlines, once or repeating; archived, never deleted) | Licences, audits and anything the law tables do not cover. |
+| `compliance_done` (key of a deadline, filing reference, who and when; removing it undoes "done") | Only what was done is stored; keys are checked against the company's own deadlines. |
+| `portal_requests` (firm asks; answered when the client sends; only the firm closes; never deleted) | The firm asks the client for documents. |
+| `portal_uploads` (client sends, with or without a request; the firm marks it dealt with; what the firm shares is marked as from the firm) and `attachments.portal_upload_id` | Documents go both ways without email. Files are attachments, added and removed only by the person who sent them, kept once the firm has dealt with them. |
+| `portal_letters` (month, the firm's commentary and the figures as published; read once by the client; never changed or deleted) | The monthly report the client reads. |
+| `before_attachment_change()` replaced: portal uploads; an HR document's attachment check no longer stops the later checks | Portal files follow the same rules as other attachments. |
+| `portal_is_firm()`, `portal_my_clients()` | The firm's side of the portal, and what is waiting across its clients. |

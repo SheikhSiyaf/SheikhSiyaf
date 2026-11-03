@@ -41,7 +41,7 @@ export function registerSetupRoutes(app: FastifyInstance, { as }: Ctx) {
     as(req, async (db) => ({ id: await U.saveCostCentre(db, await companyOf(db, 'cost_centres', req.params.id), req.body ?? {}, req.params.id) })));
 
   // attachments of a document or a goods note
-  for (const [path, key] of [['documents', 'documentId'], ['stock-notes', 'stockNoteId'], ['hr-documents', 'employeeDocumentId']] as const) {
+  for (const [path, key] of [['documents', 'documentId'], ['stock-notes', 'stockNoteId'], ['hr-documents', 'employeeDocumentId'], ['portal-uploads', 'portalUploadId']] as const) {
     app.get<{ Params: P }>(`/api/${path}/:id/attachments`, async (req) => as(req, (db) => U.listAttachments(db, { [key]: uuidParam(req.params.id) })));
     app.post<{ Params: P; Body: U.AttachmentInput }>(`/api/${path}/:id/attachments`, UPLOAD, async (req) =>
       as(req, async (db) => ({ id: await U.addAttachment(db, { [key]: uuidParam(req.params.id) }, req.body ?? {}) })));

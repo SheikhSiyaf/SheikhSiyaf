@@ -76,6 +76,12 @@ const RAISED: [RegExp, string][] = [
   [/Depreciation has been booked on this asset/, 'err.assetLocked'],
   [/Goods received are credited/, 'err.noteAccount'],
   [/Choose a supplier \(goods received\)/, 'err.noteContact'],
+  [/Only the person who sent these documents/, 'err.portalNotYours'],
+  [/Your accountant has dealt with these documents/, 'err.portalDealt'],
+  [/This request is already dealt with/, 'err.portalRequestDone'],
+  [/published after the month has ended/, 'err.letterEarly'],
+  [/A published report is not changed/, 'err.letterFixed'],
+  [/Sent documents are not changed/, 'err.portalFixed'],
 ];
 
 const CONSTRAINTS: Record<string, [string, string]> = {

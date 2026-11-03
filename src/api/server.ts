@@ -23,6 +23,7 @@ import { registerCrmRoutes } from './crm.js';
 import { registerReviewRoutes } from './review.js';
 import { registerOwnerRoutes } from './owner.js';
 import { registerReportRoutes } from './reports.js';
+import { registerPortalRoutes } from './portal.js';
 import { reviewedUpTo } from '../books/reviewService.js';
 import { registerSetupRoutes } from './setup.js';
 import { profitAndLoss } from '../books/reportsService.js';
@@ -98,6 +99,8 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     return {
       company: rows[0], role, access, reviewedUpTo: await reviewedUpTo(db, id),
       review: (await db.query('SELECT app_can_review($1) AS "canReview", app_can_sign($1) AS "canSignOff"', [id])).rows[0],
+      // Firm staff on this client (the portal's firm side), whether this person keeps the calendar, and the customer's kind.
+      portal: (await db.query('SELECT portal_is_firm($1) AS firm, app_has_role($1, calendar_roles()) AS "calendarEdit", app_firm_kind() AS "tenantKind"', [id])).rows[0],
       canPost: POSTING_ROLES.includes(role), canLock: role === 'partner',
       accounts: accounts.rows, costCentres: costCentres.rows, periods: periods.rows,
     };
@@ -248,6 +251,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerReviewRoutes(app, ctx);
   registerOwnerRoutes(app, ctx);
   registerReportRoutes(app, ctx);
+  registerPortalRoutes(app, ctx);
   registerSetupRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });

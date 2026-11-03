@@ -19,6 +19,7 @@ import * as Inv from '../books/inventoryService.js';
 import * as Fa from '../books/assetsService.js';
 import * as Hr from '../books/hrmService.js';
 import * as Crm from '../books/crmService.js';
+import * as Review from '../books/reviewService.js';
 import * as Pay from '../books/payroll.js';
 import { monthEnd, nextMonthEnd, previousMonthEnd, targetDepreciation } from '../books/assets.js';
 import { toMinor } from '../money.js';
@@ -320,6 +321,30 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       for (const l of await Bank.statementLines(db, bankId, { status: 'open' })) {
         if (l.suggestion?.kind === 'match' && l.date < daysAgo(20)) await Bank.matchLine(db, l.id, l.suggestion.journalLineId);
       }
+
+      // Review: the month before last is reviewed and signed off by the partner; last month has queries going.
+      await asUser(partner);
+      const before = previousMonthEnd(previousMonthEnd(daysAgo(0))), last = previousMonthEnd(daysAgo(0));
+      const q0 = await Review.raiseQuery(db, id, { periodEnd: before, subject: 'Office water delivery posted twice', body: 'We see a reversal for the water delivery. Was it paid once only?' });
+      await asUser(poster);
+      await Review.reply(db, q0, 'Yes, paid once. The second entry was a mistake and is reversed.');
+      await asUser(partner);
+      await Review.setQueryStatus(db, q0, 'closed');
+      for (const item of (await Review.checklist(db, id, before)).items.filter((i) => !i.done)) {
+        await Review.tick(db, id, before, item.item, true, item.auto === false ? 'Checked: open items are next month\'s' : null);
+      }
+      await Review.signOff(db, id, before, 'Reviewed. VAT return can be filed.');
+      const checks = await Review.runChecks(db, id, last);
+      const round = checks.find((c) => c.key === 'round_amounts')?.findings[0];
+      if (round) await Review.explain(db, id, { check: 'round_amounts', item: round.itemKey, note: 'Agreed with the client' });
+      await Review.raiseQuery(db, id, { periodEnd: last, subject: 'Supplier bill without tax invoice', body: 'Please attach the supplier\'s tax invoice for the last bill from Najd Wholesale.', aboutType: 'check', aboutId: 'missing_input_vat' });
+      const q2 = await Review.raiseQuery(db, id, { periodEnd: last, subject: 'Cash on hand', body: 'Can you confirm the cash count at the month end?' });
+      await asUser(poster);
+      await Review.reply(db, q2, 'Counted on the last day; it agrees with the books.');
+      await asUser(partner);
+      await Review.tick(db, id, last, 'sales_complete', true);
+      await Review.tick(db, id, last, 'purchases_complete', true);
+      await asUser(poster);
       await client.query('COMMIT');
 
       // The partner locks every month that ended more than a month ago.

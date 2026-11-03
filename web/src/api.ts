@@ -67,6 +67,8 @@ export interface CompanyBooks {
   /** The person's client role, when they have one: access per module. Null = full access for their role. */
   access?: { name: string; nameAr?: string | null; permissions: Record<string, string>; canApprove: boolean } | null;
   accounts: Account[]; costCentres: CostCentre[]; periods: Period[];
+  /** The latest month the accounting firm signed off ("reviewed by your accountant"). */
+  reviewedUpTo?: { periodEnd: string; signedBy: string; signedAt: string } | null;
 }
 export interface EntryLine { id: string; accountCode: string; accountName: string; accountNameAr: string | null; costCentre: string | null; costCentreAr: string | null; debit: string; credit: string }
 export interface Entry { id: string; date: string; memo: string | null; createdBy: string | null; reversesEntryId: string | null; reversedById: string | null; lines: EntryLine[] }

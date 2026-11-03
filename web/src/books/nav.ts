@@ -22,14 +22,13 @@ export const NAV: Module[] = [
   { key: 'Ledger', subs: [s('chart-of-accounts'), s('cost-centres-setup'), s('general-ledger'), s('cost-centre-ledger'), s('customer-ledger'), s('supplier-ledger'), s('employee-ledger')] },
   { key: 'Reports', subs: [s('trial-balance'), s('profit-and-loss'), s('cost-centres'), s('expenses-by-category'), s('expenses-by-payee'),
     s('aged-receivables'), s('aged-payables'), s('vat-summary'), s('vat-return', false)] },
-  { key: 'Review', subs: [s('checks', false), s('queries', false), s('sign-off', false)] },
+  { key: 'Review', subs: [s('overview'), s('checks'), s('queries'), s('checklist'), s('sign-off')] },
 ];
 
 export const moduleOf = (key: string) => NAV.find((m) => m.key === key) ?? NAV[0]!;
 /** The menu for one client: core modules always, optional ones only when turned on for that client. */
 export const navFor = (modules: string[] | undefined, permissions?: Record<string, string> | null) =>
-  NAV.filter((m) => (!(OPTIONAL_MODULES as readonly string[]).includes(m.key) || (modules ?? []).includes(m.key)) && accessTo(permissions, m.key) !== 'none'
-    && !(permissions && m.key === 'Review'));   // the firm's review layer is not part of a client role
+  NAV.filter((m) => (!(OPTIONAL_MODULES as readonly string[]).includes(m.key) || (modules ?? []).includes(m.key)) && accessTo(permissions, m.key) !== 'none');   // Review is open to everyone on the client: they read it and answer queries
 export const isModuleBuilt = (m: Module) => m.subs.length === 0 || m.subs.some((x) => x.built);
 
 /** Document type behind each list page. */

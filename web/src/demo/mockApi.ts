@@ -35,7 +35,7 @@ interface CostCentre { id: string; companyId: string; name: string; nameAr: stri
   startDate?: string | null; endDate?: string | null; description?: string | null }
 interface Period { companyId: string; startDate: string; endDate: string; lockedAt: string | null }
 interface Line { id: string; accountId: string; costCentreId: string | null; debit: bigint; credit: bigint }
-interface Entry { id: string; companyId: string; date: string; memo: string | null; createdBy: string; createdAt: string; reversesEntryId: string | null; lines: Line[] }
+interface Entry { id: string; companyId: string; date: string; memo: string | null; createdBy: string; createdAt: string; reversesEntryId: string | null; lines: Line[]; manual?: boolean }
 interface Membership { userId: string; companyId: string; role: Role; clientRoleId?: string | null }
 interface ClientRole { id: string; name: string; nameAr: string | null; description: string | null; permissions: Record<string, AccessLevel>; canApprove: boolean; status: 'active' | 'archived' }
 const rolesDb: ClientRole[] = [];
@@ -160,7 +160,7 @@ function seed() {
     const net = (n: number) => BigInt(n) * 100n;
     const L = (code: string, debit: bigint, credit: bigint, centre?: string) => ({ accountId: acct(code), debit, credit, costCentreId: centre ? cc(centre) : null });
     const poster = userByEmail(DEMO_USERS.find((u) => u.companies.includes(c.key) && (u.role === 'client_accountant' || u.role === 'staff_accountant'))!.email).id;
-    const p = (days: number, memo: string, lines: Omit<Line, 'id'>[]) => post(poster, id, daysAgo(days), memo, lines);
+    const p = (days: number, memo: string, lines: Omit<Line, 'id'>[]) => { const eid = post(poster, id, daysAgo(days), memo, lines); db.entries.at(-1)!.manual = true; return eid; };
     p(120, 'Opening balance', [L('1000', net(50000), 0n), L('3000', 0n, net(50000))]);
     p(60, 'Rent · head office', [L('5100', net(4000), 0n, 'Head office'), L('1000', 0n, net(4000))]);
     p(25, 'Salaries', [L('5200', net(6000), 0n, 'Head office'), L('5200', net(2500), 0n, 'Branch 1'), L('1000', 0n, net(8500))]);
@@ -169,6 +169,7 @@ function seed() {
     db.entries.at(-1)!.memo = 'Reversal: posted twice';
     seedSales(id, poster, c);
     p(1, 'Electricity', [L('5300', net(650), 0n), L('1000', 0n, net(650))]);
+    seedReview(id, poster);
     const cutoff = new Date(); cutoff.setDate(1); cutoff.setMonth(cutoff.getMonth() - 1);
     for (const per of db.periods) if (per.companyId === id && per.endDate < iso(cutoff)) per.lockedAt = new Date().toISOString();
   }
@@ -1368,7 +1369,7 @@ const routes: [string, RegExp, Handler][] = [
     return {
       company: { ...companyView(c), vatStatus: c.vatStatus, vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: c.paymentTermsDays,
         industry: c.industry, modules: c.modules },
-      role, canPost: POSTING.includes(role), canLock: role === 'partner',
+      role, canPost: POSTING.includes(role), canLock: role === 'partner', reviewedUpTo: reviewedUpToM(c.id),
       access: (() => { const r = clientRoleIn(c.id); return r && { name: r.name, nameAr: r.nameAr, permissions: r.permissions, canApprove: r.canApprove }; })(),
       accounts: db.accounts.filter((a) => a.companyId === c.id).sort((a, b) => a.code.localeCompare(b.code)),
       costCentres: db.costCentres.filter((x) => x.companyId === c.id).sort((a, b) => a.name.localeCompare(b.name)),
@@ -1416,7 +1417,8 @@ const routes: [string, RegExp, Handler][] = [
     try {
       lines = raw.map((l) => ({ accountId: String(l.accountId), costCentreId: l.costCentreId ?? null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') }));
     } catch { return fail(400, 'Amounts must be numbers with at most 2 decimals.', 'err.amountFormat'); }
-    return { id: post(u.id, id, String(b?.entryDate ?? ''), typeof b?.memo === 'string' ? b.memo : null, lines) };
+    const eid = post(u.id, id, String(b?.entryDate ?? ''), typeof b?.memo === 'string' ? b.memo : null, lines); db.entries.at(-1)!.manual = true;
+    return { id: eid };
   }],
   ['POST', /^\/api\/entries\/([\w-]+)\/reverse$/, (m, b) => ({ id: reverse(me().id, m[1]!, String(b?.date ?? today())) })],
   ['POST', /^\/api\/companies\/([\w-]+)\/periods\/([\d-]+)\/lock$/, (m, b) => {
@@ -2526,6 +2528,225 @@ function seedCrm(companyId: string, poster: string) {
   saveActivityM(companyId, { kind: 'task', subject: 'Prepare samples', dueDate: daysAgo(-7), ownerId: poster });
   const done = saveActivityM(companyId, { kind: 'call', subject: 'First call with Najran Builders', dueDate: daysAgo(12), leadId: lead1 });
   actOf(done).doneAt = new Date().toISOString();
+  session = prev;
+}
+
+// ---------------------------------------------------------------- Review (same rules as src/books/reviewService.ts and db/migrations/0021)
+interface MQuery { id: string; companyId: string; periodEnd: string; subject: string; aboutType: string | null; aboutId: string | null; aboutLabel: string | null; status: string;
+  raisedBy: string; raisedAt: string; closedBy: string | null; closedAt: string | null }
+interface MMessage { id: string; companyId: string; queryId: string; author: string; body: string; createdAt: string }
+interface MSignoff { id: string; companyId: string; periodEnd: string; note: string | null; signedBy: string; signedAt: string; withdrawnBy: string | null; withdrawnAt: string | null; withdrawReason: string | null }
+const rvdb = { queries: [] as MQuery[], messages: [] as MMessage[], ticks: [] as { companyId: string; periodEnd: string; item: string; done: boolean; note: string | null; by: string; at: string }[],
+  explained: [] as { companyId: string; check: string; item: string; note: string; by: string; at: string }[], signoffs: [] as MSignoff[] };
+const RV_FIRM: Role[] = ['partner', 'reviewer', 'staff_accountant'];
+const RV_SIGN: Role[] = ['partner', 'reviewer'];
+const rvRole = (companyId: string) => roleOf(session, companyId);
+const rvFirmOnly = (companyId: string) => { if (!RV_FIRM.includes(rvRole(companyId)!)) fail(403, 'Your role does not allow this.', 'err.forbidden'); };
+const rvMonth = (v: unknown) => { const p = String(v ?? ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(p) || monthEnd(p) !== p) fail(400, 'Choose the month.', 'err.date'); return p; };
+const prevEnd = (pe: string) => new Date(Date.UTC(+pe.slice(0, 4), +pe.slice(5, 7) - 1, 0)).toISOString().slice(0, 10);
+const grossOf = (d: MDoc) => d.lines.reduce((t, l) => t + l.net + l.vat, 0n);
+const vatOf = (d: MDoc) => d.lines.reduce((t, l) => t + l.vat, 0n);
+const linkDoc = (d: MDoc) => ({ type: 'document', id: d.id, docType: d.type });
+const nameOfDoc = (d: MDoc) => sdb.contacts.find((c) => c.id === d.contactId)?.name ?? d.payee ?? '';
+
+function runChecksM(companyId: string, pe: string) {
+  const co = db.companies.find((c) => c.id === companyId)!;
+  const from = `${pe.slice(0, 7)}-01`;
+  const inMonth = (d: string) => d >= from && d <= pe;
+  const reg = co.vatStatus === 'registered';
+  const docs = sdb.docs.filter((d) => d.companyId === companyId);
+  const issued = (types: string[]) => docs.filter((d) => types.includes(d.type) && d.status === 'issued' && inMonth(d.issueDate)).sort((a, b) => a.issueDate.localeCompare(b.issueDate));
+  const vatNo = (d: MDoc) => sdb.contacts.find((c) => c.id === d.contactId)?.vatNumber ?? null;
+  type F = { itemKey: string; date: string | null; label: string; detail: string | null; amount: string | null; link: Record<string, string> | null };
+  const f = (d: MDoc, detail: string | null = null, amount = grossOf(d)): F => ({ itemKey: d.id, date: d.issueDate, label: `${d.number ?? ''} · ${nameOfDoc(d)}`, detail, amount: s(amount), link: linkDoc(d) });
+  const dupes: F[] = [];
+  const all = docs.filter((d) => ['bill', 'expense', 'invoice'].includes(d.type) && d.status === 'issued');
+  for (const a of all) for (const b of all) {
+    if (b.id <= a.id || b.type !== a.type || b.contactId !== a.contactId || (b.payee ?? '') !== (a.payee ?? '')) continue;
+    const near = grossOf(a) === grossOf(b) && Math.abs(Date.parse(a.issueDate) - Date.parse(b.issueDate)) <= 7 * 86400000;
+    const sameRef = !!a.reference && a.reference === b.reference;
+    if ((near || sameRef) && (inMonth(a.issueDate) || inMonth(b.issueDate)))
+      dupes.push({ itemKey: `${a.id}|${b.id}`, date: a.issueDate, label: `${a.number ?? ''} / ${b.number ?? ''} · ${nameOfDoc(a)}`, detail: sameRef ? a.reference : null, amount: s(grossOf(a)), link: linkDoc(a) });
+  }
+  const referenced = new Set([...sdb.docs.map((d) => d.journalEntryId), ...sdb.payments.map((p) => p.journalEntryId)]);
+  const round = db.entries.filter((e) => e.companyId === companyId && inMonth(e.date) && (e as Entry & { manual?: boolean }).manual && !e.reversesEntryId && !referenced.has(e.id)
+    && !db.entries.some((r) => r.reversesEntryId === e.id) && e.lines.some((l) => { const v = l.debit > l.credit ? l.debit : l.credit; return v >= 100000n && v % 100000n === 0n; }))
+    .map((e) => ({ itemKey: e.id, date: e.date, label: e.memo ?? '', detail: null, amount: s(e.lines.reduce((m, l) => (l.debit > m ? l.debit : l.credit > m ? l.credit : m), 0n)), link: { type: 'entry', id: e.id } }));
+  const unrec = odb.lines.filter((l) => l.companyId === companyId && l.status === 'open' && l.date <= pe).sort((a, b) => a.date.localeCompare(b.date)).map((l) => {
+    const bank = odb.banks.find((b) => b.id === l.bankId)!; const acc = db.accounts.find((a) => a.id === bank.accountId)!;
+    return { itemKey: l.id, date: l.date, label: `${acc.name} · ${l.description}`, detail: l.reference, amount: s(l.amount), link: { type: 'bank_line', id: bank.id } };
+  });
+  const bal = balances(companyId, pe);
+  const abnormal = db.accounts.filter((a) => a.companyId === companyId && !['1590', '4900', '3000'].includes(a.code)).sort((a, b) => a.code.localeCompare(b.code)).flatMap((a) => {
+    const v = bal.get(a.id) ?? 0n;
+    return ((['asset', 'expense'].includes(a.type) && v < 0n) || (['liability', 'income'].includes(a.type) && v > 0n))
+      ? [{ itemKey: a.id, date: null, label: `${a.code} ${a.name}`, detail: a.type, amount: s(v < 0n ? -v : v), link: { type: 'account', id: a.id } }] : [];
+  });
+  const cutoff = addD(pe, -90);
+  const overdue = docs.filter((d) => d.type === 'invoice' && d.status === 'issued' && d.dueDate && d.dueDate < cutoff && amountDue(d) > 0n)
+    .map((d) => ({ ...f(d, String(Math.round((Date.parse(pe) - Date.parse(d.dueDate!)) / 86400000)), amountDue(d)), date: d.dueDate }));
+  const drafts = docs.filter((d) => d.status === 'draft' && ['invoice', 'bill', 'expense', 'credit_note', 'supplier_credit'].includes(d.type) && inMonth(d.issueDate))
+    .map((d) => ({ ...f(d), label: `${d.type} · ${nameOfDoc(d)}` }));
+  const mods = co.modules ?? [];
+  const staff = mods.includes('HRM') ? empsOf(companyId).filter((e) => e.hasProfile && e.status === 'active' && e.joinDate! <= pe && (!e.leavingDate || e.leavingDate >= from)) : [];
+  const payroll = staff.length && !hdb.runs.some((r) => r.companyId === companyId && r.periodEnd === pe && r.status !== 'draft') ? [{ itemKey: pe, date: pe, label: String(staff.length), detail: null, amount: null, link: null }] : [];
+  const dep = mods.includes('Assets') && !odb.runs.some((r) => r.companyId === companyId && r.periodEnd === pe) && odb.assets.some((a) => a.companyId === companyId && a.status === 'active') ? (() => {
+    const p = previewM(companyId, pe); return toMinor(p.total) > 0n ? [{ itemKey: pe, date: pe, label: String(p.lines.length), detail: null, amount: p.total, link: null }] : [];
+  })() : [];
+  const raw: [string, string, F[]][] = [
+    ['missing_input_vat', 'warning', reg ? issued(['bill', 'expense']).filter((d) => vatNo(d) && d.lines.some((l) => l.vatCode !== 'standard')).map((d) => f(d, vatNo(d))) : []],
+    ['vat_without_number', 'warning', reg ? issued(['bill', 'expense']).filter((d) => vatOf(d) > 0n && !vatNo(d)).map((d) => f(d, null, vatOf(d))) : []],
+    ['sales_without_vat', 'info', reg ? issued(['invoice']).filter((d) => d.lines.some((l) => l.vatCode !== 'standard')).map((d) => f(d, [...new Set(d.lines.filter((l) => l.vatCode !== 'standard').map((l) => l.vatCode))].join(', '))) : []],
+    ['duplicates', 'warning', dupes], ['round_amounts', 'info', round], ['unreconciled', 'warning', unrec], ['abnormal_balances', 'warning', abnormal],
+    ['overdue_receivables', 'info', overdue], ['drafts_left', 'info', drafts], ['payroll_missing', 'warning', payroll], ['depreciation_missing', 'warning', dep],
+  ];
+  return raw.map(([key, severity, rows]) => {
+    const findings = rows.map((r) => { const e = rvdb.explained.find((x) => x.companyId === companyId && x.check === key && x.item === r.itemKey);
+      return { ...r, explained: e ? { note: e.note, by: userName(e.by), at: e.at } : null }; });
+    return { key, severity, findings, open: findings.filter((x) => !x.explained).length };
+  });
+}
+const queryRow = (q: MQuery) => { const ms = rvdb.messages.filter((m) => m.queryId === q.id);
+  return { ...q, raisedBy: userName(q.raisedBy), closedBy: userName(q.closedBy), messages: ms.length, lastAt: ms.at(-1)?.createdAt ?? null }; };
+const queryOf = (id: string) => rvdb.queries.find((q) => q.id === id && roleOf(session, q.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function replyM(id: string, body: unknown) {
+  const q = queryOf(id); const text = cstr(body) ?? fail(400, 'Write the reply.', 'err.queryBody');
+  if (q.status === 'closed') fail(400, 'This query is closed. Reopen it to reply.', 'err.queryClosed');
+  rvdb.messages.push({ id: uid(), companyId: q.companyId, queryId: id, author: session!, body: text, createdAt: new Date().toISOString() });
+  q.status = RV_FIRM.includes(rvRole(q.companyId)!) ? 'open' : 'answered';
+}
+function raiseQueryM(companyId: string, b: Body) {
+  rvFirmOnly(companyId);
+  const pe = rvMonth(b?.periodEnd);
+  const subject = cstr(b?.subject) ?? fail(400, 'Enter what the question is about.', 'err.querySubject');
+  const body = cstr(b?.body) ?? fail(400, 'Write the question.', 'err.queryBody');
+  const aboutType = ['entry', 'document', 'account', 'bank_line', 'check'].includes(String(b?.aboutType)) ? String(b!.aboutType) : null;
+  const id = uid();
+  rvdb.queries.push({ id, companyId, periodEnd: pe, subject, aboutType, aboutId: aboutType ? cstr(b?.aboutId) : null, aboutLabel: aboutType ? cstr(b?.aboutLabel) : null, status: 'open',
+    raisedBy: session!, raisedAt: new Date().toISOString(), closedBy: null, closedAt: null });
+  rvdb.messages.push({ id: uid(), companyId, queryId: id, author: session!, body, createdAt: new Date().toISOString() });
+  return id;
+}
+function setQueryStatusM(id: string, status: string) {
+  const q = queryOf(id);
+  if (!RV_FIRM.includes(rvRole(q.companyId)!)) fail(400, 'Only the accounting firm closes or reopens a query.', 'err.queryFirmOnly');
+  if (status === 'closed') { q.status = 'closed'; q.closedBy = session; q.closedAt = new Date().toISOString(); } else { q.status = 'open'; q.closedBy = null; q.closedAt = null; }
+}
+const activeSignoff = (companyId: string, pe: string) => rvdb.signoffs.find((x) => x.companyId === companyId && x.periodEnd === pe && !x.withdrawnAt) ?? null;
+const RV_ITEMS = ['bank_reconciled', 'sales_complete', 'purchases_complete', 'drafts_cleared', 'vat_reviewed', 'payroll_posted', 'depreciation_run', 'stock_counted', 'receivables_reviewed',
+  'payables_reviewed', 'accruals', 'queries_closed'];
+function checklistM(companyId: string, pe: string) {
+  const co = db.companies.find((c) => c.id === companyId)!; const mods = co.modules ?? [];
+  const from = `${pe.slice(0, 7)}-01`;
+  const auto: Record<string, boolean> = {
+    bank_reconciled: !odb.lines.some((l) => l.companyId === companyId && l.status === 'open' && l.date <= pe),
+    drafts_cleared: !sdb.docs.some((d) => d.companyId === companyId && d.status === 'draft' && ['invoice', 'bill', 'expense', 'credit_note', 'supplier_credit'].includes(d.type) && d.issueDate >= from && d.issueDate <= pe),
+    queries_closed: !rvdb.queries.some((q) => q.companyId === companyId && q.periodEnd === pe && q.status !== 'closed'),
+  };
+  if (mods.includes('HRM')) auto.payroll_posted = hdb.runs.some((r) => r.companyId === companyId && r.periodEnd === pe && r.status !== 'draft') || !hdb.profiles.some((p) => p.companyId === companyId && p.joinDate <= pe);
+  if (mods.includes('Assets')) auto.depreciation_run = odb.runs.some((r) => r.companyId === companyId && r.periodEnd === pe) || !odb.assets.some((a) => a.companyId === companyId && a.status === 'active');
+  const applies = (i: string) => (i === 'payroll_posted' ? mods.includes('HRM') : i === 'depreciation_run' ? mods.includes('Assets')
+    : i === 'stock_counted' ? mods.includes('Inventory') || mods.includes('Restaurant') : i === 'vat_reviewed' ? co.vatStatus === 'registered' : true);
+  const items = RV_ITEMS.filter(applies).map((item) => {
+    const tk = rvdb.ticks.find((x) => x.companyId === companyId && x.periodEnd === pe && x.item === item);
+    const a = item in auto ? auto[item]! : null;
+    return { item, auto: a, ticked: tk?.done ?? false, note: tk?.note ?? null, by: tk?.done ? userName(tk.by) : null, at: tk?.done ? tk.at : null, done: Boolean(a) || Boolean(tk?.done) };
+  });
+  return { periodEnd: pe, items, done: items.filter((i) => i.done).length, total: items.length };
+}
+function tickM(companyId: string, pe: string, item: string, done: boolean, note: unknown) {
+  rvFirmOnly(companyId); rvMonth(pe);
+  if (!RV_ITEMS.includes(item)) fail(400, 'Choose the checklist item.', 'err.format');
+  if (activeSignoff(companyId, pe)) fail(400, 'This month is signed off; its checklist no longer changes.', 'err.checklistSigned');
+  const old = rvdb.ticks.find((x) => x.companyId === companyId && x.periodEnd === pe && x.item === item);
+  const v = { companyId, periodEnd: pe, item, done, note: cstr(note), by: session!, at: new Date().toISOString() };
+  if (old) Object.assign(old, v); else rvdb.ticks.push(v);
+}
+function monthsM(companyId: string, upTo: string) {
+  const out = []; let pe = rvMonth(upTo);
+  for (let i = 0; i < 12; i++) {
+    const so = activeSignoff(companyId, pe);
+    const w = rvdb.signoffs.filter((x) => x.companyId === companyId && x.periodEnd === pe && x.withdrawnAt).sort((a, b) => b.withdrawnAt!.localeCompare(a.withdrawnAt!))[0];
+    const qs = rvdb.queries.filter((q) => q.companyId === companyId && q.periodEnd === pe);
+    const from = `${pe.slice(0, 7)}-01`;
+    out.push({ periodEnd: pe, signoff: so ? { id: so.id, note: so.note, signedBy: userName(so.signedBy), signedAt: so.signedAt,
+      changedAfter: db.entries.filter((e) => e.companyId === companyId && e.date >= from && e.date <= pe && e.createdAt > so.signedAt).length } : null,
+      lastWithdrawn: w ? { by: userName(w.withdrawnBy), at: w.withdrawnAt, reason: w.withdrawReason } : null, openQueries: qs.filter((q) => q.status !== 'closed').length, queries: qs.length });
+    pe = prevEnd(pe);
+  }
+  return out;
+}
+function signOffM(companyId: string, pe: string, note: unknown) {
+  rvMonth(pe);
+  if (!RV_SIGN.includes(rvRole(companyId)!)) fail(400, 'Only a partner or reviewer signs off a month.', 'err.signoffRole');
+  const cl = checklistM(companyId, pe); const missing = cl.items.filter((i) => !i.done).map((i) => i.item);
+  if (missing.length) fail(400, 'Finish the checklist before signing off.', 'err.checklistOpen', missing);
+  if (rvdb.queries.some((q) => q.companyId === companyId && q.periodEnd === pe && q.status !== 'closed')) fail(400, 'Close this month\'s queries first.', 'err.queriesOpen');
+  if (pe >= today()) fail(400, 'A month is signed off after it has ended.', 'err.signoffEarly');
+  if (activeSignoff(companyId, pe)) fail(400, 'A sign-off is never changed.', 'err.signoffFixed');
+  const id = uid(); rvdb.signoffs.push({ id, companyId, periodEnd: pe, note: cstr(note), signedBy: session!, signedAt: new Date().toISOString(), withdrawnBy: null, withdrawnAt: null, withdrawReason: null });
+  return id;
+}
+const reviewedUpToM = (companyId: string) => { const so = rvdb.signoffs.filter((x) => x.companyId === companyId && !x.withdrawnAt).sort((a, b) => b.periodEnd.localeCompare(a.periodEnd))[0];
+  return so ? { periodEnd: so.periodEnd, signedBy: userName(so.signedBy), signedAt: so.signedAt } : null; };
+
+routes.push(
+  ['GET', /^\/api\/review\/my-clients$/, () => db.memberships.filter((m) => m.userId === session).map((m) => ({ companyId: m.companyId,
+    open: rvdb.queries.filter((q) => q.companyId === m.companyId && q.status === 'open').length, answered: rvdb.queries.filter((q) => q.companyId === m.companyId && q.status === 'answered').length,
+    reviewedUpTo: reviewedUpToM(m.companyId)?.periodEnd ?? null }))],
+  ['GET', /^\/api\/companies\/([\w-]+)\/review\/overview$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const pe = rvMonth(q.get('month')); const checks = runChecksM(id, pe); const cl = checklistM(id, pe);
+    return { checks: checks.map((c) => ({ key: c.key, severity: c.severity, open: c.open, total: c.findings.length })), openFindings: checks.reduce((t, c) => t + c.open, 0),
+      checklist: { done: cl.done, total: cl.total }, ...monthsM(id, pe)[0]!, reviewedUpTo: reviewedUpToM(id) };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/review\/checks$/, (m, _b, q) => runChecksM(inCo(m[1]!), rvMonth(q.get('month')))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/review\/explain$/, (m, b) => {
+    const id = inCo(m[1]!); rvFirmOnly(id);
+    rvdb.explained = rvdb.explained.filter((x) => !(x.companyId === id && x.check === b?.check && x.item === b?.item));
+    if (cstr(b?.note)) rvdb.explained.push({ companyId: id, check: String(b!.check), item: String(b!.item), note: cstr(b!.note)!, by: session!, at: new Date().toISOString() });
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/review\/queries$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const st = q.get('status') ?? ''; const pe = q.get('month');
+    return rvdb.queries.filter((x) => x.companyId === id && (!st || (st === 'unresolved' ? x.status !== 'closed' : x.status === st)) && (!pe || x.periodEnd === pe)).map(queryRow)
+      .sort((a, b) => Number(a.status === 'closed') - Number(b.status === 'closed') || (b.lastAt ?? b.raisedAt).localeCompare(a.lastAt ?? a.raisedAt));
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/review\/queries$/, (m, b) => ({ id: raiseQueryM(inCo(m[1]!), b) })],
+  ['GET', /^\/api\/review\/queries\/([\w-]+)$/, (m) => { const q = queryOf(m[1]!);
+    return { ...queryRow(q), messages: rvdb.messages.filter((x) => x.queryId === q.id).map((x) => ({ id: x.id, body: x.body, createdAt: x.createdAt, author: userName(x.author), mine: x.author === session,
+      fromFirm: RV_FIRM.includes(roleOf(x.author, q.companyId)!) })) }; }],
+  ['POST', /^\/api\/review\/queries\/([\w-]+)\/reply$/, (m, b) => { replyM(m[1]!, b?.body); return { ok: true }; }],
+  ['POST', /^\/api\/review\/queries\/([\w-]+)\/status$/, (m, b) => { setQueryStatusM(m[1]!, String(b?.status)); return { ok: true }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/review\/checklist$/, (m, _b, q) => checklistM(inCo(m[1]!), rvMonth(q.get('month')))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/review\/checklist$/, (m, b) => { tickM(inCo(m[1]!), String(b?.month ?? ''), String(b?.item ?? ''), b?.done !== false, b?.note); return { ok: true }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/review\/months$/, (m, _b, q) => monthsM(inCo(m[1]!), String(q.get('month') ?? ''))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/review\/sign-off$/, (m, b) => ({ id: signOffM(inCo(m[1]!), String(b?.month ?? ''), b?.note) })],
+  ['POST', /^\/api\/review\/sign-offs\/([\w-]+)\/withdraw$/, (m, b) => {
+    const so = rvdb.signoffs.find((x) => x.id === m[1] && roleOf(session, x.companyId) && !x.withdrawnAt) ?? fail(404, 'Not found.', 'err.notFound');
+    if (!RV_SIGN.includes(rvRole(so.companyId)!)) fail(400, 'Only a partner or reviewer withdraws a sign-off.', 'err.signoffRole');
+    so.withdrawReason = cstr(b?.reason) ?? fail(400, 'Say why the sign-off is withdrawn.', 'err.withdrawReason');
+    so.withdrawnBy = session; so.withdrawnAt = new Date().toISOString();
+    return { ok: true };
+  }],
+);
+
+/** Sample review data, as in src/db/seed.ts. */
+function seedReview(companyId: string, poster: string) {
+  const prev = session;
+  const partner = db.memberships.find((m) => m.companyId === companyId && m.role === 'partner')!.userId;
+  const last = prevEnd(today()), before = prevEnd(last);
+  session = partner;
+  const q0 = raiseQueryM(companyId, { periodEnd: before, subject: 'Office water delivery posted twice', body: 'We see a reversal for the water delivery. Was it paid once only?' });
+  session = poster; replyM(q0, 'Yes, paid once. The second entry was a mistake and is reversed.');
+  session = partner; setQueryStatusM(q0, 'closed');
+  for (const i of checklistM(companyId, before).items.filter((x) => !x.done)) tickM(companyId, before, i.item, true, i.auto === false ? 'Checked: open items are next month\'s' : null);
+  signOffM(companyId, before, 'Reviewed. VAT return can be filed.');
+  const round = runChecksM(companyId, last).find((c) => c.key === 'round_amounts')?.findings[0];
+  if (round) rvdb.explained.push({ companyId, check: 'round_amounts', item: round.itemKey, note: 'Agreed with the client', by: partner, at: new Date().toISOString() });
+  raiseQueryM(companyId, { periodEnd: last, subject: 'Supplier bill without tax invoice', body: 'Please attach the supplier\'s tax invoice for the last bill from Najd Wholesale.', aboutType: 'check', aboutId: 'missing_input_vat' });
+  const q2 = raiseQueryM(companyId, { periodEnd: last, subject: 'Cash on hand', body: 'Can you confirm the cash count at the month end?' });
+  session = poster; replyM(q2, 'Counted on the last day; it agrees with the books.');
+  session = partner; tickM(companyId, last, 'sales_complete', true, null); tickM(companyId, last, 'purchases_complete', true, null);
   session = prev;
 }
 

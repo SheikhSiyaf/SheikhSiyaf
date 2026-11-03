@@ -396,3 +396,14 @@ table.payroll td .small { white-space: nowrap; }
 .small.bad { color: var(--bad); } .small.warn { color: var(--warn); }
 @media (max-width: 720px) { .board { grid-template-columns: repeat(4, 78vw); } }
 .board ~ .grid table.mini td + td { padding-inline-start: 14px; white-space: nowrap; }
+
+/* Review */
+.thread { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.thread .msg { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; max-width: 80%; }
+.thread .msg.firm { align-self: flex-start; background: var(--tealbg); }
+.thread .msg.client { align-self: flex-end; background: var(--card); }
+.pre { white-space: pre-wrap; }
+tr.sel td { background: var(--tealbg); }
+table.checklist tr.done b { color: var(--mut); }
+button.card.fig { text-align: start; font: inherit; color: inherit; cursor: pointer; }
+button.card.fig:hover { border-color: var(--teal); }

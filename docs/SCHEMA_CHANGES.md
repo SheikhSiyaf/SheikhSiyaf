@@ -198,3 +198,11 @@ Every change below is covered by a test in `test/`.
 | Links (customer, lead, deal, campaign, quotation) must belong to the same company; owners must be members of it; `crm_people()` lists them for members only | No CRM record can point into another client's data. |
 | Leads, deals and campaigns are never deleted (closed as lost, converted or done); activities can be removed | History of the pipeline is kept. |
 | Trigger on `documents`: a deal follows its quotation (sent = proposal, accepted = negotiation, invoiced = won, declined = lost) | The pipeline stays in step with Sales without double entry. |
+
+## 0021_review.sql
+| Change | Why |
+|---|---|
+| `review_queries` and `review_messages` (thread per query; a client reply marks it answered, a firm reply reopens it; only the firm closes; messages never change) | Queries between reviewer and client accountant (PRODUCT_SPEC). |
+| `review_checklist` (ticks per month and item, fixed once the month is signed off) and `review_explained` (a note that a check finding is fine) | Monthly checklist and the record of what the reviewer accepted. |
+| `review_signoffs` (one standing sign-off per month; only partners and reviewers; the month must have ended and its queries be closed; never changed or deleted, only withdrawn with a reason); `reviewed_up_to()` | Period sign-off and the client's "reviewed by your accountant" status. |
+| `review_roles()`, `signoff_roles()`, `review_from_firm()`; audit triggers and row-level security on every review table | Who may do what is enforced in the database; rules 5 and 6. |

@@ -35,7 +35,13 @@ Read `CLAUDE.md` first. It holds the non-negotiable accounting rules.
       - **Leads:** possible customers with where they came from (or the campaign), who follows up, possible value and status; **Make customer** creates the customer in Sales and can open a deal.
       - **Activities:** calls, meetings, tasks, emails and notes with due dates, for a lead, deal or customer; to do, overdue and done. Customer pages in Sales show their activities.
       - **Campaigns:** channel, dates and budget, with the leads, customers and won deals they brought in and the cost per lead.
-    - **Review:** its sub-pages describe what it will do.
+    - **Review** (the firm's review layer; clients read it and answer queries):
+      - **Overview:** one month at a glance: findings to look at, checklist progress, open queries and sign-off.
+      - **Automated checks:** possibly missing input VAT, VAT claimed without a supplier VAT number, sales without standard VAT, possible duplicates, round amounts in manual entries, bank lines not reconciled, balances on the wrong side, invoices over 90 days overdue, drafts never issued, payroll not posted, depreciation not run. Each finding links to the document, entry or account; the firm explains it (it stays listed) or asks the client.
+      - **Queries:** questions from the firm to the client with replies on both sides; a client reply marks it answered; only the firm closes it.
+      - **Monthly checklist:** bank reconciled, sales and purchases complete, no drafts, VAT reviewed, payroll, depreciation, stock, customer and supplier balances, accruals, queries closed. Items the books can answer tick themselves.
+      - **Period sign-off:** a partner or reviewer signs off a finished month once its checklist is done and its queries are closed. The client's Home page then shows "Reviewed by your accountant up to ...". Entries changed after sign-off are flagged; a sign-off can be withdrawn with a reason, never deleted.
+      - **My clients** shows, for each client, how far it is reviewed and the answers waiting for the firm.
   - **Sidebar:** pressing a module opens its sub-menu; pressing it again closes it.
   - **PDFs:** every invoice, credit note, quotation, bill, expense, claim and goods note has a **PDF** button. It opens a professional A4 page in the print window; choose "Save as PDF". Saudi tax invoices carry the ZATCA phase 1 QR code. Bills, expenses, claims and goods notes can have attachments (the supplier's invoice as a PDF or photo, up to 10 MB); pictures are printed on pages after the document.
   - **Line editors:** quantity and price boxes show the full number; on laptop screens each line takes two rows so nothing scrolls out of view.

@@ -1,3 +1,4 @@
+import { ReviewedBadge } from '../review/Review.tsx';
 import { useApi, type CompanyBooks } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
 import { fmt, neg } from '../money.ts';
@@ -25,6 +26,7 @@ export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?:
   ];
   return (
     <>
+      <ReviewedBadge books={books} go={go} />
       <div className="grid">
         {figs.map(([label, value, note]) => (
           <div key={label} className="card fig">

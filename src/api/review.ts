@@ -17,6 +17,13 @@ export function registerReviewRoutes(app: FastifyInstance, { as }: Ctx) {
     return as(req, async (db) => { await member(db, companyId); return fn(db, companyId); });
   };
   const ok = { ok: true };
+  // The firm's view across its clients: queries waiting and how far each client is reviewed.
+  app.get('/api/review/my-clients', async (req) => as(req, async (db) => (await db.query(
+    `SELECT c.id AS "companyId",
+            (SELECT count(*) FROM review_queries q WHERE q.company_id = c.id AND q.status = 'open')::int AS "open",
+            (SELECT count(*) FROM review_queries q WHERE q.company_id = c.id AND q.status = 'answered')::int AS answered,
+            (SELECT r.period_end::text FROM reviewed_up_to(c.id) r) AS "reviewedUpTo"
+     FROM companies c WHERE c.id = ANY (app_company_ids())`)).rows));
   app.get<{ Params: P; Querystring: Q }>('/api/companies/:id/review/overview', async (req) => inCompany(req, req.params.id, (db, c) => R.overview(db, c, String(req.query.month ?? ''))));
   app.get<{ Params: P; Querystring: Q }>('/api/companies/:id/review/checks', async (req) => inCompany(req, req.params.id, (db, c) => R.runChecks(db, c, String(req.query.month ?? ''))));
   app.post<{ Params: P; Body: { check?: string; item?: string; note?: string } }>('/api/companies/:id/review/explain', async (req) => inCompany(req, req.params.id, async (db, c) => { await R.explain(db, c, req.body ?? {}); return ok; }));

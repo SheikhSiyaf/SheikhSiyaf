@@ -1,4 +1,4 @@
-import type { Me } from '../api.ts';
+import { useApi, type Me } from '../api.ts';
 import { useI18n, useLocalName } from '../i18n.tsx';
 import { navigate } from '../router.ts';
 import { Sidebar, TopControls } from '../ui.tsx';
@@ -7,6 +7,8 @@ export function MyClients({ me, onSignOut }: { me: Me; onSignOut: () => void }) 
   const { t } = useI18n();
   const local = useLocalName();
   const role = me.user.staffRole ?? me.companies[0]?.role;
+  const review = useApi<{ companyId: string; open: number; answered: number; reviewedUpTo: string | null }[]>('/api/review/my-clients');
+  const rv = (id: string) => review.data?.find((r) => r.companyId === id);
   return (
     <div className="app">
       <Sidebar subtitle={me.user.firmName} user={me.user} roleLabel={role ? t(`role.${role}`) : undefined} onSignOut={onSignOut}>
@@ -22,7 +24,7 @@ export function MyClients({ me, onSignOut }: { me: Me; onSignOut: () => void }) 
           {me.companies.length === 0 ? <div className="mut">{t('clients.empty')}</div> : (
             <div className="wrap">
               <table>
-                <thead><tr><th>{t('col.client')}</th><th>{t('col.country')}</th><th>{t('col.currency')}</th><th>{t('col.vat')}</th><th>{t('col.yourRole')}</th><th /></tr></thead>
+                <thead><tr><th>{t('col.client')}</th><th>{t('col.country')}</th><th>{t('col.currency')}</th><th>{t('col.vat')}</th><th>{t('col.yourRole')}</th><th>{t('rv.reviewedCol')}</th><th>{t('rv.queriesCol')}</th><th /></tr></thead>
                 <tbody>
                   {me.companies.map((c) => (
                     <tr key={c.id}>
@@ -31,6 +33,9 @@ export function MyClients({ me, onSignOut }: { me: Me; onSignOut: () => void }) 
                       <td>{c.currency}</td>
                       <td className="num">{Number(c.vatRate)}%</td>
                       <td>{t(`role.${c.role}`)}</td>
+                      <td className="small ltr">{rv(c.id)?.reviewedUpTo?.slice(0, 7) ?? '—'}</td>
+                      <td className="small">{rv(c.id)?.answered ? <button className="link" onClick={() => navigate(`/c/${c.id}/Review/queries`)}><span className="badge warn">{t('rv.answersN', { n: rv(c.id)!.answered })}</span></button> : null}
+                        {rv(c.id)?.open ? <span className="mut"> {t('rv.withClientN', { n: rv(c.id)!.open })}</span> : null}{!rv(c.id)?.answered && !rv(c.id)?.open ? '—' : null}</td>
                       <td className="num"><button className="b p" onClick={() => navigate(`/c/${c.id}/Home`)}>{t('clients.open')}</button></td>
                     </tr>
                   ))}

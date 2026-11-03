@@ -26,6 +26,7 @@ import { ReportFrame } from '../print/Print.tsx';
 import { ProjectList, ProjectPage, ProjectReport } from '../projects/Projects.tsx';
 import { EmployeeList, EmployeePage } from '../hrm/Employees.tsx';
 import { Activities, Campaigns, Leads, PipelinePage } from '../crm/Crm.tsx';
+import { Review } from '../review/Review.tsx';
 import { Attendance, EndOfService, HrDocuments, HrOverview, Leave, Loans, Payroll } from '../hrm/Hrm.tsx';
 import { BankAccountForm, BankAccountList, BankAccountPage, ImportStatement, Reconcile, Rules } from '../bank/Bank.tsx';
 import { ItemList, ItemPage, NoteEditor, NoteList, StockValue } from '../inventory/Inventory.tsx';
@@ -94,7 +95,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
         {books.error && <ErrorNote error={books.error} onRetry={books.reload} />}
         {!b ? <Loading /> : (
           <>
-            {!b.canPost && <div className="notice warn">{t('viewOnly')}</div>}
+            {!b.canPost && mod.key !== 'Review' && <div className="notice warn">{t('viewOnly')}</div>}
             {b.access && accessTo(b.access.permissions, mod.key) === 'none' ? (
               <div className="card"><h2>{t('access.noneTitle')}</h2><p className="mut">{t('access.noneText', { role: local(b.access.name, b.access.nameAr ?? null) })}</p>
                 <button className="b p" onClick={() => goModule('Home')}>{t('mod.Home')}</button></div>
@@ -164,6 +165,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Assets':
       if (sub === 'depreciation') return <Depreciation books={books} />;
       return item ? <AssetPage key={item} books={books} id={item} /> : <AssetRegister books={books} />;
+    case 'Review': return <Review books={books} sub={sub} item={item} />;
     case 'CRM':
       if (sub === 'leads') return <Leads books={books} id={item} />;
       if (sub === 'activities') return <Activities books={books} />;

@@ -4,7 +4,7 @@
 import type { ReactNode } from 'react';
 import type { CompanyBooks } from '../api.ts';
 import { translate, type Key } from '../i18n.tsx';
-import { fmt } from '../money.ts';
+import { fmt, fromMinor, toMinor } from '../money.ts';
 
 export interface Attachment { id: string; fileName: string; contentType: string; size: number; uploadedAt: string; uploadedBy: string; dataUrl?: string }
 export const fileUrl = (a: Attachment) => a.dataUrl ?? `/api/attachments/${a.id}`;
@@ -18,7 +18,7 @@ const Num = ({ v }: { v: string | null | undefined }) => <span className="num">{
 const qtyText = (q: string) => (q.includes('.') ? q.replace(/\.?0+$/, '') : q);
 const today = () => new Date().toISOString().slice(0, 10);
 
-interface Seller { name: string; nameAr: string | null; vatNumber: string | null; crNumber: string; address: string; city: string; country: string; currency: string;
+export interface Seller { name: string; nameAr: string | null; vatNumber: string | null; crNumber: string; address: string; city: string; country: string; currency: string;
   phone?: string | null; email?: string | null; bankName?: string | null; iban?: string | null }
 
 function Head({ seller, title, number, status, children }: { seller: Seller; title: Key; number: string | null; status?: string; children?: ReactNode }) {
@@ -275,5 +275,67 @@ export function ReportSheet({ books, title, period, html }: { books: CompanyBook
       <div className="pdf-report-body" dangerouslySetInnerHTML={{ __html: html }} />
       <Footer number={null} />
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ payslips
+export interface PayslipLine {
+  name: string; nameAr: string | null; employeeNo: string | null; jobTitle: string | null; idNumber?: string | null; iban?: string | null;
+  basic: string; housing: string; transport: string; otherAllowance: string; overtime: string; overtimeHours: string; bonus: string; gross: string;
+  absence: string; sick: string; insuranceEmployee: string; insuranceEmployer: string; loan: string; otherDeductions: string; net: string;
+  unpaidDays: number; absentDays: number; note: string | null;
+}
+
+/** One A4 page per person: earnings, deductions, net pay; English and Arabic. */
+export function PayslipPdf({ seller, periodEnd, paidOn, lines }: { seller: Seller; periodEnd: string; paidOn: string | null; lines: PayslipLine[] }) {
+  const month = new Date(`${periodEnd}T00:00:00Z`);
+  const label = `${month.toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })} · ${month.toLocaleString('ar-SA-u-ca-gregory-nu-latn', { month: 'long', year: 'numeric', timeZone: 'UTC' })}`;
+  const sum = (vs: string[]) => fromMinor(vs.reduce((s, v) => s + toMinor(v), 0n));
+  const nonZero = (v: string | null | undefined) => !!v && toMinor(v) !== 0n;
+  return (
+    <>
+      {lines.map((l, i) => {
+        const earn: [Key, string][] = [['pdf.basic', l.basic], ['pdf.housing', l.housing], ['pdf.transport', l.transport], ['pdf.otherAllowance', l.otherAllowance],
+          ['pdf.overtime', l.overtime], ['pdf.bonus', l.bonus]];
+        const ded: [Key, string][] = [['pdf.absence', l.absence], ['pdf.sickDeduction', l.sick], ['pdf.socialInsurance', l.insuranceEmployee], ['pdf.loanRepayment', l.loan], ['pdf.otherDeductions', l.otherDeductions]];
+        const shown = (r: [Key, string][]) => r.filter(([, v]) => nonZero(v));
+        return (
+          <div key={i} className="pdf payslip" dir="ltr" style={{ breakAfter: i < lines.length - 1 ? 'page' : undefined }}>
+            <Head seller={seller} title="pdf.payslip" number={periodEnd.slice(0, 7)}>
+              <div className="pdf-row">
+                <Party label="pdf.employee" name={l.name} nameAr={l.nameAr} lines={[['pdf.employeeNo', l.employeeNo], ['pdf.jobTitle', l.jobTitle], ['pdf.idNumber', l.idNumber], ['pdf.iban', l.iban]]} />
+                <Meta rows={[['pdf.payPeriod', label], ['pdf.daysOff', l.unpaidDays + l.absentDays ? String(l.unpaidDays + l.absentDays) : null],
+                  ['pdf.overtimeHours', nonZero(l.overtimeHours) ? l.overtimeHours : null], ['pdf.paidOn', paidOn], ['pdf.currency', seller.currency]]} />
+              </div>
+            </Head>
+            <div className="pdf-row" style={{ alignItems: 'flex-start', gap: 14 }}>
+              <table className="pdf-lines" style={{ flex: 1 }}>
+                <thead><tr><th className="desc"><Bi k="pdf.earnings" /></th><th><Bi k="pdf.amount" /></th></tr></thead>
+                <tbody>{shown(earn).map(([k, v]) => <tr key={k}><td className="desc"><Bi k={k} /></td><td><Num v={v} /></td></tr>)}
+                  <tr className="strong"><td className="desc"><b><Bi k="pdf.totalEarnings" /></b></td><td><b><Num v={l.gross} /></b></td></tr></tbody>
+              </table>
+              <table className="pdf-lines" style={{ flex: 1 }}>
+                <thead><tr><th className="desc"><Bi k="pdf.deductions" /></th><th><Bi k="pdf.amount" /></th></tr></thead>
+                <tbody>{shown(ded).map(([k, v]) => <tr key={k}><td className="desc"><Bi k={k} /></td><td><Num v={v} /></td></tr>)}
+                  <tr className="strong"><td className="desc"><b><Bi k="pdf.totalDeductions" /></b></td><td><b><Num v={sum(ded.map(([, v]) => v))} /></b></td></tr></tbody>
+              </table>
+            </div>
+            <div className="pdf-row bottom">
+              <div className="pdf-left">
+                {nonZero(l.insuranceEmployer) && <div className="pdf-box pdf-small"><Bi k="pdf.employerInsurance" />: <b><Num v={l.insuranceEmployer} /></b> {seller.currency}</div>}
+                {l.note && <div className="pdf-box"><div className="pdf-party-label"><Bi k="pdf.notes" /></div><div className="pdf-small pre">{l.note}</div></div>}
+              </div>
+              <Totals currency={seller.currency} rows={[['pdf.netPay', l.net, true]]} />
+            </div>
+            <div className="pdf-signs">
+              <div><Bi k="pdf.preparedBy" /><span /></div>
+              <div><Bi k="pdf.approvedBy" /><span /></div>
+              <div><Bi k="pdf.employeeSignature" /><span /></div>
+            </div>
+            <Footer number={`${l.employeeNo ?? ''} ${periodEnd.slice(0, 7)}`.trim()} />
+          </div>
+        );
+      })}
+    </>
   );
 }

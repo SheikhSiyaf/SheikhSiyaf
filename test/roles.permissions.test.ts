@@ -138,6 +138,10 @@ describe('Roles and permissions', () => {
     // A new client user without a role named gets one; asking for no role is refused.
     const nu = (await post(a, `/api/admin/companies/${f.a.id}/users`, { name: 'New Person', email: `np.${Date.now()}@example.com`, role: 'client_viewer' })).json();
     expect((await owner.query('SELECT r.name FROM memberships m JOIN client_roles r ON r.id = m.client_role_id WHERE m.user_id = $1', [nu.invite.userId])).rows[0].name).toBe('Client management');
+    // The firm's starting role wins over another role with the same access, whatever its name or age.
+    await post(a, '/api/admin/roles', { name: 'Aardvark team', permissions: accountant.permissions });
+    const nu2 = (await post(a, `/api/admin/companies/${f.a.id}/users`, { name: 'Second Person', email: `sp.${Date.now()}@example.com` })).json();
+    expect((await owner.query('SELECT r.name FROM memberships m JOIN client_roles r ON r.id = m.client_role_id WHERE m.user_id = $1', [nu2.invite.userId])).rows[0].name).toBe('Client accountant');
     expect((await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: null })).json()).toMatchObject({ key: 'err.roleChoose' });
     // Change the default accountant role: no Journal any more.
     await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: accountant.id });

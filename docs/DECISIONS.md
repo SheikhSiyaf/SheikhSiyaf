@@ -16,6 +16,8 @@
 
 - PDFs are A4 pages drawn by the browser and saved with its print window ("Save as PDF"), so Arabic is always shaped correctly. Sales documents are bilingual (English and Arabic). In Saudi Arabia an invoice is a "Tax invoice" when the buyer has a VAT number and a "Simplified tax invoice" otherwise, with the ZATCA phase 1 QR code (seller, VAT number, time, total, VAT). Phase 2 (XML, cryptographic stamp, clearance through Fatoora) comes with the ZATCA adapter.
 - Reports export to PDF and to Excel (.xlsx), numbers as numbers.
+- HRM is full payroll for Saudi Arabia and the UAE: monthly payroll with GOSI (Saudi Arabia) and GPSSA (UAE nationals), overtime, unpaid leave, absence and sick pay tiers by the labour laws, annual leave balances, loans and advances, a monthly end of service provision and final settlements, payslips, salary files (UAE WPS SIF; Saudi payroll file for Mudad or the bank) and HR documents with expiry dates. A month's pay is worked on a 30-day month. Oman (PASI) comes with Oman.
+- To confirm before the first real payroll: GOSI and GPSSA rates and caps (src/books/payroll.ts), the WPS SIF layout with the client's bank or exchange house, and the Mudad payroll file layout.
 - In reports, projects are kept apart from cost centres: P&L by cost centre shows branches and departments, with projects as one line pointing to the Projects report.
 
 - Reports show account names, not account codes. The profit and loss reads: Sales, less Cost of sales = Gross profit, less Indirect expenses, add Indirect income = Net profit. Each income and expense account has its line (set automatically, changeable in Ledger > Chart of accounts).
@@ -29,6 +31,5 @@
 - What the SAR 2,500 managed fee includes; pilot discount amount.
 - How clients use cost centres (branch, department, project).
 - Which POS systems restaurant clients use.
-- Short-form HRM or full payroll.
 - Developer to hire; hosting region (check Saudi and UAE data protection rules, take legal advice).
 - Confirm e-invoicing dates and specs with ZATCA, UAE FTA and Oman Tax Authority before building.

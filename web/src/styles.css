@@ -375,3 +375,13 @@ table.perm th.c, table.perm td.c { text-align: center; width: 84px; }
 table.perm td.c input { width: 18px; height: 18px; accent-color: var(--teal); }
 table.perm tbody tr:hover { background: var(--tealbg); }
 table.roles .chips .badge { font-size: 11px; }
+
+/* HRM */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg button { border: 0; background: var(--card); color: var(--ink); padding: 8px 14px; font: inherit; cursor: pointer; }
+.seg button.on { background: var(--teal); color: var(--onteal); }
+.card.fig.warn { border-color: var(--warn); }
+table.payroll td .small { white-space: nowrap; }
+.pdf.payslip .pdf-lines tr.strong td { background: var(--pl) !important; }
+.pdf.payslip .pdf-lines td:first-child, .pdf.payslip .pdf-lines th:first-child { width: auto; text-align: start; color: inherit; }
+.pdf.payslip .pdf-lines td:first-child .bi, .pdf.payslip .pdf-lines th:first-child .bi { display: flex; justify-content: space-between; gap: 8px; }

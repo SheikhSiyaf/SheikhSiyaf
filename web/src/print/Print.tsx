@@ -41,7 +41,7 @@ export async function printPdf(title: string, build: () => ReactNode | Promise<R
 }
 
 /** In the Claude preview the viewer is asked to save the file (the page itself may not download); in the app, a normal download. */
-async function download(bytes: Uint8Array, fileName: string, type: string) {
+export async function download(bytes: Uint8Array, fileName: string, type: string) {
   const name = fileName.replace(/[\\/:*?"<>|]/g, '-');
   const claude = (window as unknown as { claude?: { use?: (n: string) => Promise<{ save: (r: { filename: string; data: Blob }) => Promise<unknown> } | null> } }).claude;
   if (claude?.use) {

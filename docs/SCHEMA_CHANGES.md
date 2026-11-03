@@ -173,3 +173,20 @@ Every change below is covered by a test in `test/`.
 |---|---|
 | Each firm gets "Client accountant" (all modules: view and enter; approves claims) and "Client management" (all modules: view only) as ordinary rows in `client_roles`, also for new firms (trigger on `firms`) | The Administrator can change every role; there are no fixed roles any more. |
 | Every client user's membership gets a role: existing ones and new ones added without a role get the firm's first active role with the same base | Access always comes from a role the Administrator can see and change. |
+
+## 0017_hrm.sql
+| Change | Why |
+|---|---|
+| Accounts 1150 Employee loans and advances, 2210 Salaries payable, 2220 Social insurance payable, 2230 End of service provision, 5210 Social insurance, 5220 End of service benefits (added to existing clients and the template) | Payroll, loans and end of service post to their own accounts. |
+| `employee_profiles` (nationality, IDs, join date, contract, basic and allowances, IBAN, WPS IDs, GOSI/GPSSA, annual leave days, opening leave and end of service balances, leaving date and reason) and `company_hr_settings` (employer IDs for salary files) | HR details for payroll, leave and end of service. The join date is fixed once paid; pay and leaving date are fixed after the final settlement. |
+| `hr_attendance` (days absent, overtime hours per person per month) and `leave_requests` (annual, sick, unpaid, other paid; requested, approved, rejected, cancelled; no overlaps) | What payroll deducts and pays. Months with posted payroll are fixed: their attendance and leave no longer change. |
+| `employee_loans` with their own journal entry (Dr 1150, Cr bank); `loan_balance()` | Advances repaid from salary. A loan never changes. |
+| `payroll_runs` and `payroll_lines` (each line must add up: gross = pay parts; net = gross less deductions); posting needs its own entry crediting 2210 with the net; paying needs its own entry clearing 2210 | Payroll as one journal entry per month; posted payroll is never changed or deleted (rule 2). |
+| `eos_settlements` (end of service by reason, unused leave, loan recovered, total due) with its own entry crediting 2210 | The final settlement, once per person, never changed. |
+| `employee_documents` with expiry dates; attachments can belong to one | Iqama, passports, contracts and insurance with scans. |
+| Audit triggers and row-level security on every HRM table | Rules 5 and 6. |
+
+## 0019_default_client_roles.sql
+| Change | Why |
+|---|---|
+| `client_roles.default_for` marks each firm's starting Client accountant and Client management roles; a client user added without a role gets the marked role for their base | 0018 chose by creation time, which tied for roles made in the same transaction, so a new user could get a role such as "Cashier" by name order. The marked roles stay ordinary and editable. |

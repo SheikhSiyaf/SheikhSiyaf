@@ -21,7 +21,7 @@ function toBase64(file: File): Promise<string> {
 }
 const sizeText = (n: number) => (n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
-export function AttachmentsCard({ owner, id, canAdd, canRemove, hint }: { owner: 'documents' | 'stock-notes'; id: string; canAdd: boolean; canRemove: boolean; hint?: string }) {
+export function AttachmentsCard({ owner, id, canAdd, canRemove, hint }: { owner: 'documents' | 'stock-notes' | 'hr-documents'; id: string; canAdd: boolean; canRemove: boolean; hint?: string }) {
   const { t, has } = useI18n();
   const list = useApi<Attachment[]>(`/api/${owner}/${id}/attachments`);
   const input = useRef<HTMLInputElement>(null);

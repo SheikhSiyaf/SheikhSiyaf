@@ -16,7 +16,7 @@ export const NAV: Module[] = [
   { key: 'Restaurant', subs: [s('food-sales'), s('menu'), s('materials'), s('materials-in'), s('wastage'), s('material-value')] },
   { key: 'Assets', subs: [s('register'), s('depreciation')] },
   { key: 'Projects', subs: [s('projects'), s('project-report')] },
-  { key: 'HRM', subs: [s('employees'), s('payroll', false), s('leave', false), s('attendance', false), s('end-of-service', false), s('hr-documents', false)] },
+  { key: 'HRM', subs: [s('overview'), s('employees'), s('attendance'), s('leave'), s('payroll'), s('loans'), s('end-of-service'), s('hr-documents')] },
   { key: 'CRM', subs: [s('leads', false), s('pipeline', false), s('activities', false), s('campaigns', false)] },
   { key: 'Journal', subs: [s('entries'), s('new'), s('periods')] },
   { key: 'Ledger', subs: [s('chart-of-accounts'), s('cost-centres-setup'), s('general-ledger'), s('cost-centre-ledger'), s('customer-ledger'), s('supplier-ledger'), s('employee-ledger')] },

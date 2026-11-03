@@ -5,6 +5,7 @@
 // Data resets when the page reloads.
 import { toMinor, fromMinor, divRoundHalfUp } from '../../../src/money.ts';
 import { vatForLine } from '../../../src/vat/vat.ts';
+import * as Pay from '../../../src/books/payroll.ts';
 import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../../../src/books/chartTemplate.ts';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_USERS } from '../../../src/db/demoData.ts';
 import { accessTo, cleanModules, DEFAULT_MODULES, isIndustry, ROLE_MODULES, type AccessLevel, type Industry } from '../../../src/books/modules.ts';
@@ -665,6 +666,7 @@ function seedSales(companyId: string, poster: string, c: { country: string; city
   session = poster;
   pay('made', yusuf, 16, c1, s(amountDue(sdb.docs.find((d) => d.id === c1)!)), '1010', 'cash');
   seedOps(companyId, poster, c, { gulf, faisal, najd, fitOut });
+  seedHrm(companyId, poster);
   session = prev;
 }
 
@@ -1154,7 +1156,7 @@ function salesM(companyId: string, from: string, to: string) {
 }
 
 // ---- chart of accounts, cost centres, attachments (same rules as db/migrations/0014)
-interface MAttachment { id: string; companyId: string; documentId: string | null; noteId: string | null; fileName: string; contentType: string; size: number; dataUrl: string; uploadedBy: string; uploadedAt: string }
+interface MAttachment { id: string; companyId: string; documentId: string | null; noteId: string | null; hrDocId?: string | null; fileName: string; contentType: string; size: number; dataUrl: string; uploadedBy: string; uploadedAt: string }
 const adb = { files: [] as MAttachment[] };
 function sellerOf(co: Company) {
   const bank = odb.banks.find((b) => b.companyId === co.id && b.kind === 'bank' && b.status === 'active' && b.iban);
@@ -1200,8 +1202,8 @@ function saveCostCentreM(companyId: string, b: Record<string, unknown>, id?: str
   if (id) { Object.assign(db.costCentres.find((c) => c.id === id && c.companyId === companyId && c.kind !== 'project') ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
   const nid = uid(); db.costCentres.push({ id: nid, companyId, ...v }); return nid;
 }
-function addAttachmentM(owner: { documentId?: string; noteId?: string }, b: Record<string, unknown>) {
-  const companyId = owner.documentId ? docOf(owner.documentId).companyId : noteOf(owner.noteId!).companyId;
+function addAttachmentM(owner: { documentId?: string; noteId?: string; hrDocId?: string }, b: Record<string, unknown>) {
+  const companyId = owner.documentId ? docOf(owner.documentId).companyId : owner.hrDocId ? hrDocOf(owner.hrDocId).companyId : noteOf(owner.noteId!).companyId;
   canPostIn(companyId);
   const fileName = String(b.fileName ?? '').trim();
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
@@ -1212,7 +1214,7 @@ function addAttachmentM(owner: { documentId?: string; noteId?: string }, b: Reco
   if (!size) fail(400, 'The file is empty.', 'err.attachmentEmpty');
   if (size > 10 * 1024 * 1024) fail(400, 'Files can be up to 10 MB.', 'err.attachmentSize');
   const id = uid();
-  adb.files.push({ id, companyId, documentId: owner.documentId ?? null, noteId: owner.noteId ?? null, fileName, contentType: type!, size, dataUrl: `data:${type};base64,${data}`,
+  adb.files.push({ id, companyId, documentId: owner.documentId ?? null, noteId: owner.noteId ?? null, hrDocId: owner.hrDocId ?? null, fileName, contentType: type!, size, dataUrl: `data:${type};base64,${data}`,
     uploadedBy: db.users.find((u) => u.id === session)?.name ?? '', uploadedAt: new Date().toISOString() });
   return id;
 }
@@ -1925,6 +1927,401 @@ function checkAccess(method: string, path: string, body: Body, q: URLSearchParam
   const best = Math.max(...mods.map((m) => RANK[accessTo(r.permissions, m)]));
   if (best < RANK[method === 'GET' ? 'view' : 'edit']) fail(403, 'Your role does not allow this.', 'err.roleNoAccess');
   if (approve && !r.canApprove) fail(403, 'Your role does not allow approving claims.', 'err.roleNoApprove');
+}
+
+// ---------------------------------------------------------------- HRM (same rules as src/books/hrmService.ts and db/migrations/0017)
+interface MProfile { contactId: string; companyId: string; nationality: string; idNumber: string | null; passportNo: string | null; dateOfBirth: string | null; joinDate: string;
+  contractType: string; contractEnd: string | null; basic: bigint; housing: bigint; transport: bigint; other: bigint; iban: string | null; bankRouting: string | null;
+  wpsPersonId: string | null; insuranceNo: string | null; insuranceRegistered: string | null; annualLeaveDays: number | null; openingLeaveDays: string; openingAsOf: string | null;
+  openingEos: bigint; leavingDate: string | null; leavingReason: string | null }
+interface MLeave { id: string; companyId: string; contactId: string; kind: string; startDate: string; endDate: string; days: number; reason: string | null; status: string; createdBy: string | null; decidedBy: string | null }
+interface MLoan { id: string; companyId: string; contactId: string; number: string; issueDate: string; amount: bigint; installment: bigint; notes: string | null; entryId: string }
+interface MPayLine { id: string; contactId: string; costCentreId: string | null; unpaidDays: number; absentDays: number; sickUnpaid: number; overtimeHours: string; loanId: string | null; note: string | null;
+  l: Pay.PayLine; eos: bigint }
+interface MPayRun { id: string; companyId: string; periodEnd: string; status: 'draft' | 'posted' | 'paid'; lines: MPayLine[]; entryId: string | null; paymentEntryId: string | null; paidOn: string | null; createdBy: string; postedBy: string | null }
+interface MSettlement { id: string; companyId: string; contactId: string; leavingDate: string; reason: string; serviceDays: number; eosAmount: bigint; provision: bigint; leaveDays: string; leavePay: bigint; loanId: string | null; loanRecovered: bigint; totalDue: bigint; entryId: string }
+interface MHrDoc { id: string; companyId: string; contactId: string; kind: string; number: string | null; issueDate: string | null; expiryDate: string | null; notes: string | null }
+const hdb = { profiles: [] as MProfile[], settings: new Map<string, { employerId: string | null; bankRouting: string | null; insuranceNo: string | null }>(),
+  attendance: [] as { companyId: string; contactId: string; periodEnd: string; absentDays: number; overtimeHours: string; notes: string | null }[],
+  leave: [] as MLeave[], loans: [] as MLoan[], runs: [] as MPayRun[], settlements: [] as MSettlement[], docs: [] as MHrDoc[] };
+const userName = (id: string | null) => db.users.find((u) => u.id === id)?.name ?? null;
+const hrPostedBetween = (companyId: string, from: string, to: string) => hdb.runs.some((r) => r.companyId === companyId && r.status !== 'draft' && r.periodEnd >= from && `${r.periodEnd.slice(0, 7)}-01` <= to);
+const empOf = (id: string) => sdb.contacts.find((c) => c.id === id && c.isEmployee && roleOf(session, c.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+const mStart = (pe: string) => `${pe.slice(0, 7)}-01`;
+const addD = (d: string, n: number) => new Date(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10) + n)).toISOString().slice(0, 10);
+const isMonthEnd = (p: string) => /^\d{4}-\d{2}-\d{2}$/.test(p) && Pay.daysInMonth(p) === new Date(Date.UTC(+p.slice(0, 4), +p.slice(5, 7), 0)).getUTCDate();
+
+function empRow(c: MContact) {
+  const p = hdb.profiles.find((x) => x.contactId === c.id);
+  const co = db.companies.find((x) => x.id === c.companyId)!;
+  const pay = p ? p.basic + p.housing + p.transport + p.other : 0n;
+  return { id: c.id, companyId: c.companyId, name: c.name, nameAr: c.nameAr, employeeNo: c.employeeNo, jobTitle: c.jobTitle, status: c.status, costCentreId: c.defaultCostCentreId,
+    hasProfile: !!p, nationality: p?.nationality ?? null, national: p?.nationality === co.country, country: co.country as Pay.Country, idNumber: p?.idNumber ?? null, passportNo: p?.passportNo ?? null,
+    dateOfBirth: p?.dateOfBirth ?? null, joinDate: p?.joinDate ?? null, contractType: p?.contractType ?? null, contractEnd: p?.contractEnd ?? null,
+    basic: s(p?.basic ?? 0n), housing: s(p?.housing ?? 0n), transport: s(p?.transport ?? 0n), otherAllowance: s(p?.other ?? 0n), wage: s(pay), iban: p?.iban ?? null, bankRouting: p?.bankRouting ?? null,
+    wpsPersonId: p?.wpsPersonId ?? null, insuranceNo: p?.insuranceNo ?? null, insuranceRegistered: p?.insuranceRegistered ?? null, annualLeaveDays: p?.annualLeaveDays ?? null,
+    openingLeaveDays: p?.openingLeaveDays ?? '0.00', openingAsOf: p?.openingAsOf ?? null, openingEos: s(p?.openingEos ?? 0n), leavingDate: p?.leavingDate ?? null, leavingReason: p?.leavingReason ?? null,
+    settled: hdb.settlements.some((x) => x.contactId === c.id) };
+}
+type MEmp = ReturnType<typeof empRow>;
+const empsOf = (companyId: string) => sdb.contacts.filter((c) => c.companyId === companyId && c.isEmployee).sort((a, b) => a.name.localeCompare(b.name)).map(empRow);
+const payOfM = (e: MEmp): Pay.PayStructure => ({ basic: toMinor(e.basic), housing: toMinor(e.housing), transport: toMinor(e.transport), other: toMinor(e.otherAllowance) });
+const mny = (v: unknown): bigint => { const t = String(v ?? '').replace(/,/g, '').trim(); if (!t) return 0n; try { const x = toMinor(t); if (x < 0n) fail(400, 'Amounts cannot be negative.', 'err.amount'); return x; } catch (e) { if (e instanceof Fail) throw e; return fail(400, 'Amounts have at most 2 decimals.', 'err.amountFormat'); } };
+const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+const dt = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+
+function saveProfileM(contactId: string, b: Body) {
+  const c = empOf(contactId); canPostIn(c.companyId);
+  if (hdb.settlements.some((x) => x.contactId === contactId)) fail(400, 'This person\'s final settlement is done; their pay and leaving date no longer change.', 'err.settledFixed');
+  const nationality = String(b?.nationality ?? '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(nationality)) fail(400, 'Choose the nationality.', 'err.nationality');
+  const joinDate = dt(b?.joinDate) ?? fail(400, 'Enter the join date.', 'err.joinDate');
+  const basic = mny(b?.basic); if (basic <= 0n) fail(400, 'Enter the basic salary.', 'err.basicSalary');
+  const iban = str(b?.iban)?.replace(/\s+/g, '').toUpperCase() ?? null;
+  if (iban && !/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(iban)) fail(400, 'Check the IBAN.', 'err.iban');
+  const old = hdb.profiles.find((x) => x.contactId === contactId);
+  if (old && old.joinDate !== joinDate && hdb.runs.some((r) => r.status !== 'draft' && r.lines.some((l) => l.contactId === contactId))) fail(400, 'This person has been paid through payroll, so the join date can no longer change.', 'err.joinDateFixed');
+  const leave = b?.annualLeaveDays === '' || b?.annualLeaveDays == null ? null : Number(b.annualLeaveDays);
+  const v: MProfile = { contactId, companyId: c.companyId, nationality, idNumber: str(b?.idNumber), passportNo: str(b?.passportNo), dateOfBirth: dt(b?.dateOfBirth), joinDate,
+    contractType: b?.contractType === 'limited' ? 'limited' : 'unlimited', contractEnd: dt(b?.contractEnd), basic, housing: mny(b?.housing), transport: mny(b?.transport), other: mny(b?.otherAllowance),
+    iban, bankRouting: str(b?.bankRouting), wpsPersonId: str(b?.wpsPersonId), insuranceNo: str(b?.insuranceNo), insuranceRegistered: dt(b?.insuranceRegistered), annualLeaveDays: leave,
+    openingLeaveDays: String(b?.openingLeaveDays ?? '').trim() || '0.00', openingAsOf: dt(b?.openingAsOf), openingEos: mny(b?.openingEos), leavingDate: old?.leavingDate ?? null, leavingReason: old?.leavingReason ?? null };
+  if (old) Object.assign(old, v); else hdb.profiles.push(v);
+}
+const leaveDaysInM = (contactId: string, kind: string, from: string, to: string) => hdb.leave.filter((l) => l.contactId === contactId && l.kind === kind && l.status === 'approved' && l.endDate >= from && l.startDate <= to)
+  .reduce((n, l) => n + Pay.daysBetween(l.startDate > from ? l.startDate : from, l.endDate < to ? l.endDate : to), 0);
+function leaveBalanceM(e: MEmp, asOf: string) {
+  if (!e.joinDate) return { earned: 0, opening: 0, taken: 0, balance: 0 };
+  const from = e.openingAsOf && e.openingAsOf > e.joinDate ? addD(e.openingAsOf, 1) : e.joinDate;
+  const until = e.leavingDate && e.leavingDate < asOf ? e.leavingDate : asOf;
+  const all = Pay.leaveEarnedHundredths(e.country, e.joinDate, until, e.annualLeaveDays);
+  const before = from > e.joinDate ? Pay.leaveEarnedHundredths(e.country, e.joinDate, addD(from, -1), e.annualLeaveDays) : 0;
+  const earned = Math.max(all - before, 0), opening = Math.round(Number(e.openingLeaveDays) * 100), taken = leaveDaysInM(e.id, 'annual', from, until) * 100;
+  return { earned: earned / 100, opening: opening / 100, taken: taken / 100, balance: (earned + opening - taken) / 100 };
+}
+const loanBalanceM = (l: MLoan) => l.amount - hdb.runs.filter((r) => r.status !== 'draft').flatMap((r) => r.lines).filter((x) => x.loanId === l.id).reduce((t, x) => t + x.l.loan, 0n)
+  - hdb.settlements.filter((x) => x.loanId === l.id).reduce((t, x) => t + x.loanRecovered, 0n);
+const openLoanM = (contactId: string) => hdb.loans.filter((l) => l.contactId === contactId && loanBalanceM(l) > 0n).sort((a, b) => a.issueDate.localeCompare(b.issueDate))[0] ?? null;
+const provisionM = (e: MEmp) => toMinor(e.openingEos) + hdb.runs.filter((r) => r.status !== 'draft').flatMap((r) => r.lines).filter((x) => x.contactId === e.id).reduce((t, x) => t + x.eos, 0n);
+const inMonthM = (e: MEmp, pe: string) => e.hasProfile && e.joinDate! <= pe && (!e.leavingDate || e.leavingDate >= mStart(pe));
+
+function computeLineM(e: MEmp, pe: string, kept: { bonus: bigint; otherDeductions: bigint; note: string | null }): MPayLine {
+  const from = mStart(pe);
+  const att = hdb.attendance.find((a) => a.contactId === e.id && a.periodEnd === pe);
+  const loan = e.settled ? null : openLoanM(e.id);
+  const pay = payOfM(e);
+  const base: Pay.PayLineInput = { country: e.country, national: e.national, registeredOn: e.insuranceRegistered, pay, periodEnd: pe, joinDate: e.joinDate!, endDate: e.leavingDate,
+    unpaidLeaveDays: leaveDaysInM(e.id, 'unpaid', from, pe), absentDays: att?.absentDays ?? 0,
+    sickUnpaidHundredths: Pay.sickUnpaidHundredths(e.country, leaveDaysInM(e.id, 'sick', addD(from, -365), addD(from, -1)), leaveDaysInM(e.id, 'sick', from, pe)),
+    overtimeHundredths: Pay.hoursToHundredths(att?.overtimeHours ?? '0'), bonus: kept.bonus, otherDeductions: kept.otherDeductions, loanDeduction: 0n };
+  const before = Pay.payLine(base);
+  const lb = loan ? loanBalanceM(loan) : 0n;
+  const ld = loan ? [loan.installment, lb, before.net > 0n ? before.net : 0n].reduce((a, b) => (a < b ? a : b)) : 0n;
+  const l = Pay.payLine({ ...base, loanDeduction: ld });
+  if (l.net < 0n) fail(400, `Deductions for ${e.name} are more than the pay this month.`, 'err.payrollNegative', [e.name]);
+  const end = e.leavingDate && e.leavingDate < pe ? e.leavingDate : pe;
+  const eos = e.settled ? 0n : Pay.endOfService({ country: e.country, joinDate: e.joinDate!, endDate: end, pay, reason: 'termination' }, true).amount - provisionM(e);
+  return { id: uid(), contactId: e.id, costCentreId: e.costCentreId, unpaidDays: base.unpaidLeaveDays, absentDays: base.absentDays, sickUnpaid: base.sickUnpaidHundredths,
+    overtimeHours: (base.overtimeHundredths / 100).toFixed(2), loanId: ld > 0n ? loan!.id : null, note: kept.note, l, eos };
+}
+function writeLinesM(r: MPayRun) {
+  const kept = new Map(r.lines.map((x) => [x.contactId, { bonus: x.l.bonus, otherDeductions: x.l.otherDeductions, note: x.note }]));
+  r.lines = empsOf(r.companyId).filter((e) => inMonthM(e, r.periodEnd) && e.status === 'active').map((e) => computeLineM(e, r.periodEnd, kept.get(e.id) ?? { bonus: 0n, otherDeductions: 0n, note: null }));
+}
+const runOf = (id: string) => hdb.runs.find((r) => r.id === id && roleOf(session, r.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function runRow(r: MPayRun) {
+  const tot = (f: (l: Pay.PayLine) => bigint) => r.lines.reduce((t, x) => t + f(x.l), 0n);
+  return { id: r.id, periodEnd: r.periodEnd, status: r.status, totalGross: s(tot((l) => l.gross)), totalNet: s(tot((l) => l.net)), totalEmployer: s(tot((l) => l.insuranceEmployer)),
+    entryId: r.entryId, paymentEntryId: r.paymentEntryId, paidOn: r.paidOn, createdBy: userName(r.createdBy), postedBy: userName(r.postedBy), people: r.lines.length };
+}
+function runDetail(r: MPayRun) {
+  const lines = r.lines.map((x) => { const c = sdb.contacts.find((k) => k.id === x.contactId)!; const l = x.l;
+    return { id: x.id, contactId: x.contactId, name: c.name, nameAr: c.nameAr, employeeNo: c.employeeNo, jobTitle: c.jobTitle, costCentreId: x.costCentreId, unpaidDays: x.unpaidDays,
+      absentDays: x.absentDays, sickUnpaid: x.sickUnpaid, overtimeHours: x.overtimeHours, loanId: x.loanId, note: x.note, basic: s(l.basic), housing: s(l.housing), transport: s(l.transport),
+      otherAllowance: s(l.other), overtime: s(l.overtime), bonus: s(l.bonus), gross: s(l.gross), absence: s(l.absence), sick: s(l.sick), insuranceEmployee: s(l.insuranceEmployee),
+      insuranceEmployer: s(l.insuranceEmployer), loan: s(l.loan), otherDeductions: s(l.otherDeductions), net: s(l.net), eosAccrual: s(x.eos) }; }).sort((a, b) => a.name.localeCompare(b.name));
+  const sum = (k: keyof (typeof lines)[number]) => s(lines.reduce((t, l) => t + toMinor(String(l[k])), 0n));
+  const totals = Object.fromEntries((['basic', 'housing', 'transport', 'otherAllowance', 'overtime', 'bonus', 'gross', 'absence', 'sick', 'insuranceEmployee', 'insuranceEmployer', 'loan', 'otherDeductions', 'net', 'eosAccrual'] as const).map((k) => [k, sum(k)]));
+  return { ...runRow(r), companyId: r.companyId, lines, totals, missingDetails: empsOf(r.companyId).filter((e) => !e.hasProfile && e.status === 'active').map((e) => e.name) };
+}
+function prepareRunM(companyId: string, pe: string) {
+  canPostIn(companyId);
+  if (!isMonthEnd(pe)) fail(400, 'Choose the month.', 'err.date');
+  if (pe > monthEnd(today())) fail(400, 'Payroll cannot be prepared for a future month.', 'err.payrollFuture');
+  let r = hdb.runs.find((x) => x.companyId === companyId && x.periodEnd === pe);
+  if (r && r.status !== 'draft') fail(400, 'Payroll for this month is already posted.', 'err.payrollPosted');
+  if (!r) { r = { id: uid(), companyId, periodEnd: pe, status: 'draft', lines: [], entryId: null, paymentEntryId: null, paidOn: null, createdBy: session!, postedBy: null }; hdb.runs.push(r); }
+  writeLinesM(r);
+  return r.id;
+}
+function postRunM(id: string) {
+  const r = runOf(id); canPostIn(r.companyId);
+  if (r.status !== 'draft') fail(400, 'Payroll for this month is already posted.', 'err.payrollPosted');
+  writeLinesM(r);
+  if (!r.lines.length) fail(400, 'There is nobody to pay in this payroll.', 'err.payrollEmpty');
+  const a = (code: string) => acctBy(r.companyId, code);
+  if (a('5200').costCentreRequired) { const none = r.lines.filter((x) => !x.costCentreId).map((x) => sdb.contacts.find((c) => c.id === x.contactId)!.name); if (none.length) fail(400, 'Salaries need a cost centre.', 'err.payrollCostCentre', none); }
+  const groups = new Map<string, { cc: string | null; salary: bigint; employer: bigint; eos: bigint }>();
+  let ins = 0n, loans = 0n, net = 0n, eos = 0n;
+  for (const x of r.lines) {
+    const g = groups.get(x.costCentreId ?? '') ?? { cc: x.costCentreId, salary: 0n, employer: 0n, eos: 0n };
+    g.salary += x.l.gross - x.l.absence - x.l.sick - x.l.otherDeductions; g.employer += x.l.insuranceEmployer; g.eos += x.eos; groups.set(x.costCentreId ?? '', g);
+    ins += x.l.insuranceEmployee + x.l.insuranceEmployer; loans += x.l.loan; net += x.l.net; eos += x.eos;
+  }
+  const side = (accountId: string, v: bigint, cc: string | null = null) => (v > 0n ? [{ accountId, costCentreId: cc, debit: v, credit: 0n }] : v < 0n ? [{ accountId, costCentreId: cc, debit: 0n, credit: -v }] : []);
+  r.entryId = post(session!, r.companyId, r.periodEnd, `Payroll ${r.periodEnd.slice(0, 7)}`, [
+    ...[...groups.values()].flatMap((g) => [...side(a('5200').id, g.salary, g.cc), ...side(a('5210').id, g.employer, g.cc), ...side(a('5220').id, g.eos, g.cc)]),
+    ...side(a('2230').id, -eos), ...side(a('2220').id, -ins), ...side(a('1150').id, -loans), ...side(a('2210').id, -net)]);
+  r.status = 'posted'; r.postedBy = session;
+}
+function payRunM(id: string, b: Body) {
+  const r = runOf(id); canPostIn(r.companyId);
+  if (r.status === 'draft') fail(400, 'Post the payroll first.', 'err.payrollNotPosted');
+  if (r.status === 'paid') fail(400, 'This payroll is already paid.', 'err.payrollPaid');
+  const bank = db.accounts.find((x) => x.id === b?.bankAccountId && x.companyId === r.companyId && x.isBank) ?? fail(400, 'Choose the bank or cash account.', 'err.bankAccount');
+  const date = dt(b?.date) ?? fail(400, 'Enter the date.', 'err.date');
+  if (date < mStart(r.periodEnd)) fail(400, 'Salaries are paid in or after their month.', 'err.payDate');
+  const net = r.lines.reduce((t, x) => t + x.l.net, 0n);
+  r.paymentEntryId = post(session!, r.companyId, date, `Salaries paid ${r.periodEnd.slice(0, 7)}`, [{ accountId: acctBy(r.companyId, '2210').id, costCentreId: null, debit: net, credit: 0n },
+    { accountId: bank.id, costCentreId: null, debit: 0n, credit: net }]);
+  r.status = 'paid'; r.paidOn = date;
+}
+function salaryFileM(id: string) {
+  const r = runOf(id);
+  if (r.status === 'draft') fail(400, 'Post the payroll first.', 'err.payrollNotPosted');
+  const co = db.companies.find((c) => c.id === r.companyId)!;
+  const st = hdb.settings.get(r.companyId) ?? { employerId: null, bankRouting: null, insuranceNo: null };
+  const missing: string[] = [];
+  const rows: Pay.WpsRow[] = r.lines.map((x) => {
+    const e = empRow(sdb.contacts.find((c) => c.id === x.contactId)!);
+    if (!e.iban || (co.country === 'AE' && (!e.wpsPersonId || !e.bankRouting))) missing.push(e.name);
+    const extra = x.l.overtime + x.l.bonus, variable = extra < x.l.net ? extra : x.l.net;
+    return { personId: e.wpsPersonId ?? '', routing: e.bankRouting ?? '', iban: e.iban ?? '', name: e.name, employeeNo: e.employeeNo ?? '', idNumber: e.idNumber ?? '', fixed: x.l.net - variable, variable,
+      deductions: x.l.absence + x.l.sick + x.l.insuranceEmployee + x.l.loan + x.l.otherDeductions, net: x.l.net, leaveDays: 0, basic: x.l.basic, housing: x.l.housing, otherAllowances: x.l.transport + x.l.other + x.l.overtime + x.l.bonus };
+  });
+  if (co.country === 'AE' && (!st.employerId || !st.bankRouting)) missing.unshift('—');
+  if (missing.length) fail(400, 'The salary file needs bank details for everyone.', 'err.wpsMissing', missing);
+  if (co.country === 'AE') return { fileName: `${st.employerId}.SIF`, contentType: 'text/plain', content: Pay.uaeSif({ employerId: st.employerId!, routing: st.bankRouting!, periodEnd: r.periodEnd, createdAt: new Date(), rows }) };
+  return { fileName: `payroll-${r.periodEnd.slice(0, 7)}.csv`, contentType: 'text/csv', content: Pay.saudiPayrollCsv(rows) };
+}
+function settlementPreviewM(contactId: string, b: Body) {
+  const c = empOf(contactId); const e = empRow(c);
+  if (!e.hasProfile) fail(400, 'Enter this person\'s HR details first.', 'err.noProfile');
+  if (e.settled) fail(400, 'This person\'s final settlement is already done.', 'err.settled');
+  const leavingDate = dt(b?.leavingDate) ?? fail(400, 'Enter the leaving date.', 'err.date');
+  if (leavingDate < e.joinDate!) fail(400, 'The leaving date is before the join date.', 'err.leavingDate');
+  const reason = Pay.LEAVING_REASONS.includes(b?.reason as Pay.LeavingReason) ? (b!.reason as Pay.LeavingReason) : fail(400, 'Choose why the person is leaving.', 'err.leavingReason');
+  const pay = payOfM(e);
+  const eos = Pay.endOfService({ country: e.country, joinDate: e.joinDate!, endDate: leavingDate, pay, reason });
+  const lh = Math.max(Math.round(leaveBalanceM({ ...e, leavingDate }, leavingDate).balance * 100), 0);
+  const leavePay = Pay.leaveDaysPay(e.country, pay, lh);
+  const loan = openLoanM(e.id); const lb = loan ? loanBalanceM(loan) : 0n;
+  const rec = loan ? (lb < eos.amount + leavePay ? lb : eos.amount + leavePay) : 0n;
+  return { contactId: e.id, name: e.name, leavingDate, reason, serviceDays: eos.serviceDays, basis: s(eos.basis), share: eos.share, eosFull: s(eos.full), eosAmount: s(eos.amount),
+    leaveDays: (lh / 100).toFixed(2), leavePay: s(leavePay), loanId: loan?.id ?? null, loanBalance: s(lb), loanRecovered: s(rec), provision: s(provisionM(e)), totalDue: s(eos.amount + leavePay - rec), costCentreId: e.costCentreId };
+}
+function settleM(contactId: string, b: Body) {
+  const p = settlementPreviewM(contactId, b); const c = empOf(contactId); canPostIn(c.companyId);
+  const a = (code: string) => acctBy(c.companyId, code).id;
+  const eos = toMinor(p.eosAmount), prov = toMinor(p.provision), lp = toMinor(p.leavePay), loan = toMinor(p.loanRecovered), due = toMinor(p.totalDue);
+  const side = (accountId: string, v: bigint, cc: string | null = null) => (v > 0n ? [{ accountId, costCentreId: cc, debit: v, credit: 0n }] : v < 0n ? [{ accountId, costCentreId: cc, debit: 0n, credit: -v }] : []);
+  const lines = [...side(a('2230'), prov), ...side(a('5220'), eos - prov, p.costCentreId), ...side(a('5200'), lp, p.costCentreId), ...side(a('1150'), -loan), ...side(a('2210'), -due)];
+  if (lines.length < 2) fail(400, 'There is nothing to settle for this person.', 'err.nothingToSettle');
+  const entryId = post(session!, c.companyId, p.leavingDate, `Final settlement · ${c.name}`, lines);
+  hdb.settlements.push({ id: uid(), companyId: c.companyId, contactId, leavingDate: p.leavingDate, reason: p.reason, serviceDays: p.serviceDays, eosAmount: eos, provision: prov, leaveDays: p.leaveDays,
+    leavePay: lp, loanId: loan > 0n ? p.loanId : null, loanRecovered: loan, totalDue: due, entryId });
+  const prof = hdb.profiles.find((x) => x.contactId === contactId)!; prof.leavingDate = p.leavingDate; prof.leavingReason = p.reason;
+}
+function saveLeaveM(companyId: string, b: Body) {
+  canPostIn(companyId);
+  if (!b?.contactId) fail(400, 'Choose the employee.', 'err.employee');
+  const e = empRow(empOf(String(b!.contactId)));
+  const kind = ['annual', 'sick', 'unpaid', 'other_paid'].includes(String(b?.kind)) ? String(b!.kind) : fail(400, 'Choose the type of leave.', 'err.leaveKind');
+  const start = dt(b?.startDate) ?? fail(400, 'Enter the dates.', 'err.date'); const end = dt(b?.endDate) ?? start;
+  if (end < start) fail(400, 'The last day is before the first day.', 'err.leaveDates');
+  if (e.joinDate && start < e.joinDate) fail(400, 'The leave starts before the person joined.', 'err.leaveBeforeJoin');
+  if (hdb.leave.some((l) => l.contactId === e.id && ['requested', 'approved'].includes(l.status) && l.startDate <= end && l.endDate >= start)) fail(400, 'This person already has leave on some of these days.', 'err.leaveOverlap');
+  const approve = Boolean(b?.approve);
+  if (approve && hrPostedBetween(companyId, start, end)) fail(400, 'Payroll is posted for these dates.', 'err.leavePosted');
+  const id = uid();
+  hdb.leave.push({ id, companyId, contactId: e.id, kind, startDate: start, endDate: end, days: Pay.daysBetween(start, end), reason: str(b?.reason), status: approve ? 'approved' : 'requested', createdBy: session, decidedBy: approve ? session : null });
+  return id;
+}
+function decideLeaveM(id: string, status: string) {
+  const l = hdb.leave.find((x) => x.id === id && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+  canPostIn(l.companyId);
+  if (!['approved', 'rejected', 'cancelled'].includes(status)) fail(400, 'Choose approve, reject or cancel.', 'err.leaveStatus');
+  if (l.status === 'rejected' || l.status === 'cancelled') fail(400, 'This leave request is closed.', 'err.leaveClosed');
+  if (hrPostedBetween(l.companyId, l.startDate, l.endDate) && (l.status === 'approved' || status === 'approved')) fail(400, 'Payroll is posted for these dates.', 'err.leavePosted');
+  l.status = status; l.decidedBy = session;
+}
+function issueLoanM(companyId: string, b: Body) {
+  canPostIn(companyId);
+  if (!b?.contactId) fail(400, 'Choose the employee.', 'err.employee');
+  const e = empRow(empOf(String(b!.contactId)));
+  if (e.settled) fail(400, 'This person has left.', 'err.employeeLeft');
+  if (openLoanM(e.id)) fail(400, 'This person still has a loan being repaid.', 'err.loanOpen');
+  const date = dt(b?.date) ?? fail(400, 'Enter the date.', 'err.date');
+  const amount = mny(b?.amount), inst = mny(b?.installment) || amount;
+  if (amount <= 0n) fail(400, 'Enter the amount.', 'err.amount');
+  if (inst > amount) fail(400, 'The monthly repayment cannot be more than the loan.', 'err.loanInstallment');
+  const bank = db.accounts.find((x) => x.id === b?.bankAccountId && x.companyId === companyId && x.isBank) ?? fail(400, 'Choose the bank or cash account.', 'err.bankAccount');
+  const number = nextNo(companyId, 'loan', 'LN-');
+  const entryId = post(session!, companyId, date, `${number} · ${e.name}`, [{ accountId: acctBy(companyId, '1150').id, costCentreId: null, debit: amount, credit: 0n }, { accountId: bank.id, costCentreId: null, debit: 0n, credit: amount }]);
+  const id = uid(); hdb.loans.push({ id, companyId, contactId: e.id, number, issueDate: date, amount, installment: inst, notes: str(b?.notes), entryId }); return id;
+}
+function saveAttendanceM(companyId: string, pe: string, rows: { contactId?: string; employeeNo?: string; absentDays?: unknown; overtimeHours?: unknown; notes?: unknown }[]) {
+  canPostIn(companyId);
+  if (!isMonthEnd(pe)) fail(400, 'Choose the month.', 'err.date');
+  if (hrPostedBetween(companyId, pe, pe)) fail(400, 'Payroll for this month is posted, so its attendance no longer changes.', 'err.attPosted');
+  const staff = empsOf(companyId); const unknown: string[] = [];
+  for (const r of rows) {
+    const e = staff.find((x) => (r.contactId && x.id === r.contactId) || (r.employeeNo && x.employeeNo === String(r.employeeNo).trim()));
+    if (!e) { unknown.push(String(r.employeeNo ?? r.contactId ?? '?')); continue; }
+    const absent = Number(String(r.absentDays ?? '0').trim() || 0);
+    if (!Number.isInteger(absent) || absent < 0 || absent > 31) fail(400, 'Days absent are whole days.', 'err.absentDays', [e.name]);
+    let ot: number; try { ot = Pay.hoursToHundredths(String(r.overtimeHours ?? '0')); } catch { return fail(400, 'Overtime hours have at most 2 decimals.', 'err.overtimeHours', [e.name]); }
+    const row = { companyId, contactId: e.id, periodEnd: pe, absentDays: absent, overtimeHours: (ot / 100).toFixed(2), notes: str(r.notes) };
+    const old = hdb.attendance.find((a) => a.contactId === e.id && a.periodEnd === pe);
+    if (old) Object.assign(old, row); else hdb.attendance.push(row);
+  }
+  if (unknown.length) fail(400, 'Some employee numbers were not found.', 'err.attendanceUnknown', unknown);
+  return { saved: rows.length };
+}
+const parseCsvM = (text: string) => String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => l.split(/[,;\t]/).map((c) => c.trim().replace(/^"|"$/g, '')))
+  .filter((c) => c.length >= 2 && /\d/.test(c[1] ?? '')).map(([employeeNo, absentDays, overtimeHours]) => ({ employeeNo, absentDays, overtimeHours: overtimeHours ?? '0' }));
+const hrDocRow = (d: MHrDoc) => { const c = sdb.contacts.find((x) => x.id === d.contactId)!;
+  return { ...d, name: c.name, nameAr: c.nameAr, daysLeft: d.expiryDate ? Math.round((Date.parse(d.expiryDate) - Date.parse(today())) / 86400000) : null, files: adb.files.filter((a) => a.hrDocId === d.id).length }; };
+const hrDocsOf = (companyId: string, contactId?: string | null) => hdb.docs.filter((d) => d.companyId === companyId && (!contactId || d.contactId === contactId)).map(hrDocRow)
+  .sort((a, b) => (a.expiryDate ?? '9999').localeCompare(b.expiryDate ?? '9999') || a.name.localeCompare(b.name));
+function saveHrDocM(companyId: string, b: Body, id?: string) {
+  canPostIn(companyId);
+  if (!b?.contactId) fail(400, 'Choose the employee.', 'err.employee');
+  empOf(String(b!.contactId));
+  if (!['national_id', 'iqama', 'emirates_id', 'passport', 'visa', 'work_permit', 'contract', 'medical_insurance', 'driving_licence', 'other'].includes(String(b?.kind))) fail(400, 'Choose the type of document.', 'err.docKind');
+  const issue = dt(b?.issueDate), expiry = dt(b?.expiryDate);
+  if (issue && expiry && expiry < issue) fail(400, 'The expiry date is before the issue date.', 'err.docDates');
+  const v = { contactId: String(b!.contactId), kind: String(b!.kind), number: str(b?.number), issueDate: issue, expiryDate: expiry, notes: str(b?.notes) };
+  if (id) { Object.assign(hdb.docs.find((d) => d.id === id && d.companyId === companyId) ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
+  const nid = uid(); hdb.docs.push({ id: nid, companyId, ...v }); return nid;
+}
+const hrDocOf = (id: string) => hdb.docs.find((d) => d.id === id && roleOf(session, d.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+
+routes.push(
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/overview$/, (m) => {
+    const id = inCo(m[1]!);
+    const emps = empsOf(id).filter((e) => e.status === 'active' && !e.settled), withD = emps.filter((e) => e.hasProfile);
+    const runs = hdb.runs.filter((r) => r.companyId === id).sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
+    const t = today();
+    return { headcount: emps.length, withoutDetails: emps.length - withD.length, nationals: withD.filter((e) => e.national).length, monthlyWages: s(withD.reduce((x, e) => x + toMinor(e.wage), 0n)),
+      lastRun: runs[0] ? runRow(runs[0]) : null, expiring: hrDocsOf(id).filter((d) => d.daysLeft !== null && d.daysLeft <= 60).slice(0, 8),
+      pendingLeave: hdb.leave.filter((l) => l.companyId === id && l.status === 'requested').length,
+      onLeave: new Set(hdb.leave.filter((l) => l.companyId === id && l.status === 'approved' && l.startDate <= t && l.endDate >= t).map((l) => l.contactId)).size };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/employees$/, (m) => empsOf(inCo(m[1]!))],
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/settings$/, (m) => hdb.settings.get(inCo(m[1]!)) ?? { employerId: null, bankRouting: null, insuranceNo: null }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/hr\/settings$/, (m, b) => { const id = inCo(m[1]!); canPostIn(id); hdb.settings.set(id, { employerId: str(b?.employerId), bankRouting: str(b?.bankRouting), insuranceNo: str(b?.insuranceNo) }); return { ok: true }; }],
+  ['GET', /^\/api\/employees\/([\w-]+)\/hr$/, (m) => empRow(empOf(m[1]!))],
+  ['POST', /^\/api\/employees\/([\w-]+)\/hr$/, (m, b) => { saveProfileM(m[1]!, b); return { ok: true }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/attendance$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const pe = q.get('month') ?? ''; if (!isMonthEnd(pe)) fail(400, 'Choose the month.', 'err.date');
+    const from = mStart(pe);
+    return { periodEnd: pe, posted: hrPostedBetween(id, pe, pe), rows: empsOf(id).filter((e) => inMonthM(e, pe)).map((e) => { const a = hdb.attendance.find((x) => x.contactId === e.id && x.periodEnd === pe);
+      return { contactId: e.id, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo, absentDays: a?.absentDays ?? 0, overtimeHours: a?.overtimeHours ?? '0.00', notes: a?.notes ?? '',
+        annualLeave: leaveDaysInM(e.id, 'annual', from, pe), sickLeave: leaveDaysInM(e.id, 'sick', from, pe), unpaidLeave: leaveDaysInM(e.id, 'unpaid', from, pe), otherLeave: leaveDaysInM(e.id, 'other_paid', from, pe) }; }) };
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/hr\/attendance$/, (m, b) => saveAttendanceM(inCo(m[1]!), String(b?.month ?? ''), b?.csv ? parseCsvM(String(b.csv)) : (b?.rows as []) ?? [])],
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/leave$/, (m, _b, q) => { const id = inCo(m[1]!); const st = q.get('status') ?? '';
+    return hdb.leave.filter((l) => l.companyId === id && (!st || l.status === st)).sort((a, b) => b.startDate.localeCompare(a.startDate)).map((l) => { const c = sdb.contacts.find((x) => x.id === l.contactId)!;
+      return { ...l, name: c.name, nameAr: c.nameAr, createdBy: userName(l.createdBy), decidedBy: userName(l.decidedBy) }; }); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/hr\/leave$/, (m, b) => ({ id: saveLeaveM(inCo(m[1]!), b) })],
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/leave-balances$/, (m, _b, q) => { const asOf = q.get('asOf') || today();
+    return empsOf(inCo(m[1]!)).filter((e) => e.hasProfile && !e.settled).map((e) => ({ contactId: e.id, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo,
+      perYear: e.annualLeaveDays ?? Pay.annualLeaveDays(e.country, Pay.daysBetween(e.joinDate!, asOf)), ...leaveBalanceM(e, asOf) })); }],
+  ['POST', /^\/api\/leave\/([\w-]+)\/status$/, (m, b) => { decideLeaveM(m[1]!, String(b?.status)); return { ok: true }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/loans$/, (m) => { const id = inCo(m[1]!);
+    return hdb.loans.filter((l) => l.companyId === id).sort((a, b) => b.issueDate.localeCompare(a.issueDate)).map((l) => { const c = sdb.contacts.find((x) => x.id === l.contactId)!;
+      return { id: l.id, number: l.number, contactId: l.contactId, name: c.name, nameAr: c.nameAr, issueDate: l.issueDate, amount: s(l.amount), installment: s(l.installment), balance: s(loanBalanceM(l)), notes: l.notes, entryId: l.entryId }; }); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/hr\/loans$/, (m, b) => ({ id: issueLoanM(inCo(m[1]!), b) })],
+  ['GET', /^\/api\/companies\/([\w-]+)\/payroll$/, (m) => { const id = inCo(m[1]!); return hdb.runs.filter((r) => r.companyId === id).sort((a, b) => b.periodEnd.localeCompare(a.periodEnd)).map(runRow); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/payroll$/, (m, b) => ({ id: prepareRunM(inCo(m[1]!), String(b?.month ?? '')) })],
+  ['GET', /^\/api\/payroll\/([\w-]+)$/, (m) => runDetail(runOf(m[1]!))],
+  ['POST', /^\/api\/payroll\/([\w-]+)\/refresh$/, (m) => { const r = runOf(m[1]!); return { id: prepareRunM(r.companyId, r.periodEnd) }; }],
+  ['POST', /^\/api\/payroll\/([\w-]+)\/post$/, (m) => { postRunM(m[1]!); return { entryId: runOf(m[1]!).entryId }; }],
+  ['POST', /^\/api\/payroll\/([\w-]+)\/pay$/, (m, b) => { payRunM(m[1]!, b); return { entryId: runOf(m[1]!).paymentEntryId }; }],
+  ['POST', /^\/api\/payroll\/([\w-]+)\/delete$/, (m) => { const r = runOf(m[1]!); canPostIn(r.companyId); if (r.status !== 'draft') fail(400, 'Only a draft payroll can be removed.', 'err.payrollPosted');
+    hdb.runs = hdb.runs.filter((x) => x.id !== r.id); return { ok: true }; }],
+  ['GET', /^\/api\/payroll\/([\w-]+)\/salary-file$/, (m) => salaryFileM(m[1]!)],
+  ['POST', /^\/api\/payroll-lines\/([\w-]+)$/, (m, b) => {
+    const r = hdb.runs.find((x) => x.lines.some((l) => l.id === m[1]) && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+    canPostIn(r.companyId);
+    if (r.status !== 'draft') fail(400, 'Posted payroll never changes.', 'err.payrollPosted');
+    const i = r.lines.findIndex((l) => l.id === m[1]);
+    r.lines[i] = computeLineM(empRow(sdb.contacts.find((c) => c.id === r.lines[i]!.contactId)!), r.periodEnd, { bonus: mny(b?.bonus), otherDeductions: mny(b?.otherDeductions), note: str(b?.note) });
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/end-of-service$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const asOf = q.get('asOf') || today();
+    const rows = empsOf(id).filter((e) => e.hasProfile && !e.settled && e.joinDate! <= asOf).map((e) => { const pay = payOfM(e);
+      const full = Pay.endOfService({ country: e.country, joinDate: e.joinDate!, endDate: asOf, pay, reason: 'termination' });
+      return { contactId: e.id, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo, joinDate: e.joinDate, serviceDays: full.serviceDays, basis: s(full.basis), full: s(full.amount),
+        onResignation: s(Pay.endOfService({ country: e.country, joinDate: e.joinDate!, endDate: asOf, pay, reason: 'resignation' }).amount),
+        accrued: s(Pay.endOfService({ country: e.country, joinDate: e.joinDate!, endDate: asOf, pay, reason: 'termination' }, true).amount), provision: s(provisionM(e)) }; });
+    const acc = acctBy(id, '2230').id;
+    const books = db.entries.filter((x) => x.companyId === id).flatMap((x) => x.lines).filter((l) => l.accountId === acc).reduce((t, l) => t + l.credit - l.debit, 0n);
+    return { asOf, rows, books: s(books), settlements: hdb.settlements.filter((x) => x.companyId === id).map((x) => { const c = sdb.contacts.find((k) => k.id === x.contactId)!;
+      return { id: x.id, contactId: x.contactId, name: c.name, nameAr: c.nameAr, leavingDate: x.leavingDate, reason: x.reason, serviceDays: x.serviceDays, eosAmount: s(x.eosAmount), leaveDays: x.leaveDays,
+        leavePay: s(x.leavePay), loanRecovered: s(x.loanRecovered), totalDue: s(x.totalDue), entryId: x.entryId }; }) };
+  }],
+  ['POST', /^\/api\/employees\/([\w-]+)\/settlement-preview$/, (m, b) => settlementPreviewM(m[1]!, b)],
+  ['POST', /^\/api\/employees\/([\w-]+)\/settlement$/, (m, b) => { settleM(m[1]!, b); return { id: m[1] }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/documents$/, (m, _b, q) => hrDocsOf(inCo(m[1]!), q.get('employee'))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/hr\/documents$/, (m, b) => ({ id: saveHrDocM(inCo(m[1]!), b) })],
+  ['POST', /^\/api\/hr-documents\/([\w-]+)\/delete$/, (m) => { const d = hrDocOf(m[1]!); canPostIn(d.companyId); hdb.docs = hdb.docs.filter((x) => x.id !== d.id); adb.files = adb.files.filter((a) => a.hrDocId !== d.id); return { ok: true }; }],
+  ['POST', /^\/api\/hr-documents\/([\w-]+)$/, (m, b) => { const d = hrDocOf(m[1]!); return { id: saveHrDocM(d.companyId, b, d.id) }; }],
+  ['GET', /^\/api\/hr-documents\/([\w-]+)\/attachments$/, (m) => { hrDocOf(m[1]!); return attachmentRows((a) => a.hrDocId === m[1]); }],
+  ['POST', /^\/api\/hr-documents\/([\w-]+)\/attachments$/, (m, b) => ({ id: addAttachmentM({ hrDocId: m[1]! }, b ?? {}) })],
+);
+
+/** Sample HR data, as in src/db/seed.ts. */
+function seedHrm(companyId: string, poster: string) {
+  const prev = session; session = poster;
+  const co = db.companies.find((c) => c.id === companyId)!; const sa = co.country === 'SA';
+  const byNo = (no: string) => sdb.contacts.find((c) => c.companyId === companyId && c.employeeNo === no)!.id;
+  const yusuf = byNo('E-001'), mona = byNo('E-002');
+  const booksStart = daysAgo(120); const openAt = new Date(Date.UTC(+booksStart.slice(0, 4), +booksStart.slice(5, 7) - 1, 0)).toISOString().slice(0, 10);
+  const people = [
+    { id: yusuf, nationality: sa ? 'EG' : 'IN', joined: daysAgo(900), basic: '3000.00', housing: '750.00', transport: '300.00', iban: sa ? 'SA4420000001234567891234' : 'AE460260001015333439101', wps: '10000123456781' },
+    { id: mona, nationality: co.country, joined: daysAgo(2400), basic: '9000.00', housing: '2250.00', transport: '600.00', iban: sa ? 'SA0380000000608010167519' : 'AE070331234567890123456', wps: '10000123456782' },
+  ];
+  let opening = 0n;
+  for (const p of people) {
+    const eos = Pay.endOfService({ country: co.country as Pay.Country, joinDate: p.joined, endDate: openAt, pay: { basic: toMinor(p.basic), housing: toMinor(p.housing), transport: toMinor(p.transport), other: 0n }, reason: 'termination' }, true).amount;
+    opening += eos;
+    saveProfileM(p.id, { nationality: p.nationality, joinDate: p.joined, basic: p.basic, housing: p.housing, transport: p.transport, iban: p.iban,
+      idNumber: sa ? (p.nationality === 'SA' ? '1087654321' : '2398765432') : '784199012345678', passportNo: p.nationality === co.country ? null : 'A1234567',
+      insuranceRegistered: p.nationality === 'SA' ? daysAgo(2400) : null, bankRouting: sa ? null : '600310101', wpsPersonId: sa ? null : p.wps,
+      openingEos: s(eos), openingLeaveDays: p.id === mona ? '12.50' : '4.00', openingAsOf: openAt });
+  }
+  post(poster, companyId, booksStart, 'Opening balances · end of service provision', [{ accountId: acctBy(companyId, '3000').id, costCentreId: null, debit: opening, credit: 0n },
+    { accountId: acctBy(companyId, '2230').id, costCentreId: null, debit: 0n, credit: opening }]);
+  hdb.settings.set(companyId, sa ? { employerId: '7001234567', bankRouting: null, insuranceNo: '500123456' } : { employerId: '0000001234567', bankRouting: '600310101', insuranceNo: 'GP-55120' });
+  const lastEnd = (d: string) => new Date(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, 0)).toISOString().slice(0, 10);
+  const months = [lastEnd(lastEnd(today())), lastEnd(today())];
+  saveLeaveM(companyId, { contactId: mona, kind: 'annual', startDate: `${months[1]!.slice(0, 8)}10`, endDate: `${months[1]!.slice(0, 8)}14`, reason: 'Family visit', approve: true });
+  saveLeaveM(companyId, { contactId: yusuf, kind: 'sick', startDate: `${months[0]!.slice(0, 8)}06`, endDate: `${months[0]!.slice(0, 8)}07`, approve: true });
+  saveLeaveM(companyId, { contactId: yusuf, kind: 'annual', startDate: daysAgo(-10), endDate: daysAgo(-17), reason: 'Eid holiday travel' });
+  issueLoanM(companyId, { contactId: yusuf, date: `${months[0]!.slice(0, 8)}03`, amount: '2000.00', installment: '500.00', bankAccountId: acctBy(companyId, '1000').id, notes: 'Salary advance' });
+  saveAttendanceM(companyId, months[1]!, [{ contactId: yusuf, absentDays: 1, overtimeHours: '12' }, { contactId: mona, absentDays: 0, overtimeHours: '0' }]);
+  for (const [n, m] of months.entries()) {
+    const id = prepareRunM(companyId, m); postRunM(id);
+    if (n === 0) payRunM(id, { bankAccountId: acctBy(companyId, '1000').id, date: addD(m, 1) });
+  }
+  for (const [who, kind, number, expiry] of [[yusuf, sa ? 'iqama' : 'emirates_id', sa ? '2398765432' : '784-1990-1234567-1', daysAgo(-25)], [yusuf, 'passport', 'A1234567', daysAgo(-900)],
+    [yusuf, 'medical_insurance', 'MED-44821', daysAgo(-50)], [mona, sa ? 'national_id' : 'emirates_id', sa ? '1087654321' : '784-1985-7654321-2', daysAgo(-1400)], [mona, 'contract', 'C-2019-07', '']] as const) {
+    saveHrDocM(companyId, { contactId: who, kind, number, expiryDate: expiry || undefined });
+  }
+  session = prev;
 }
 
 // Sample data is created once everything above is defined.

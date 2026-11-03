@@ -17,6 +17,8 @@ import { saveRecurring } from '../books/expensesService.js';
 import * as Bank from '../books/bankService.js';
 import * as Inv from '../books/inventoryService.js';
 import * as Fa from '../books/assetsService.js';
+import * as Hr from '../books/hrmService.js';
+import * as Pay from '../books/payroll.js';
 import { monthEnd, nextMonthEnd, previousMonthEnd, targetDepreciation } from '../books/assets.js';
 import { toMinor } from '../money.js';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_USERS } from './demoData.js';
@@ -193,6 +195,45 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
           residualValue: fromMinor(x.residual * 100n), usefulLifeMonths: x.life, openingDepreciation: fromMinor(opening[i]!), costCentreId: cc[x.centre], serialNo: x.serial ?? undefined });
       }
       for (let m = monthEnd(booksStart); m <= previousMonthEnd(daysAgo(0)); m = nextMonthEnd(m)) await Fa.runDepreciation(db, id, m);
+
+      // HRM: HR details for both employees, opening end of service provision, leave, attendance, a loan,
+      // documents (one expiring soon), and payroll for the last two months (the earlier one paid).
+      const people = [
+        { id: yusuf, nationality: sa ? 'EG' : 'IN', joined: daysAgo(900), basic: '3000.00', housing: '750.00', transport: '300.00', iban: sa ? 'SA4420000001234567891234' : 'AE460260001015333439101', wps: '10000123456781' },
+        { id: mona, nationality: c.country, joined: daysAgo(2400), basic: '9000.00', housing: '2250.00', transport: '600.00', iban: sa ? 'SA0380000000608010167519' : 'AE070331234567890123456', wps: '10000123456782' },
+      ];
+      let openingEos = 0n;
+      for (const pp of people) {
+        const eos = Pay.endOfService({ country: c.country as Pay.Country, joinDate: pp.joined, endDate: previousMonthEnd(booksStart),
+          pay: { basic: toMinor(pp.basic), housing: toMinor(pp.housing), transport: toMinor(pp.transport), other: 0n }, reason: 'termination' }, true).amount;
+        openingEos += eos;
+        await Hr.saveProfile(db, pp.id, { nationality: pp.nationality, joinDate: pp.joined, basic: pp.basic, housing: pp.housing, transport: pp.transport, iban: pp.iban,
+          idNumber: sa ? (pp.nationality === 'SA' ? '1087654321' : '2398765432') : '784199012345678', passportNo: pp.nationality === c.country ? null : 'A1234567',
+          insuranceRegistered: pp.nationality === 'SA' ? daysAgo(2400) : null, bankRouting: sa ? null : '600310101', wpsPersonId: sa ? null : pp.wps,
+          openingEos: fromMinor(eos), openingLeaveDays: pp.id === mona ? '12.50' : '4.00', openingAsOf: previousMonthEnd(booksStart) });
+      }
+      await post(booksStart, 'Opening balances · end of service provision', [L('3000', fromMinor(openingEos)), L('2230', undefined, fromMinor(openingEos))]);
+      if (!sa) await Hr.saveHrSettings(db, id, { employerId: '0000001234567', bankRouting: '600310101', insuranceNo: 'GP-55120' });
+      else await Hr.saveHrSettings(db, id, { employerId: '7001234567', insuranceNo: '500123456' });
+      const payMonths = [previousMonthEnd(previousMonthEnd(daysAgo(0))), previousMonthEnd(daysAgo(0))];
+      await Hr.saveLeave(db, id, { contactId: mona, kind: 'annual', startDate: `${payMonths[1]!.slice(0, 8)}10`, endDate: `${payMonths[1]!.slice(0, 8)}14`, reason: 'Family visit', approve: true });
+      await Hr.saveLeave(db, id, { contactId: yusuf, kind: 'sick', startDate: `${payMonths[0]!.slice(0, 8)}06`, endDate: `${payMonths[0]!.slice(0, 8)}07`, approve: true });
+      await Hr.saveLeave(db, id, { contactId: yusuf, kind: 'annual', startDate: daysAgo(-10), endDate: daysAgo(-17), reason: 'Eid holiday travel' });
+      await Hr.issueLoan(db, id, { contactId: yusuf, date: `${payMonths[0]!.slice(0, 8)}03`, amount: '2000.00', installment: '500.00', bankAccountId: acct['1000'], notes: 'Salary advance' });
+      await Hr.saveAttendance(db, id, payMonths[1]!, [{ contactId: yusuf, absentDays: 1, overtimeHours: '12' }, { contactId: mona, absentDays: 0, overtimeHours: '0' }]);
+      for (const [n, m] of payMonths.entries()) {
+        const run = await Hr.prepareRun(db, id, m);
+        await Hr.postRun(db, run);
+        if (n === 0) await Hr.payRun(db, run, { bankAccountId: acct['1000'], date: daysAgo(Math.max(1, Math.round((Date.now() - Date.parse(m)) / 86400000) - 1)) });
+      }
+      const docs: [string, string, string, string][] = [
+        [yusuf, sa ? 'iqama' : 'emirates_id', sa ? '2398765432' : '784-1990-1234567-1', daysAgo(-25)],
+        [yusuf, 'passport', 'A1234567', daysAgo(-900)],
+        [yusuf, 'medical_insurance', 'MED-44821', daysAgo(-50)],
+        [mona, sa ? 'national_id' : 'emirates_id', sa ? '1087654321' : '784-1985-7654321-2', daysAgo(-1400)],
+        [mona, 'contract', 'C-2019-07', ''],
+      ];
+      for (const [who, kind, number, expiry] of docs) await Hr.saveDocument(db, id, { contactId: who, kind, number, expiryDate: expiry || undefined });
 
       if (c.industry === 'restaurant') {
         // Restaurant: kitchen materials in stock, the menu with recipes, and the last few days' food sales.

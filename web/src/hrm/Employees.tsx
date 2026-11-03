@@ -1,4 +1,4 @@
-// HRM > Employees: the people who can make expense claims (payroll comes later).
+// HRM > Employees: everyone on the payroll; their HR details, documents and final settlement are on their page.
 import { useState, type FormEvent } from 'react';
 import { api, useApi, type CompanyBooks } from '../api.ts';
 import { useI18n, useLocalName } from '../i18n.tsx';
@@ -6,15 +6,20 @@ import { fmt, toMinor } from '../money.ts';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
 import { useGo, type Contact } from '../sales/common.tsx';
 import { ArabicHint, followArabic } from '../arabic.tsx';
+import { HrDetails } from './HrDetails.tsx';
+import type { HrEmp } from './Hrm.tsx';
 
 type Emp = Contact & { isEmployee: boolean; employeeNo: string | null; jobTitle: string | null; defaultCostCentreId: string | null };
 
 export function EmployeeList({ books }: { books: CompanyBooks }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const local = useLocalName();
   const go = useGo(books.company.id);
   const [q, setQ] = useState('');
   const list = useApi<Emp[]>(`/api/companies/${books.company.id}/contacts?role=employee&q=${encodeURIComponent(q)}`);
+  const hr = useApi<HrEmp[]>(`/api/companies/${books.company.id}/hr/employees`);
+  const hrOf = (id: string) => hr.data?.find((x) => x.id === id);
+  const country = (c: string | null) => (c ? new Intl.DisplayNames([lang], { type: 'region' }).of(c) : '—');
   return (
     <>
       <div className="top" style={{ marginBottom: 10 }}>
@@ -26,13 +31,16 @@ export function EmployeeList({ books }: { books: CompanyBooks }) {
         {!list.data ? <Loading /> : list.data.length === 0 ? <div className="mut">{t('emp.none')}</div> : (
           <div className="wrap">
             <table className="stack">
-              <thead><tr><th>{t('col.name')}</th><th>{t('emp.no')}</th><th>{t('emp.jobTitle')}</th><th className="num">{t('emp.owed')}</th></tr></thead>
+              <thead><tr><th>{t('col.name')}</th><th>{t('emp.no')}</th><th>{t('emp.jobTitle')}</th><th>{t('hr.nationality')}</th><th>{t('hr.joinDate')}</th><th className="num">{t('hr.monthlyWage')}</th><th className="num">{t('emp.owed')}</th></tr></thead>
               <tbody>
                 {list.data.map((e) => (
                   <tr key={e.id} className={e.status !== 'active' ? 'mut' : ''}>
                     <td><button className="link" onClick={() => go('HRM', 'employees', e.id)}>{local(e.name, e.nameAr)}</button></td>
                     <td className="ltr small" data-label={t('emp.no')}>{e.employeeNo ?? '—'}</td>
                     <td className="small" data-label={t('emp.jobTitle')}>{e.jobTitle ?? '—'}</td>
+                    <td className="small" data-label={t('hr.nationality')}>{hrOf(e.id)?.hasProfile ? country(hrOf(e.id)!.nationality) : <span className="badge warn">{t('hr.noDetails')}</span>}</td>
+                    <td className="small ltr" data-label={t('hr.joinDate')}>{hrOf(e.id)?.joinDate ?? '—'}{hrOf(e.id)?.settled && <span className="badge"> {t('hr.left')}</span>}</td>
+                    <td className="num ltr" data-label={t('hr.monthlyWage')}>{hrOf(e.id)?.hasProfile ? fmt(hrOf(e.id)!.wage) : '—'}</td>
                     <td className="num ltr" data-label={t('emp.owed')}>
                       {toMinor(e.balanceDue ?? '0') > 0n ? <button className="link" onClick={() => go('Ledger', 'employee-ledger', e.id)}>{fmt(e.balanceDue)}</button> : fmt(e.balanceDue ?? '0')}
                     </td>
@@ -47,7 +55,7 @@ export function EmployeeList({ books }: { books: CompanyBooks }) {
   );
 }
 
-export function EmployeePage({ books, id }: { books: CompanyBooks; id: string }) {
+export function EmployeePage({ books, id, extra }: { books: CompanyBooks; id: string; extra?: string }) {
   const { t, has } = useI18n();
   const local = useLocalName();
   const go = useGo(books.company.id);
@@ -82,6 +90,7 @@ export function EmployeePage({ books, id }: { books: CompanyBooks; id: string })
         <span className="spacer" />
         {!isNew && books.canPost && <button className="b" onClick={() => go('Expenses', 'claims', 'new', id)}>{t('claim.new')}</button>}
         {!isNew && <button className="b" onClick={() => go('Ledger', 'employee-ledger', id)}>{t('emp.ledger')}</button>}
+        {!isNew && books.canPost && extra !== 'settlement' && <button className="b" id="em-settle" onClick={() => go('HRM', 'employees', id, 'settlement')}>{t('hr.finalSettlement')}</button>}
       </div>
       {msg.ok && <div className="notice">{msg.ok}</div>}
       {msg.bad && <div className="notice bad" role="alert">{msg.bad}</div>}
@@ -110,7 +119,7 @@ export function EmployeePage({ books, id }: { books: CompanyBooks; id: string })
           {books.canPost && <button className="b p" type="submit" disabled={busy}>{isNew ? t('contact.create') : t('admin.saveDetails')}</button>}
         </fieldset>
       </form>
-      <p className="mut small">{t('emp.payrollLater')}</p>
+      {!isNew && <HrDetails books={books} id={id} settling={extra === 'settlement'} />}
     </>
   );
 }

@@ -25,6 +25,7 @@ import { ChartOfAccounts, CostCentres } from '../ledger/Setup.tsx';
 import { ReportFrame } from '../print/Print.tsx';
 import { ProjectList, ProjectPage, ProjectReport } from '../projects/Projects.tsx';
 import { EmployeeList, EmployeePage } from '../hrm/Employees.tsx';
+import { Attendance, EndOfService, HrDocuments, HrOverview, Leave, Loans, Payroll } from '../hrm/Hrm.tsx';
 import { BankAccountForm, BankAccountList, BankAccountPage, ImportStatement, Reconcile, Rules } from '../bank/Bank.tsx';
 import { ItemList, ItemPage, NoteEditor, NoteList, StockValue } from '../inventory/Inventory.tsx';
 import { AssetPage, AssetRegister, Depreciation } from '../assets/Assets.tsx';
@@ -163,7 +164,14 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
       if (sub === 'depreciation') return <Depreciation books={books} />;
       return item ? <AssetPage key={item} books={books} id={item} /> : <AssetRegister books={books} />;
     case 'HRM':
-      if (sub === 'employees') return item ? <EmployeePage key={item} books={books} id={item} /> : <EmployeeList books={books} />;
+      if (sub === 'employees') return item ? <EmployeePage key={`${item}${extra ?? ''}`} books={books} id={item} extra={extra} /> : <EmployeeList books={books} />;
+      if (sub === 'overview') return <HrOverview books={books} />;
+      if (sub === 'attendance') return <Attendance books={books} />;
+      if (sub === 'leave') return <Leave books={books} />;
+      if (sub === 'payroll') return <Payroll key={item ?? 'list'} books={books} id={item} />;
+      if (sub === 'loans') return <Loans books={books} />;
+      if (sub === 'end-of-service') return <EndOfService books={books} />;
+      if (sub === 'hr-documents') return <HrDocuments books={books} />;
       return null;
     case 'Expenses':
       if (sub === 'overview') return <ExpensesOverview books={books} />;

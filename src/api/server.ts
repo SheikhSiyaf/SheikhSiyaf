@@ -48,6 +48,7 @@ declare module 'fastify' {
 
 export function buildServer(opts: ServerOptions): FastifyInstance {
   // A hop count trusts that many proxies in front of the server (the same as proxy-addr's numeric setting).
+  if (opts.production && !opts.encryptionKey) throw new Error('ENCRYPTION_KEY is required in production.');
   const tp = opts.trustProxy ?? false;
   const trustProxy = typeof tp === 'number' ? (_addr: string, hop: number) => hop < tp : tp;
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 1_000_000, trustProxy });

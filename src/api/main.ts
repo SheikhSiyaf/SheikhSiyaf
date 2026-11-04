@@ -1,6 +1,6 @@
 // Starts the API, and serves the built web app from web/dist when it exists.
 import { existsSync } from 'node:fs';
-import { config } from '../config.js';
+import { config, validateConfig } from '../config.js';
 import { createPool } from '../db/session.js';
 import { buildServer, WEB_DIST } from './server.js';
 import { startFxJobs } from '../books/fxJobs.js';
@@ -10,19 +10,34 @@ import { startBillingJob } from '../books/billingService.js';
 import { startBankFeedJob } from '../books/bankFeedService.js';
 import { startAuthPurgeJob } from '../auth/throttle.js';
 
-if (!process.env.ENCRYPTION_KEY) {
-  console.warn('ENCRYPTION_KEY is not set: two-factor secrets are encrypted with SESSION_SECRET. Set ENCRYPTION_KEY before real use.');
-}
-if (!config.sessionSecretFromEnv) {
-  console.warn('SESSION_SECRET is not set: using a random one, so everyone is signed out when the server restarts.');
+// Unsafe settings stop the server in production; elsewhere they are warnings (src/config.ts validateConfig).
+const problems = validateConfig(process.env);
+if (problems.length) {
+  const list = problems.map((p) => `  - ${p}`).join('\n');
+  if (config.production) {
+    console.error(`Nusuh Books will not start in production until these are fixed:\n${list}\n`);
+    process.exit(1);
+  }
+  console.warn(`Settings that must be fixed before production (NODE_ENV=production refuses to start with them):\n${list}\n`);
 }
 const apiOnly = process.argv.includes('--api-only') || process.env.SERVE_WEB === 'false';
 const serveWeb = !apiOnly && existsSync(WEB_DIST);
 const pool = createPool(config.databaseUrl);
+// The server connects as nusuh_app, which row-level security applies to: never as a superuser or a role that bypasses it.
+{
+  const r = (await pool.query(`SELECT current_user AS u, rolsuper AS s, rolbypassrls AS b FROM pg_roles WHERE rolname = current_user`)).rows[0];
+  if (r.s || r.b) {
+    const msg = `DATABASE_URL connects as "${r.u}", a superuser or a role that bypasses row-level security.`;
+    if (config.production) { console.error(`Nusuh Books will not start in production: ${msg}`); process.exit(1); }
+    console.warn(`${msg} Use nusuh_app before production.`);
+  }
+}
 const app = buildServer({
   pool,
   sessionSecret: config.sessionSecret,
-  encryptionKey: config.encryptionKey || config.sessionSecret,
+  // No fallback to SESSION_SECRET in production (validateConfig has refused to start without ENCRYPTION_KEY there).
+  encryptionKey: config.production ? config.encryptionKey : config.encryptionKey || config.sessionSecret,
+  production: config.production,
   publicUrl: config.publicUrl,
   cookieSecure: config.cookieSecure,
   demoLogins: config.demoLogins,

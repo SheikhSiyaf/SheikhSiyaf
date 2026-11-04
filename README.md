@@ -160,11 +160,11 @@ prototype/          The original clickable prototype (visual and flow reference 
 - Every table has row-level security. Triggers protect the ledger and the audit log so that even the owner role cannot change them.
 
 ## Before real client data
-- Hosting with HTTPS. In `.env`:
-  - set `COOKIE_SECURE=true`
-  - set real values for `SESSION_SECRET` and `ENCRYPTION_KEY`, and never change `ENCRYPTION_KEY` afterwards
-  - set `PUBLIC_URL` to the address people use
-  - set `DEMO_LOGINS=false`, and do not load the demo data
+- Hosting with HTTPS. In `.env`, set `NODE_ENV=production`: the server then refuses to start, listing every problem, until:
+  - `SESSION_SECRET` and `ENCRYPTION_KEY` are each at least 32 characters and different (never change `ENCRYPTION_KEY` afterwards)
+  - `DATABASE_URL` connects as `nusuh_app` with a real password, and is not `DATABASE_ADMIN_URL`
+  - `COOKIE_SECURE=true`, and `PUBLIC_URL` is the `https://` address people use (the only address used in links)
+  - `DEMO_LOGINS` is not true (and do not load the demo data)
+  Outside production the same list is printed as warnings at start-up. Behind your own proxy, set `TRUST_PROXY`.
 - Everyone turns on two-factor sign-in. Settings shows how many have.
 - Sending sign-in links by email (today the Administrator copies the link and sends it).
-- The sign-in attempt limit is kept in server memory. If the app ever runs on more than one server, it should move to the database.

@@ -16,6 +16,8 @@ export interface ServerOptions {
   /** Folder with the built front end (web/dist). Served with a fallback to index.html. */
   staticDir?: string;
   logger?: boolean;
+  /** NODE_ENV=production: links use only publicUrl, and the demo sign-in stays off. */
+  production?: boolean;
   /** Fastify's trustProxy: when on, the client address comes from X-Forwarded-For (only behind your own proxy). */
   trustProxy?: boolean | number | string;
 }
@@ -43,8 +45,13 @@ export function dateParam(v: unknown, fallback: string): string {
 
 export const today = () => new Date().toISOString().slice(0, 10);
 
-/** The address links in emails start with: PUBLIC_URL, or the address the browser is using. */
-export function baseUrl(req: FastifyRequest, opts: ServerOptions): string {
+/** The address links in emails start with. In production only PUBLIC_URL (Host and X-Forwarded-Host can be forged);
+ *  in development PUBLIC_URL, or the address the browser is using. */
+export function baseUrl(req: FastifyRequest, opts: Pick<ServerOptions, 'publicUrl' | 'production'>): string {
+  if (opts.production) {
+    if (!opts.publicUrl) throw new HttpError(500, 'PUBLIC_URL is not set.', 'err.server');
+    return opts.publicUrl.replace(/\/+$/, '');
+  }
   const fromReq = `${req.headers['x-forwarded-proto'] ?? req.protocol}://${req.headers['x-forwarded-host'] ?? req.headers.host}`;
   return (opts.publicUrl || fromReq).replace(/\/+$/, '');
 }

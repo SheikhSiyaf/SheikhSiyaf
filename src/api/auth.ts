@@ -23,16 +23,18 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
   const codes = new Throttle(pool, LOGIN_LIMITS.mfa);
   const secure = Boolean(opts.cookieSecure);
   const key = opts.encryptionKey || opts.sessionSecret;
+  // Never in production, whatever was passed (the server also refuses to start with DEMO_LOGINS=true there).
+  const demo = Boolean(opts.demoLogins) && !opts.production;
 
   app.get('/api/config', async () => ({
-    demoLogins: Boolean(opts.demoLogins),
-    demoPassword: opts.demoLogins ? DEMO_PASSWORD : undefined,
+    demoLogins: demo,
+    demoPassword: demo ? DEMO_PASSWORD : undefined,
     minPassword: MIN_PASSWORD,
     publicUrl: opts.publicUrl || '',
   }));
 
   app.get('/api/demo-users', async () => {
-    if (!opts.demoLogins) throw new HttpError(404, 'Not found.', 'err.notFound');
+    if (!demo) throw new HttpError(404, 'Not found.', 'err.notFound');
     return DEMO_USERS.map(({ name, email, kind, role, company, clientRole }) => ({ name, email, kind, role, company, clientRole }));
   });
 

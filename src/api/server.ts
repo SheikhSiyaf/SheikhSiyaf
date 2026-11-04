@@ -47,7 +47,10 @@ declare module 'fastify' {
 }
 
 export function buildServer(opts: ServerOptions): FastifyInstance {
-  const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 1_000_000 });
+  // A hop count trusts that many proxies in front of the server (the same as proxy-addr's numeric setting).
+  const tp = opts.trustProxy ?? false;
+  const trustProxy = typeof tp === 'number' ? (_addr: string, hop: number) => hop < tp : tp;
+  const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 1_000_000, trustProxy });
   const { pool } = opts;
   app.decorateRequest('userId', null);
 

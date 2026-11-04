@@ -351,3 +351,11 @@ Every change below is covered by a test in `test/`.
 | `entries_signed_off` trigger: an entry (posting, reversal, imported entry) dated in a month with a standing sign-off is refused with "This period is locked. Choose a date in an open period." | Also covers days no period row covers. Same message, so the API maps it to `err.periodLocked`. |
 | `signed_off_on()`, `period_signed_off()` | Used by the triggers and the period list (why a month cannot be unlocked). |
 | Every month that already has a standing sign-off is locked by the migration | Old sign-offs follow the new rule. Entries posted after an old sign-off keep their "changed after sign-off" flag. |
+
+## 0040_auth_throttle.sql
+| Change | Why |
+|---|---|
+| `auth_attempts` (kind, key, time) and `auth_locks` (kind, key, until); the app role has no rights on them and row-level security is on with no policies, so only SECURITY DEFINER functions touch them | Sign-in throttling was in each server's memory: a restart forgot it and several servers each counted their own. |
+| Kinds: `account` (normalised email: 5 failures in 15 minutes lock it for 15 minutes, even for the right password), `ip` (30 failures in 15 minutes from one address, across any accounts), `mfa` (user id: 5 wrong two-factor codes), `reset` (password reset requests per email), `pay` (Pay online per invoice link, keyed by the link's hash) | Unknown emails are counted exactly like known ones, so the answer does not reveal which emails have accounts. |
+| `auth_throttle_blocked()`, `auth_throttle_fail()`, `auth_throttle_clear()` (a successful sign-in clears the account's count, never the address's), `auth_throttle_purge()` (hourly job: attempts older than 24 hours) | Shared counts that survive restarts. |
+| An `audit_log` row (`table_name` auth_locks, `action` lockout, the key and the count; no password data) when an account or a two-factor step is locked | Lockouts are visible in the audit trail. |

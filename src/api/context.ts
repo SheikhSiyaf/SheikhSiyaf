@@ -16,6 +16,8 @@ export interface ServerOptions {
   /** Folder with the built front end (web/dist). Served with a fallback to index.html. */
   staticDir?: string;
   logger?: boolean;
+  /** Fastify's trustProxy: when on, the client address comes from X-Forwarded-For (only behind your own proxy). */
+  trustProxy?: boolean | number | string;
 }
 
 export interface Ctx {

@@ -8,32 +8,19 @@ import { clearedCookie, sessionCookie, signSession, signToken, verifyToken } fro
 import { newTotpSecret, otpauthUri, verifyTotp } from '../auth/totp.js';
 import { decryptSecret, encryptSecret } from '../auth/secretBox.js';
 import { DEMO_PASSWORD, DEMO_USERS } from '../db/demoData.js';
+import { LOGIN_LIMITS, Throttle, accountKey } from '../auth/throttle.js';
 
 export const MIN_PASSWORD = 10;
 export const hashInviteToken = (token: string) => createHash('sha256').update(token).digest('hex');
 const b64 = (s: string) => Buffer.from(s).toString('base64url');
 const unb64 = (s: string) => Buffer.from(s, 'base64url').toString();
 
-/** At most 5 wrong attempts per account in 15 minutes (passwords and two-factor codes). */
-export class Throttle {
-  private fails = new Map<string, { n: number; until: number }>();
-  constructor(private max = 5, private windowMs = 15 * 60_000) {}
-  check(key: string) {
-    const f = this.fails.get(key);
-    if (f && f.n >= this.max && f.until > Date.now())
-      throw new HttpError(429, 'Too many attempts. Wait 15 minutes and try again.', 'err.tooMany');
-  }
-  fail(key: string) {
-    const f = this.fails.get(key);
-    const live = f && f.until > Date.now();
-    this.fails.set(key, { n: live ? f.n + 1 : 1, until: Date.now() + this.windowMs });
-  }
-  clear(key: string) { this.fails.delete(key); }
-}
-
 export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
   const { pool, opts, as } = ctx;
-  const throttle = new Throttle();
+  // Counted in the database: per account, per address and per person for two-factor codes (db/migrations/0040).
+  const accounts = new Throttle(pool, LOGIN_LIMITS.account);
+  const addresses = new Throttle(pool, LOGIN_LIMITS.ip);
+  const codes = new Throttle(pool, LOGIN_LIMITS.mfa);
   const secure = Boolean(opts.cookieSecure);
   const key = opts.encryptionKey || opts.sessionSecret;
 
@@ -50,19 +37,22 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
   });
 
   app.post<{ Body: { email?: string; password?: string } }>('/api/login', async (req, reply) => {
-    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    const email = accountKey(String(req.body?.email ?? ''));
     const password = String(req.body?.password ?? '');
-    throttle.check(email);
+    await addresses.check(req.ip);
+    await accounts.check(email);
     const { rows } = await pool.query('SELECT id, status, password_hash, totp_secret_enc, firm_status FROM auth_user_by_email($1)', [email]);
     const u = rows[0];
+    // Unknown emails are checked against a dummy hash, so they take as long and count the same as a wrong password.
     const ok = await verifyPassword(password, u?.password_hash);
     if (!ok || !u) {
-      throttle.fail(email);
+      await accounts.fail(email);
+      await addresses.fail(req.ip);
       throw new HttpError(401, 'The email or password is not right.', 'err.login');
     }
     if (u.status !== 'active') throw new HttpError(403, 'This account is suspended. Contact the Administrator.', 'err.suspended');
     if (u.firm_status !== 'active') throw new HttpError(403, 'This organisation\'s access is suspended. Contact Nusuh Books.', 'err.tenantSuspended');
-    throttle.clear(email);
+    await accounts.clear(email);
     if (u.totp_secret_enc) {
       return { twoFactor: true, ticket: signToken(opts.sessionSecret, 'mfa', b64(`${u.id}:${email}`), 300) };
     }
@@ -74,7 +64,8 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
     const payload = verifyToken(opts.sessionSecret, 'mfa', req.body?.ticket);
     if (!payload) throw new HttpError(401, 'Sign in again: the code step timed out.', 'err.ticket');
     const [userId, email] = unb64(payload).split(':') as [string, string];
-    throttle.check(`mfa:${userId}`);
+    await addresses.check(req.ip);
+    await codes.check(userId);
     const { rows } = await pool.query('SELECT id, status, totp_secret_enc FROM auth_user_by_email($1)', [email]);
     const u = rows[0];
     let good = false;
@@ -84,11 +75,12 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
       good = false;
     }
     if (!good) {
-      throttle.fail(`mfa:${userId}`);
+      await codes.fail(userId);
+      await addresses.fail(req.ip);
       throw new HttpError(401, 'That code is not right. Use the latest code from your authenticator app.', 'err.code');
     }
     if (u.status !== 'active') throw new HttpError(403, 'This account is suspended. Contact the Administrator.', 'err.suspended');
-    throttle.clear(`mfa:${userId}`);
+    await codes.clear(userId);
     reply.header('set-cookie', sessionCookie(signSession(opts.sessionSecret, userId), secure));
     return { ok: true };
   });

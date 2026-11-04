@@ -24,4 +24,14 @@ export const config = {
   publicUrl: env.PUBLIC_URL || '',
   /** Show the demo sign-in buttons on the sign-in page. Never turn on for real client data. */
   demoLogins: env.DEMO_LOGINS === 'true',
+  /** Behind your own reverse proxy: take the client address from X-Forwarded-For (true, a hop count, or proxy addresses). Off by default. */
+  trustProxy: parseTrustProxy(env.TRUST_PROXY),
 };
+
+export function parseTrustProxy(v: string | undefined): boolean | number | string {
+  const s = (v ?? '').trim();
+  if (!s || s === 'false' || s === '0') return false;
+  if (s === 'true') return true;
+  if (/^\d+$/.test(s)) return Number(s);
+  return s;   // a list of proxy addresses or ranges, e.g. 10.0.0.0/8
+}

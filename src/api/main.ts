@@ -8,6 +8,7 @@ import { startMailer } from '../email/mailer.js';
 import { startToolJobs } from '../books/toolsJobs.js';
 import { startBillingJob } from '../books/billingService.js';
 import { startBankFeedJob } from '../books/bankFeedService.js';
+import { startAuthPurgeJob } from '../auth/throttle.js';
 
 if (!process.env.ENCRYPTION_KEY) {
   console.warn('ENCRYPTION_KEY is not set: two-factor secrets are encrypted with SESSION_SECRET. Set ENCRYPTION_KEY before real use.');
@@ -25,6 +26,7 @@ const app = buildServer({
   publicUrl: config.publicUrl,
   cookieSecure: config.cookieSecure,
   demoLogins: config.demoLogins,
+  trustProxy: config.trustProxy,
   staticDir: serveWeb ? WEB_DIST : undefined,
   logger: true,
 });
@@ -40,6 +42,8 @@ startToolJobs(pool, (m) => app.log.info(m));
 startBillingJob(pool, (m) => app.log.info(m));
 // Direct bank feeds, synced every six hours (BANK_FEED_JOBS=off turns it off).
 startBankFeedJob(pool, (m) => app.log.info(m));
+// Sign-in attempts older than 24 hours are deleted every hour.
+startAuthPurgeJob(pool, (m) => app.log.info(m));
 console.log(serveWeb
   ? `\n  Nusuh Books is running: open http://localhost:${config.port}\n`
   : apiOnly

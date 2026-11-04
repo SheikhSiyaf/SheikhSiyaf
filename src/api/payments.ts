@@ -3,10 +3,11 @@
 import type { FastifyInstance } from 'fastify';
 import { HttpError } from './errors.js';
 import { baseUrl, uuidParam, type Ctx } from './context.js';
-import { Throttle } from './auth.js';
+import { Throttle } from '../auth/throttle.js';
 import * as O from '../books/onlinePayService.js';
 import { sandboxCheckout, sandboxDecide } from '../payments/providers.js';
 import { fromMinor } from '../money.js';
+import { hashLinkToken } from '../books/emailService.js';
 
 type P = { id: string };
 export function registerPaymentRoutes(app: FastifyInstance, { as, pool, opts }: Ctx) {
@@ -18,10 +19,11 @@ export function registerPaymentRoutes(app: FastifyInstance, { as, pool, opts }: 
     as(req, async (db) => { await O.saveSettings(db, uuidParam(req.params.id), req.body ?? {}); return { ok: true }; }));
 
   // ---------------------------------------------------------------- public
-  const throttle = new Throttle(20, 60 * 60_000);
+  const throttle = new Throttle(pool, { kind: 'pay', max: 20, windowMs: 60 * 60_000 });
   app.post<{ Params: { token: string } }>('/api/public/documents/:token/pay', async (req) => {
     const token = String(req.params.token);
-    throttle.check(`pay:${token}`); throttle.fail(`pay:${token}`);
+    const k = hashLinkToken(token);   // never keep the link itself
+    await throttle.check(k); await throttle.fail(k);
     return O.start(pool, token, baseUrl(req, opts));
   });
   app.get<{ Params: P }>('/api/public/payments/:id', async (req) => ({ status: await O.confirm(pool, { id: uuidParam(req.params.id) }) }));

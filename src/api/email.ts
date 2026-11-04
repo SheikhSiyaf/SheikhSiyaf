@@ -5,7 +5,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
 import { baseUrl, uuidParam, type Ctx } from './context.js';
-import { hashInviteToken, Throttle } from './auth.js';
+import { hashInviteToken } from './auth.js';
+import { Throttle } from '../auth/throttle.js';
 import * as E from '../books/emailService.js';
 import { invitation } from '../email/templates.js';
 import { emailConfig } from '../email/transport.js';
@@ -36,12 +37,12 @@ export function registerEmailRoutes(app: FastifyInstance, { as, pool, opts }: Ct
   });
 
   // Forgotten password: always the same answer, so it does not tell whether the address has an account.
-  const throttle = new Throttle(3, 60 * 60_000);
+  const throttle = new Throttle(pool, { kind: 'reset', max: 3, windowMs: 60 * 60_000 });
   app.post<{ Body: { email?: string } }>('/api/password-reset', async (req) => {
     const email = String(req.body?.email ?? '').trim().toLowerCase();
     if (!E.EMAIL.test(email)) throw new HttpError(400, 'Enter a valid email address.', 'err.email');
-    throttle.check(`reset:${email}`);
-    throttle.fail(`reset:${email}`);
+    await throttle.check(email);
+    await throttle.fail(email);
     const token = randomBytes(32).toString('base64url');
     const u = (await pool.query('SELECT * FROM start_password_reset($1, $2)', [email, hashInviteToken(token)])).rows[0];
     if (u) await E.queue(pool, { firmId: u.firm_id, kind: 'password_reset', to: u.email, toName: u.full_name, mail: invitation(u.full_name, `${baseUrl(req, opts)}/invite/${token}`, 'Nusuh Books', true) });

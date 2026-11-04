@@ -42,7 +42,7 @@ portal, calendar, approvals and forecast) plus HRM, CRM and restaurant. Grouped 
 
 - **Oman**: VAT, Fawtara e-invoicing (Peppol model) and PASI payroll, once the Oman Tax Authority confirms details.
 - **Restaurant POS import**: bring sales from the restaurant's own POS (which systems clients use is still open).
-- **Direct bank feeds** through a provider licensed by SAMA or the UAE Central Bank.
+- **Direct bank feeds**: the feed, sync job and sandbox bank are done. Next: an agreement with Lean or Tarabut (licensed by SAMA and the UAE Central Bank), their API specification and keys, then their adapter in src/bankfeeds/providers.ts.
 - ~~Online payment of invoices~~ done (sandbox and Moyasar). Next: a live Moyasar account to confirm the API and settlement; other providers (Tap, HyperPay, and for the UAE Telr or Network International) as further adapters.
 - **Inventory depth**: stock counts and adjustments, several warehouses, price lists (barcodes, the warehouse counter and its invoices and supplier bills are done).
 - **Approvals depth**: two levels above a higher amount; approvals for expenses and journal entries.

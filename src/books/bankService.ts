@@ -68,7 +68,7 @@ export async function saveBankAccount(db: Db, companyId: string, b: BankAccountI
 }
 
 // ------------------------------------------------------------------ import
-export interface ImportInput { fileName?: string; lines?: StatementRow[]; layout?: Layout | null }
+export interface ImportInput { fileName?: string; lines?: StatementRow[]; layout?: Layout | null; /** Set by a bank feed sync (db/migrations/0038). */ feedId?: string | null }
 
 /** Saves the lines of a statement file. Lines already imported (same fingerprint) are skipped. */
 export async function importStatement(db: Db, bankAccountId: string, input: ImportInput) {
@@ -92,9 +92,9 @@ export async function importStatement(db: Db, bankAccountId: string, input: Impo
   const fresh = lines.map((l, i) => ({ ...l, fp: prints[i]! })).filter((l) => !existing.has(l.fp));
   const dates = lines.map((l) => l.date).sort();
   const imp = (await db.query(
-    `INSERT INTO bank_imports (company_id, bank_account_id, file_name, line_count, skipped, date_from, date_to, imported_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, app_user_id()) RETURNING id`,
-    [acct.companyId, bankAccountId, String(input.fileName ?? 'statement').slice(0, 200), fresh.length, lines.length - fresh.length, dates[0], dates.at(-1)])).rows[0].id;
+    `INSERT INTO bank_imports (company_id, bank_account_id, file_name, line_count, skipped, date_from, date_to, imported_by, feed_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, app_user_id(), $8) RETURNING id`,
+    [acct.companyId, bankAccountId, String(input.fileName ?? 'statement').slice(0, 200), fresh.length, lines.length - fresh.length, dates[0], dates.at(-1), input.feedId ?? null])).rows[0].id;
   for (const l of fresh) {
     await db.query(
       `INSERT INTO bank_statement_lines (company_id, bank_account_id, import_id, txn_date, description, reference, amount, balance, fingerprint)

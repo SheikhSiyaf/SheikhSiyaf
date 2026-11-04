@@ -864,6 +864,45 @@ function importM(bankId: string, body: Record<string, unknown>) {
   if (body.layout) b.importLayout = body.layout as Layout;
   return { importId, imported: fresh.length, skipped: lines.length - fresh.length };
 }
+// Direct bank feeds (same rules as src/books/bankFeedService.ts; the demo has the sandbox bank only).
+interface MFeed { id: string; bankId: string; provider: 'sandbox'; status: 'active' | 'expired' | 'disconnected'; ext: string; consentExpiresOn: string; lastSyncAt: string | null; syncedTo: string | null; connectedBy: string }
+const feeds: MFeed[] = [];
+const hashM = (x: string) => { let h = 2166136261; for (let i = 0; i < x.length; i++) h = Math.imul(h ^ x.charCodeAt(i), 16777619) >>> 0; return h; };
+const plusDayF = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+function sandboxLinesM(companyId: string, ext: string, from: string, to: string): StatementRow[] {
+  const rows: StatementRow[] = [];
+  for (let d = from; d <= to; d = plusDayF(d, 1)) {
+    const h = hashM(`${ext}|${d}`);
+    if (new Date(`${d}T00:00:00Z`).getUTCDay() !== 5 && h % 3 !== 0) rows.push({ date: d, description: 'POS SETTLEMENT MADA', reference: `STL${h % 1_000_000}`, amount: s(BigInt(20000 + (h % 480000))), balance: null });
+    if (d.slice(8) === '01') rows.push({ date: d, description: 'MONTHLY ACCOUNT FEE', reference: null, amount: '-25.00', balance: null });
+  }
+  for (const doc of sdb.docs.filter((x) => x.companyId === companyId && x.type === 'invoice' && x.status === 'issued' && amountDue(x) > 0n)) {
+    if (hashM(`${ext}|${doc.id}`) % 2 !== 0) continue;
+    const on = plusDayF(doc.issueDate, 7);
+    if (on < from || on > to) continue;
+    rows.push({ date: on, description: `IBAN TRANSFER ${(sdb.contacts.find((c) => c.id === doc.contactId)?.name ?? '').toUpperCase()} ${doc.number}`, reference: doc.number, amount: s(amountDue(doc)), balance: null });
+  }
+  return rows.sort((a, b) => a.date.localeCompare(b.date));
+}
+function feedSyncM(f: MFeed, day = today()) {
+  const b = bankOf(f.bankId); canPostIn(b.companyId);
+  if (f.consentExpiresOn < day) { f.status = 'expired'; return { imported: 0, skipped: 0, booked: 0, expired: true }; }
+  const from = f.syncedTo ? plusDayF(f.syncedTo, 1) : plusDayF(day, -30);
+  let imported = 0, skipped = 0, booked = 0;
+  if (from <= day) {
+    const lines = sandboxLinesM(b.companyId, f.ext, from, day);
+    if (lines.length) {
+      const r = importM(f.bankId, { fileName: `Bank feed ${from} to ${day}`, lines }); imported = r.imported; skipped = r.skipped;
+      const ls = linesM(f.bankId, 'open').filter((l) => l.suggestion?.kind === 'rule');
+      for (const l of ls) { const x = l.suggestion as { accountId: string; costCentreId: string | null; vatCode: string; label: string | null }; bookM(l.id, { ...x, description: x.label }); }
+      booked = ls.length;
+    }
+  }
+  f.status = 'active'; f.lastSyncAt = new Date().toISOString(); f.syncedTo = !f.syncedTo || day > f.syncedTo ? day : f.syncedTo;
+  return { imported, skipped, booked, expired: false };
+}
+const feedRowM = (f: MFeed | undefined) => (f ? { id: f.id, provider: f.provider, status: f.status, consentExpiresOn: f.consentExpiresOn, lastSyncAt: f.lastSyncAt, syncedTo: f.syncedTo,
+  lastError: null, connectedBy: db.users.find((u) => u.id === f.connectedBy)?.name ?? null } : null);
 /** Journal lines on the bank's ledger account not matched to any statement line (an entry and its reversal both left out). */
 function unmatchedM(accountId: string, upTo?: string) {
   const matched = new Set(odb.lines.map((l) => l.journalLineId).filter(Boolean));
@@ -1777,6 +1816,17 @@ const routes: [string, RegExp, Handler][] = [
     const before = odb.lines.length; odb.lines = odb.lines.filter((l) => l.importId !== i.id || l.status === 'matched'); return { removed: before - odb.lines.length }; }],
   ['GET', /^\/api\/bank-accounts\/([\w-]+)\/lines$/, (m, _b, q) => linesM(m[1]!, q.get('status') ?? 'all')],
   ['GET', /^\/api\/bank-accounts\/([\w-]+)\/reconciliation$/, (m) => reconM(m[1]!)],
+  ['GET', /^\/api\/bank-accounts\/([\w-]+)\/feed$/, (m) => { bankOf(m[1]!);
+    return { feed: feedRowM(feeds.find((f) => f.bankId === m[1] && f.status !== 'disconnected')), providers: [{ key: 'sandbox', ready: true }, { key: 'lean', ready: false }, { key: 'tarabut', ready: false }] }; }],
+  ['POST', /^\/api\/bank-accounts\/([\w-]+)\/feed$/, (m, b) => { const bk = bankOf(m[1]!); canPostIn(bk.companyId);
+    if (b?.provider !== 'sandbox') fail(400, 'This provider is not connected yet.', 'err.feedNotReady');
+    if (bk.kind !== 'bank' || bk.status !== 'active') fail(400, 'Connect an active bank account.', 'err.feedAccount');
+    if (feeds.some((f) => f.bankId === bk.id && f.status !== 'disconnected')) fail(400, 'This bank account is already connected.', 'err.feedExists');
+    const f: MFeed = { id: uid(), bankId: bk.id, provider: 'sandbox', status: 'active', ext: `sbx-${(bk.iban ?? bk.id).slice(-4)}`, consentExpiresOn: plusDayF(today(), 90), lastSyncAt: null, syncedTo: null, connectedBy: session! };
+    feeds.push(f); return { id: f.id, ...feedSyncM(f) }; }],
+  ['POST', /^\/api\/bank-accounts\/([\w-]+)\/feed\/sync$/, (m) => { const f = feeds.find((x) => x.bankId === m[1] && x.status !== 'disconnected') ?? fail(400, 'This bank account is not connected.', 'err.feedNone'); return feedSyncM(f); }],
+  ['POST', /^\/api\/bank-accounts\/([\w-]+)\/feed\/disconnect$/, (m) => { const f = feeds.find((x) => x.bankId === m[1] && x.status !== 'disconnected') ?? fail(400, 'This bank account is not connected.', 'err.feedNone');
+    canPostIn(bankOf(f.bankId).companyId); f.status = 'disconnected'; return { ok: true }; }],
   ['POST', /^\/api\/bank-accounts\/([\w-]+)\/apply-rules$/, (m) => { const ls = linesM(m[1]!, 'open').filter((l) => l.suggestion?.kind === 'rule');
     for (const l of ls) { const x = l.suggestion as { accountId: string; costCentreId: string | null; vatCode: string; label: string | null }; bookM(l.id, { ...x, description: x.label }); } return { booked: ls.length }; }],
   ['GET', /^\/api\/bank-lines\/([\w-]+)\/candidates$/, (m) => { const l = lineOf(m[1]!); const b = odb.banks.find((x) => x.id === l.bankId)!;

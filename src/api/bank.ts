@@ -4,6 +4,7 @@ import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
 import { uuidParam, type Ctx } from './context.js';
 import * as B from '../books/bankService.js';
+import * as BF from '../books/bankFeedService.js';
 
 async function member(db: Db, companyId: string) {
   const { rows } = await db.query('SELECT 1 FROM companies WHERE id = $1', [companyId]);
@@ -27,6 +28,14 @@ export function registerBankRoutes(app: FastifyInstance, { as }: Ctx) {
     return { id: await B.saveBankAccount(db, a.companyId, req.body ?? {}, a.id) };
   }));
 
+  // Direct bank feed (db/migrations/0038)
+  app.get<{ Params: P }>('/api/bank-accounts/:id/feed', async (req) => as(req, (db) => BF.feedFor(db, uuidParam(req.params.id))));
+  app.post<{ Params: P; Body: { provider?: string } }>('/api/bank-accounts/:id/feed', async (req) => as(req, (db) => BF.connect(db, uuidParam(req.params.id), String(req.body?.provider ?? ''))));
+  app.post<{ Params: P }>('/api/bank-accounts/:id/feed/sync', async (req) => as(req, async (db) => {
+    const f = (await BF.feedFor(db, uuidParam(req.params.id))).feed ?? (() => { throw new HttpError(400, 'This bank account is not connected.', 'err.feedNone'); })();
+    return BF.sync(db, f.id);
+  }));
+  app.post<{ Params: P }>('/api/bank-accounts/:id/feed/disconnect', async (req) => as(req, async (db) => { await BF.disconnect(db, uuidParam(req.params.id)); return { ok: true }; }));
   app.post<{ Params: P; Body: B.ImportInput }>('/api/bank-accounts/:id/import', async (req) => as(req, (db) => B.importStatement(db, uuidParam(req.params.id), req.body ?? {})));
   app.get<{ Params: P }>('/api/bank-accounts/:id/imports', async (req) => as(req, (db) => B.listImports(db, uuidParam(req.params.id))));
   app.post<{ Params: P }>('/api/bank-imports/:id/undo', async (req) => as(req, async (db) => ({ removed: await B.undoImport(db, uuidParam(req.params.id)) })));

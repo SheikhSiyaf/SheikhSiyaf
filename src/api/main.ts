@@ -7,6 +7,7 @@ import { startFxJobs } from '../books/fxJobs.js';
 import { startMailer } from '../email/mailer.js';
 import { startToolJobs } from '../books/toolsJobs.js';
 import { startBillingJob } from '../books/billingService.js';
+import { startBankFeedJob } from '../books/bankFeedService.js';
 
 if (!process.env.ENCRYPTION_KEY) {
   console.warn('ENCRYPTION_KEY is not set: two-factor secrets are encrypted with SESSION_SECRET. Set ENCRYPTION_KEY before real use.');
@@ -37,6 +38,8 @@ startMailer(pool, (m) => app.log.info(m));
 startToolJobs(pool, (m) => app.log.info(m));
 // Billing the platform's customers for their subscriptions, every six hours (BILLING_JOBS=off turns it off).
 startBillingJob(pool, (m) => app.log.info(m));
+// Direct bank feeds, synced every six hours (BANK_FEED_JOBS=off turns it off).
+startBankFeedJob(pool, (m) => app.log.info(m));
 console.log(serveWeb
   ? `\n  Nusuh Books is running: open http://localhost:${config.port}\n`
   : apiOnly

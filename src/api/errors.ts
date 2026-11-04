@@ -42,6 +42,8 @@ const RAISED: [RegExp, string][] = [
   [/financial year is closed/, 'err.yearClosedPost'],
   [/Only an open invoice can be/, 'err.billOpenOnly'],
   [/Nothing is left to pay on this invoice/, 'err.payNothingDue'],
+  [/Connect an active bank account/, 'err.feedAccount'],
+  [/a disconnected feed stays disconnected/, 'err.feedDisconnected'],
   [/This invoice cannot be paid online/, 'err.payNotOnline'],
   [/before turning online payments on/, 'err.paySetup'],
   [/bank or cash accounts for online payments/, 'err.payAccount'],

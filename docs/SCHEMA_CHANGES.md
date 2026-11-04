@@ -335,3 +335,9 @@ Every change below is covered by a test in `test/`.
 | `online_payments` (each checkout from an invoice link: amount due then, provider reference, created, paid or failed, the payment recorded; never deleted) | One record per attempt, so a payment is recorded once and failures are visible. |
 | `online_pay_start()` (public, from a link), `online_pay_checkout()`, `online_pay_get()`, `online_pay_failed()` (server only), `online_pay_done()` (in the transaction that records the payment) | The customer is never signed in; the server checks with the provider before recording. |
 | `document_public()` also says whether the invoice can be paid online | The Pay online button on the invoice link. |
+
+## 0038_bank_feeds.sql
+| Change | Why |
+|---|---|
+| `bank_feeds` (bank account, provider sandbox / Lean / Tarabut, active, expired, disconnected or error, the bank's account id, consent end date, last sync and the day synced to, who connected it; one live feed per account; never deleted; a disconnected feed stays disconnected) and `bank_imports.feed_id` | Bank transactions come in without statement files, through the same import. |
+| `bank_feeds_due()`, `bank_feed_note()` (the sync job, nobody signed in; each sync runs as the person who connected the feed) | Syncing every six hours. |

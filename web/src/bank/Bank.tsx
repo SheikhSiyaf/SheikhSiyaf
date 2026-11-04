@@ -178,6 +178,7 @@ export function BankAccountPage({ books, id, filter }: { books: CompanyBooks; id
           </div>
         </div>
       )}
+      {b.kind === 'bank' && b.status === 'active' && <BankFeedCard books={books} id={id} onSynced={reload} />}
       {msg && <div className="notice">{msg}</div>}
       <div className="top" style={{ marginBottom: 10 }}>
         <div className="chips" role="tablist">
@@ -196,6 +197,56 @@ export function BankAccountPage({ books, id, filter }: { books: CompanyBooks; id
         </div>
       )}
     </>
+  );
+}
+
+interface Feed { id: string; provider: string; status: 'active' | 'expired' | 'error'; consentExpiresOn: string | null; lastSyncAt: string | null; syncedTo: string | null;
+  lastError: string | null; connectedBy: string | null }
+/** Direct bank feed (db/migrations/0038): connect the account through an open-banking provider; lines then come in by themselves. */
+function BankFeedCard({ books, id, onSynced }: { books: CompanyBooks; id: string; onSynced: () => void }) {
+  const { t, has } = useI18n();
+  const d = useApi<{ feed: Feed | null; providers: { key: string; ready: boolean }[] }>(`/api/bank-accounts/${id}/feed`);
+  const [pick, setPick] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok?: string; bad?: string }>({});
+  const act = async (path: string, body: unknown, ok: (r: { imported?: number; booked?: number; expired?: boolean }) => string) => {
+    setBusy(true); setMsg({});
+    try { const r = await api<{ imported?: number; booked?: number; expired?: boolean }>(`/api/bank-accounts/${id}/feed${path}`, { body }); setMsg({ ok: ok(r) }); setPick(undefined); d.reload(); onSynced(); }
+    catch (e) { setMsg({ bad: errorText(t, has, e) }); } finally { setBusy(false); }
+  };
+  if (!d.data) return null;
+  const f = d.data.feed;
+  const synced = (r: { imported?: number; booked?: number; expired?: boolean }) => r.expired ? t('feed.expiredNow') : t('feed.synced', { n: r.imported ?? 0, b: r.booked ?? 0 });
+  return (
+    <div className="card" id="bank-feed">
+      <div className="actions"><h2 style={{ margin: 0 }}>{t('feed.title')}</h2><span className="spacer" />
+        {f && <span className={`badge ${f.status === 'active' ? 'good' : 'bad'}`}>{t(`feed.st.${f.status}` as Key)}</span>}</div>
+      {msg.ok && <div className="notice">{msg.ok}</div>}
+      {msg.bad && <div className="notice bad" role="alert">{msg.bad}</div>}
+      {f ? <>
+        <div className="small mut">{t('feed.connected', { provider: t(`feed.provider.${f.provider}` as Key), name: f.connectedBy ?? '' })}
+          {f.syncedTo && <> · {t('feed.syncedTo', { date: f.syncedTo })}</>}{f.consentExpiresOn && <> · {t('feed.consentTo', { date: f.consentExpiresOn })}</>}</div>
+        {f.status === 'expired' && <div className="small bad">{t('feed.expiredHint')}</div>}
+        {f.lastError && <div className="small bad">{f.lastError}</div>}
+        {books.canPost && <div className="actions" style={{ marginTop: 8 }}>
+          {f.status !== 'expired' && <button className="b p" id="feed-sync" disabled={busy} onClick={() => void act('/sync', {}, synced)}>{t('feed.syncNow')}</button>}
+          <button className="b" id="feed-disconnect" disabled={busy} onClick={() => void act('/disconnect', {}, () => t('feed.disconnected'))}>{t('feed.disconnect')}</button>
+        </div>}
+      </> : <>
+        <div className="small mut">{t('feed.hint')}</div>
+        {books.canPost && (pick === undefined
+          ? <div className="actions" style={{ marginTop: 8 }}><button className="b p" id="feed-connect" onClick={() => setPick('sandbox')}>{t('feed.connect')}</button></div>
+          : <div style={{ marginTop: 8 }}>
+              <div className="seg" role="radiogroup">
+                {d.data.providers.map((p) => <button key={p.key} type="button" role="radio" aria-checked={pick === p.key} id={`feed-provider-${p.key}`} disabled={!p.ready}
+                  className={pick === p.key ? 'on' : ''} onClick={() => setPick(p.key)}>{t(`feed.provider.${p.key}` as Key)}{!p.ready && ` · ${t('feed.soon')}`}</button>)}
+              </div>
+              <div className="small mut" style={{ margin: '6px 0' }}>{t(`feed.providerHint.${pick}` as Key)}</div>
+              <div className="actions"><button className="b p" id="feed-connect-go" disabled={busy} onClick={() => void act('', { provider: pick }, synced)}>{t('feed.connectGo')}</button>
+                <button className="b" onClick={() => setPick(undefined)}>{t('cancel')}</button></div>
+            </div>)}
+      </>}
+    </div>
   );
 }
 

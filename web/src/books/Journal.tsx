@@ -1,14 +1,19 @@
 // Journal: post a manual entry (errors prevented before posting), list and reverse entries, lock periods.
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { api, useApi, type CompanyBooks, type Entry } from '../api.ts';
 import { useI18n, useLocalName } from '../i18n.tsx';
 import { fmt, isAmount, normalise, toMinor, fromMinor } from '../money.ts';
 import { today } from '../router.ts';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
 import { isLocked, lockedUpTo } from './Workspace.tsx';
+import { parseRate, rateText, toBase } from '../../../src/books/fx.ts';
 
-interface Line { accountId: string; costCentreId: string; debit: string; credit: string }
-const blank = (): Line => ({ accountId: '', costCentreId: '', debit: '', credit: '' });
+/** On an account kept in another currency, debit and credit hold the foreign amount, and `rate` turns it into the company's currency. */
+interface Line { accountId: string; costCentreId: string; debit: string; credit: string; rate: string; rateNote: string }
+const blank = (): Line => ({ accountId: '', costCentreId: '', debit: '', credit: '', rate: '', rateNote: '' });
+const rateOk = (r: string) => { try { parseRate(r.trim()); return true; } catch { return false; } };
+/** The company-currency amount of a foreign amount at a rate, or null while either is not valid. */
+const inBase = (amount: string, rate: string): bigint | null => (isAmount(amount) && rateOk(rate) ? toBase(toMinor(normalise(amount)), parseRate(rate.trim())) : null);
 
 export function Journal({ books, sub, reloadBooks, go }: { books: CompanyBooks; sub: string; reloadBooks: () => void; go: (sub: string) => void }) {
   const { t } = useI18n();
@@ -52,6 +57,21 @@ function NewEntry({ books, onPosted, onShowEntries }: { books: CompanyBooks; onP
     setDone(false);
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   };
+  const currencyOf = (accountId: string) => books.accounts.find((a) => a.id === accountId)?.currency ?? null;
+  /** The rate of the entry date for a foreign line (the latest on or before it). */
+  const fetchRate = async (i: number, accountId: string, on: string) => {
+    const cur = currencyOf(accountId);
+    if (!cur) return;
+    try {
+      const r = await api<{ rate: { rate: string; rateDate: string; source: string } | null }>(`/api/companies/${books.company.id}/fx/rate?currency=${cur}&date=${on}`);
+      set(i, r.rate ? { rate: r.rate.rate, rateNote: t('fx.rateFrom', { date: r.rate.rateDate, source: r.rate.source === 'company' ? t('fx.ownRate') : r.rate.source }) } : { rate: '', rateNote: t('fx.noRateYet') });
+    } catch { /* typed by hand */ }
+  };
+  const pickAccount = (i: number, accountId: string) => {
+    set(i, { accountId, rate: '', rateNote: '' });
+    if (currencyOf(accountId)) void fetchRate(i, accountId, date);
+  };
+  const changeDate = (d: string) => { setDate(d); lines.forEach((l, i) => { if (currencyOf(l.accountId)) void fetchRate(i, l.accountId, d); }); };
 
   // Everything the database would reject is caught here first, in plain language.
   const check = useMemo(() => {
@@ -61,7 +81,9 @@ function NewEntry({ books, onPosted, onShowEntries }: { books: CompanyBooks; onP
     for (const l of lines) {
       const hasD = l.debit.trim() !== '', hasC = l.credit.trim() !== '';
       if ((hasD && !isAmount(l.debit)) || (hasC && !isAmount(l.credit))) { badFormat = true; continue; }
-      const d = hasD ? toMinor(normalise(l.debit)) : 0n, c = hasC ? toMinor(normalise(l.credit)) : 0n;
+      const fx = currencyOf(l.accountId);
+      if (fx && (hasD || hasC) && !rateOk(l.rate)) { problems.push(t('fx.needRate', { currency: fx })); continue; }
+      const d = hasD ? (fx ? inBase(l.debit, l.rate)! : toMinor(normalise(l.debit))) : 0n, c = hasC ? (fx ? inBase(l.credit, l.rate)! : toMinor(normalise(l.credit))) : 0n;
       if (d && c) bothSides = true;
       if (l.accountId && (d || c)) used++;
       dr += d; cr += c;
@@ -83,7 +105,11 @@ function NewEntry({ books, onPosted, onShowEntries }: { books: CompanyBooks; onP
       await api(`/api/companies/${books.company.id}/entries`, {
         body: {
           entryDate: date, memo,
-          lines: lines.filter((l) => l.accountId && (l.debit || l.credit)).map((l) => ({
+          lines: lines.filter((l) => l.accountId && (l.debit || l.credit)).map((l) => currencyOf(l.accountId) ? ({
+            accountId: l.accountId, costCentreId: l.costCentreId || null,
+            debit: l.debit ? fromMinor(inBase(l.debit, l.rate)!) : undefined, credit: l.credit ? fromMinor(inBase(l.credit, l.rate)!) : undefined,
+            fxAmount: normalise(l.debit || l.credit), fxRate: rateText(parseRate(l.rate.trim())),
+          }) : ({
             accountId: l.accountId, costCentreId: l.costCentreId || null,
             debit: l.debit ? normalise(l.debit) : undefined, credit: l.credit ? normalise(l.credit) : undefined,
           })),
@@ -103,7 +129,7 @@ function NewEntry({ books, onPosted, onShowEntries }: { books: CompanyBooks; onP
     <div className="card">
       <h2>{t('journal.new')}</h2>
       <div className="row">
-        <label className="f" style={{ flex: '0 1 180px' }}>{t('date')}<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        <label className="f" style={{ flex: '0 1 180px' }}>{t('date')}<input type="date" value={date} onChange={(e) => changeDate(e.target.value)} /></label>
         <label className="f">{t('journal.memo')}<input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder={t('journal.memoPlaceholder')} maxLength={500} /></label>
       </div>
       <div className="wrap">
@@ -112,12 +138,14 @@ function NewEntry({ books, onPosted, onShowEntries }: { books: CompanyBooks; onP
           <tbody>
             {lines.map((l, i) => {
               const acct = books.accounts.find((a) => a.id === l.accountId);
-              return (
-                <tr key={i}>
+              const fx = acct?.currency ?? null;
+              const base = fx ? inBase(l.debit || l.credit, l.rate) : null;
+              return (<Fragment key={i}>
+                <tr>
                   <td style={{ minWidth: 200 }}>
-                    <select value={l.accountId} onChange={(e) => set(i, { accountId: e.target.value })} aria-label={t('journal.account')}>
+                    <select value={l.accountId} onChange={(e) => pickAccount(i, e.target.value)} aria-label={t('journal.account')}>
                       <option value="">{t('journal.chooseAccount')}</option>
-                      {books.accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {local(a.name, a.nameAr)}{a.costCentreRequired ? ' *' : ''}</option>)}
+                      {books.accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {local(a.name, a.nameAr)}{a.currency ? ` (${a.currency})` : ''}{a.costCentreRequired ? ' *' : ''}</option>)}
                     </select>
                   </td>
                   <td style={{ minWidth: 150 }}>
@@ -127,13 +155,24 @@ function NewEntry({ books, onPosted, onShowEntries }: { books: CompanyBooks; onP
                       {books.costCentres.map((c) => <option key={c.id} value={c.id}>{local(c.name, c.nameAr)}</option>)}
                     </select>
                   </td>
-                  <td><input inputMode="decimal" className="num ltr" value={l.debit} onChange={(e) => set(i, { debit: e.target.value, credit: e.target.value ? '' : l.credit })} aria-label={t('debit')} placeholder={t('debit')} /></td>
-                  <td><input inputMode="decimal" className="num ltr" value={l.credit} onChange={(e) => set(i, { credit: e.target.value, debit: e.target.value ? '' : l.debit })} aria-label={t('credit')} placeholder={t('credit')} /></td>
+                  <td><input inputMode="decimal" className="num ltr" value={l.debit} onChange={(e) => set(i, { debit: e.target.value, credit: e.target.value ? '' : l.credit })} aria-label={fx ? `${t('debit')} ${fx}` : t('debit')} placeholder={fx ? `${fx} ${t('debit')}` : t('debit')} /></td>
+                  <td><input inputMode="decimal" className="num ltr" value={l.credit} onChange={(e) => set(i, { credit: e.target.value, debit: e.target.value ? '' : l.debit })} aria-label={fx ? `${t('credit')} ${fx}` : t('credit')} placeholder={fx ? `${fx} ${t('credit')}` : t('credit')} /></td>
                   <td className="num">
                     <button className="b" disabled={lines.length <= 2} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} aria-label={t('journal.removeLine')} title={t('journal.removeLine')}>×</button>
                   </td>
                 </tr>
-              );
+                {fx && <tr className="fx-row">
+                  <td colSpan={5}>
+                    <span className="fx-line small">
+                      <span>{t('fx.lineIn', { currency: fx })}</span>
+                      <label>{t('fx.rate', { currency: fx, base: books.company.currency })}
+                        <input className="num ltr fx-rate" inputMode="decimal" value={l.rate} aria-invalid={l.rate !== '' && !rateOk(l.rate)} onChange={(e) => set(i, { rate: e.target.value, rateNote: t('fx.rateTyped') })} /></label>
+                      <b className="ltr">= {books.company.currency} {base === null ? '—' : fmt(fromMinor(base))}</b>
+                      {l.rateNote && <span className="mut">{l.rateNote}</span>}
+                    </span>
+                  </td>
+                </tr>}
+              </Fragment>);
             })}
             <tr className="total">
               <td><button className="b" onClick={() => setLines((ls) => [...ls, blank()])}>{t('journal.addLine')}</button></td>
@@ -200,7 +239,8 @@ function EntryCard({ entry, books, onReversed }: { entry: Entry; books: CompanyB
           <tbody>
             {entry.lines.map((l) => (
               <tr key={l.id}>
-                <td>{l.accountCode} {local(l.accountName, l.accountNameAr)}{l.costCentre && <span className="mut small"> · {local(l.costCentre, l.costCentreAr)}</span>}</td>
+                <td>{l.accountCode} {local(l.accountName, l.accountNameAr)}{l.costCentre && <span className="mut small"> · {local(l.costCentre, l.costCentreAr)}</span>}
+                  {l.currency && l.fxAmount && toMinor(l.fxAmount) !== 0n && <div className="small mut ltr">{l.currency} {fmt(l.fxAmount)} @ {l.fxRate}</div>}</td>
                 <td className="num ltr" style={{ width: '18%' }}>{toMinor(l.debit) ? fmt(l.debit) : ''}</td>
                 <td className="num ltr" style={{ width: '18%' }}>{toMinor(l.credit) ? fmt(l.credit) : ''}</td>
               </tr>

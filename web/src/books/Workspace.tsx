@@ -43,6 +43,7 @@ import { AssetPage, AssetRegister, Depreciation } from '../assets/Assets.tsx';
 import { FoodSale, FoodSales, MenuList, RecipePage } from '../restaurant/Restaurant.tsx';
 import { WarehouseDesk } from '../inventory/Warehouse.tsx';
 import { Counter } from '../inventory/Counter.tsx';
+import { CurrencyRates, CurrencyRevaluation } from '../ledger/Currencies.tsx';
 
 export const MODULES = NAV.map((m) => m.key);
 
@@ -157,6 +158,8 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     }
     case 'Ledger':
       if (sub === 'chart-of-accounts') return <ChartOfAccounts books={books} onChanged={reloadBooks} />;
+      if (sub === 'currencies') return <CurrencyRates books={books} />;
+      if (sub === 'fx-revaluation') return <CurrencyRevaluation books={books} />;
       if (sub === 'import-data') return <ImportData key={item ?? ''} books={books} initial={item} />;
       if (sub === 'cost-centres-setup') return <CostCentres books={books} onChanged={reloadBooks} />;
       if (sub === 'general-ledger') return <GeneralLedger key={item ?? ''} books={books} initial={item} />;

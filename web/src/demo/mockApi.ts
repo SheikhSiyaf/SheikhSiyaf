@@ -24,6 +24,7 @@ import * as Fc from '../../../src/books/forecast.ts';
 import * as Im from '../../../src/books/importRules.ts';
 import { cleanBarcode, internalEan, validBarcode } from '../../../src/books/barcode.ts';
 import * as AtR from '../../../src/books/attendanceRules.ts';
+import * as Fx from '../../../src/books/fx.ts';
 import type { EInvoiceData, EParty } from '../../../src/einvoice/invoiceData.ts';
 import { tinyPdf } from '../../../src/db/tinyPdf.ts';
 import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, previousMonthEnd, targetDepreciation, type AssetTerms } from '../../../src/books/assets.ts';
@@ -40,12 +41,13 @@ interface Company {
   industry: string; modules: string[];
   fields: Record<string, string>;   // the rest of the registration form, as entered
 }
-interface Account { id: string; companyId: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank: boolean; pnlGroup?: string | null }
+interface Account { id: string; companyId: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank: boolean; pnlGroup?: string | null;
+  currency?: string | null; revalue?: boolean }
 interface CostCentre { id: string; companyId: string; name: string; nameAr: string | null; kind: string; status?: string; budget?: string | null; contactId?: string | null;
   startDate?: string | null; endDate?: string | null; description?: string | null }
 interface Period { companyId: string; startDate: string; endDate: string; lockedAt: string | null }
-interface Line { id: string; accountId: string; costCentreId: string | null; debit: bigint; credit: bigint }
-interface Entry { id: string; companyId: string; date: string; memo: string | null; createdBy: string; createdAt: string; reversesEntryId: string | null; lines: Line[]; manual?: boolean }
+interface Line { id: string; accountId: string; costCentreId: string | null; debit: bigint; credit: bigint; fxAmount?: bigint | null; fxRate?: bigint | null }
+interface Entry { id: string; companyId: string; date: string; memo: string | null; createdBy: string; createdAt: string; reversesEntryId: string | null; lines: Line[]; manual?: boolean; sourceType?: string }
 interface Membership { userId: string; companyId: string; role: Role; clientRoleId?: string | null }
 interface ClientRole { id: string; firmId: string; name: string; nameAr: string | null; description: string | null; permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; posMode?: boolean; status: 'active' | 'archived' }
 /** Customers (db/migrations/0023): the platform, accounting firms, and companies that run their own books. */
@@ -109,7 +111,7 @@ function isLocked(companyId: string, date: string) {
   return db.periods.some((p) => p.companyId === companyId && p.lockedAt && date >= p.startDate && date <= p.endDate);
 }
 
-function post(userId: string, companyId: string, date: string, memo: string | null, lines: Omit<Line, 'id'>[], reverses: string | null = null): string {
+function post(userId: string, companyId: string, date: string, memo: string | null, lines: Omit<Line, 'id'>[], reverses: string | null = null, sourceType?: string): string {
   const role = roleOf(userId, companyId);
   if (!role || !POSTING.includes(role)) fail(403, 'Your role does not allow this.', 'err.forbidden');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(400, 'Some values are not in the right format.', 'err.format');
@@ -119,6 +121,13 @@ function post(userId: string, companyId: string, date: string, memo: string | nu
       fail(400, 'Each line needs a debit or a credit amount, not both, and never negative.', 'err.lineAmounts');
     if (!db.accounts.some((a) => a.id === l.accountId && a.companyId === companyId)) fail(400, 'That belongs to a different company.', 'err.otherCompany');
     if (l.costCentreId && !db.costCentres.some((c) => c.id === l.costCentreId && c.companyId === companyId)) fail(400, 'That belongs to a different company.', 'err.otherCompany');
+    // Accounts in another currency (as db/migrations/0029): foreign amount x rate = the amount; only the revaluation posts differences.
+    const cur = db.accounts.find((a) => a.id === l.accountId)?.currency ?? null;
+    if (!cur && (l.fxAmount || l.fxRate)) fail(400, "This account is in the company's currency: no foreign amount.", 'err.fxNeedsAmount');
+    if (cur && !(sourceType === 'fx_revaluation' && !l.fxAmount)) {
+      if (!l.fxAmount || !l.fxRate) fail(400, `This account is kept in ${cur}: give the ${cur} amount and the rate.`, 'err.fxNeedsAmount');
+      if (Fx.toBase(l.fxAmount!, l.fxRate!) !== l.debit + l.credit) fail(400, 'The amount must be the foreign amount times the rate.', 'err.fxTimesRate');
+    }
   }
   if (lines.length < 2) fail(400, 'An entry needs at least two lines.', 'err.twoLines');
   const d = lines.reduce((s, l) => s + l.debit, 0n), c = lines.reduce((s, l) => s + l.credit, 0n);
@@ -126,7 +135,7 @@ function post(userId: string, companyId: string, date: string, memo: string | nu
   if (lines.some((l) => !l.costCentreId && db.accounts.find((a) => a.id === l.accountId)?.costCentreRequired))
     fail(400, 'A cost centre is required for one of the accounts used.', 'err.costCentreRequired');
   const id = uid();
-  db.entries.push({ id, companyId, date, memo, createdBy: userId, createdAt: new Date().toISOString(), reversesEntryId: reverses,
+  db.entries.push({ id, companyId, date, memo, createdBy: userId, createdAt: new Date().toISOString(), reversesEntryId: reverses, sourceType,
     lines: lines.map((l) => ({ ...l, id: uid() })) });
   return id;
 }
@@ -137,7 +146,7 @@ function reverse(userId: string, entryId: string, date: string): string {
   if (e.reversesEntryId) fail(400, 'This entry is itself a reversal. Post a new entry instead.', 'err.isReversal');
   if (db.entries.some((x) => x.reversesEntryId === e.id)) fail(400, 'This entry has already been reversed.', 'err.alreadyReversed');
   return post(userId, e.companyId, date, `Reversal of ${e.memo ?? e.id}`,
-    e.lines.map((l) => ({ accountId: l.accountId, costCentreId: l.costCentreId, debit: l.credit, credit: l.debit })), e.id);
+    e.lines.map((l) => ({ accountId: l.accountId, costCentreId: l.costCentreId, debit: l.credit, credit: l.debit, fxAmount: l.fxAmount, fxRate: l.fxRate })), e.id, e.sourceType);
 }
 
 function setupBooks(companyId: string) {
@@ -734,6 +743,7 @@ function seedSales(companyId: string, poster: string, c: { country: string; city
   seedOps(companyId, poster, c, { gulf, faisal, najd, fitOut });
   seedHrm(companyId, poster);
   seedCrm(companyId, poster);
+  seedFx(companyId, poster);
   session = prev;
 }
 
@@ -1264,6 +1274,17 @@ function saveAccountM(companyId: string, b: Record<string, unknown>, id?: string
   if (!/^[1-9]\d{3}$/.test(code) || !CODE_START[type]!.includes(code[0]!)) fail(400, 'Account codes have 4 digits.', 'err.accountCode');
   if (db.accounts.some((a) => a.companyId === companyId && a.code === code && a.id !== id)) fail(400, 'Another account already has this code.', 'err.accountCodeTaken');
   const v = { code, name, nameAr: (b.nameAr as string)?.trim() || null, type, costCentreRequired: Boolean(b.costCentreRequired), pnlGroup: (b.pnlGroup as string) || null };
+  // Currency (as db/migrations/0029): another currency only for asset and liability accounts not used by the other screens.
+  const old = id ? db.accounts.find((x) => x.id === id) : undefined;
+  let currency = b.currency === undefined ? old?.currency ?? null : (b.currency as string) || null;
+  if (currency === company(companyId).currency) currency = null;
+  if (currency) {
+    if (!['asset', 'liability'].includes(type)) fail(400, 'Only asset and liability accounts are kept in another currency.', 'err.fxNotMonetary');
+    if (old?.isBank) fail(400, 'A bank account in another currency is not supported yet.', 'err.fxBank');
+    if (['1000', '1010', '1100', '1150', '1200', '1300', '1590', '2000', '2050', '2100', '2200', '2210', '2220', '2230'].includes(code)) fail(400, 'This account stays in the company currency.', 'err.fxSystemAccount');
+  }
+  if (old && (old.currency ?? null) !== currency && db.entries.some((e) => e.lines.some((l) => l.accountId === id))) fail(400, 'This account has postings, so its currency no longer changes.', 'err.fxHasPostings');
+  Object.assign(v, { currency, revalue: b.revalue === undefined ? old?.revalue ?? true : Boolean(b.revalue) });
   if (id) {
     const a = db.accounts.find((x) => x.id === id && x.companyId === companyId) ?? fail(404, 'Not found.', 'err.notFound');
     if ((a.code !== code || a.type !== type) && db.entries.some((e) => e.lines.some((l) => l.accountId === id))) fail(400, 'This account has postings, so its code and type can no longer change.', 'err.accountUsed');
@@ -1486,7 +1507,8 @@ const routes: [string, RegExp, Handler][] = [
         lines: [...e.lines].sort((a, b) => (b.debit > a.debit ? 1 : b.debit < a.debit ? -1 : 0)).map((l) => {
           const a = db.accounts.find((x) => x.id === l.accountId)!;
           const cc = db.costCentres.find((x) => x.id === l.costCentreId);
-          return { id: l.id, accountCode: a.code, accountName: a.name, accountNameAr: a.nameAr, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null, debit: s(l.debit), credit: s(l.credit) };
+          return { id: l.id, accountCode: a.code, accountName: a.name, accountNameAr: a.nameAr, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null, debit: s(l.debit), credit: s(l.credit),
+            currency: a.currency ?? null, fxAmount: l.fxAmount === undefined || l.fxAmount === null ? null : s(l.fxAmount), fxRate: l.fxRate ? Fx.rateText(l.fxRate) : null };
         }),
       }));
   }],
@@ -1495,7 +1517,8 @@ const routes: [string, RegExp, Handler][] = [
     const raw = Array.isArray(b?.lines) ? (b!.lines as Record<string, string | null | undefined>[]) : [];
     let lines: Omit<Line, 'id'>[];
     try {
-      lines = raw.map((l) => ({ accountId: String(l.accountId), costCentreId: l.costCentreId ?? null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') }));
+      lines = raw.map((l) => ({ accountId: String(l.accountId), costCentreId: l.costCentreId ?? null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0'),
+        fxAmount: l.fxAmount ? toMinor(l.fxAmount) : null, fxRate: l.fxRate ? Fx.parseRate(l.fxRate) : null }));
     } catch { return fail(400, 'Amounts must be numbers with at most 2 decimals.', 'err.amountFormat'); }
     const eid = post(u.id, id, String(b?.entryDate ?? ''), typeof b?.memo === 'string' ? b.memo : null, lines); db.entries.at(-1)!.manual = true;
     return { id: eid };
@@ -1640,7 +1663,8 @@ const routes: [string, RegExp, Handler][] = [
   ['GET', /^\/api\/companies\/([\w-]+)\/chart$/, (m) => { const id = inCo(m[1]!);
     return db.accounts.filter((a) => a.companyId === id).sort((a, b) => a.code.localeCompare(b.code)).map((a) => {
       const ls = db.entries.flatMap((e) => e.lines).filter((l) => l.accountId === a.id);
-      return { id: a.id, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, costCentreRequired: a.costCentreRequired, isBank: a.isBank, pnlGroup: pnlGroupOf(a), balance: s(ls.reduce((t, l) => t + l.debit - l.credit, 0n)), postings: ls.length };
+      return { id: a.id, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, costCentreRequired: a.costCentreRequired, isBank: a.isBank, pnlGroup: pnlGroupOf(a), balance: s(ls.reduce((t, l) => t + l.debit - l.credit, 0n)), postings: ls.length,
+        currency: a.currency ?? null, revalue: a.revalue ?? true, fxBalance: s(ls.reduce((t, l) => t + (l.debit > 0n ? 1n : -1n) * (l.fxAmount ?? 0n), 0n)) };
     }); }],
   ['GET', /^\/api\/companies\/([\w-]+)\/chart\/next-code$/, (m, _b, q) => ({ code: nextCodeM(inCo(m[1]!), q.get('type') ?? 'expense') })],
   ['POST', /^\/api\/companies\/([\w-]+)\/accounts$/, (m, b) => ({ id: saveAccountM(inCo(m[1]!), b ?? {}) })],
@@ -1990,6 +2014,7 @@ const PATH_MODULES: [RegExp, string[]][] = [
   [/^(entries|periods)/, ['Journal']],
   [/^ledger\/cost-centre/, ['Ledger', 'Projects']],
   [/^(ledger|chart|accounts|cost-centres)/, ['Ledger']],
+  [/^fx\/(revaluation|revaluations|settings|sync)/, ['Ledger']],
   [/^reports/, ['Reports']],
   [/^(bank-accounts|bank-rules)/, ['Bank']],
   [/^(items|stock-notes|stock-value)/, ['Inventory', 'Restaurant']],
@@ -2568,6 +2593,130 @@ function seedHrm(companyId: string, poster: string) {
       attImportM(companyId, { periodEnd: monthEndM(clockFrom), rows, fileName: 'time-clock.csv' });
       if (absentDay) requestCorrM(companyId, { contactId: yusuf, kind: 'absence_to_leave', leaveKind: 'sick', dayFrom: absentDay, reason: 'Medical certificate from the clinic' });
     }
+  }
+  session = prev;
+}
+
+// ---------------------------------------------------------------- foreign currency (same rules as src/books/fxService.ts and db/migrations/0029)
+interface MRate { id: string; companyId: string | null; date: string; currency: string; base: string; rate: bigint; source: string; createdBy: string | null; createdAt: string }
+interface MReval { id: string; companyId: string; periodEnd: string; entryId: string | null; status: 'posted' | 'reversed'; automatic: boolean; unrealised: bigint; realised: bigint;
+  createdBy: string; createdAt: string; reversalEntryId: string | null }
+const fxdb = { rates: [] as MRate[], revals: [] as MReval[], settings: new Map<string, { autoRevalue: boolean; enabledBy: string | null; enabledAt: string | null; lastRun: string | null; lastProblem: string | null }>() };
+/** Shared rates for a day from the central bank pegs (the demo cannot reach a rate provider). */
+function storePegsM(base: string, day: string) {
+  for (const [cur, r] of Object.entries(Fx.pegRates(base))) {
+    const old = fxdb.rates.find((x) => x.companyId === null && x.date === day && x.currency === cur && x.base === base);
+    if (old) Object.assign(old, { rate: r, source: 'central bank peg' });
+    else fxdb.rates.push({ id: uid(), companyId: null, date: day, currency: cur, base, rate: r, source: 'central bank peg', createdBy: null, createdAt: new Date().toISOString() });
+  }
+}
+function rateForM(companyId: string, cur: string, date: string) {
+  const base = company(companyId).currency;
+  const r = fxdb.rates.filter((x) => x.currency === cur && x.base === base && x.date <= date && (x.companyId === null || x.companyId === companyId))
+    .sort((a, b) => b.date.localeCompare(a.date) || Number(a.companyId === null) - Number(b.companyId === null))[0];
+  return r ? { currency: cur, rate: Fx.rateText(r.rate), rateDate: r.date, source: r.companyId ? 'company' : r.source } : null;
+}
+function saveRateM(companyId: string, b: Body) {
+  canPostIn(companyId);
+  if (!Fx.isCurrency(b?.currency)) fail(400, 'Choose the currency.', 'err.currency');
+  const date = dt(b?.date) ?? fail(400, 'Enter the date.', 'err.date');
+  let r: bigint; try { r = Fx.parseRate(String(b?.rate ?? '')); } catch { return fail(400, 'A rate is a number above 0 with at most 8 decimals.', 'err.rate'); }
+  const base = company(companyId).currency; const cur = String(b!.currency);
+  if (cur === base) fail(400, "Choose a currency other than the company's.", 'err.currency');
+  const old = fxdb.rates.find((x) => x.companyId === companyId && x.date === date && x.currency === cur);
+  if (old) Object.assign(old, { rate: r, createdBy: session }); else fxdb.rates.push({ id: uid(), companyId, date, currency: cur, base, rate: r, source: 'company', createdBy: session, createdAt: new Date().toISOString() });
+}
+const fxSettingsM = (companyId: string) => fxdb.settings.get(companyId) ?? { autoRevalue: false, enabledBy: null, enabledAt: null, lastRun: null, lastProblem: null };
+function fxPreviewM(companyId: string, pe: string) {
+  if (!isMonthEnd(pe)) fail(400, 'Choose the month.', 'err.date');
+  const accts = db.accounts.filter((a) => a.companyId === companyId && a.currency && (a.revalue ?? true));
+  const bs: Fx.FxBalance[] = accts.map((a) => { const ls = db.entries.filter((e) => e.date <= pe).flatMap((e) => e.lines).filter((l) => l.accountId === a.id);
+    return { accountId: a.id, code: a.code, name: a.name, currency: a.currency!, fxBalance: ls.reduce((t, l) => t + (l.debit > 0n ? 1n : -1n) * (l.fxAmount ?? 0n), 0n), baseBalance: ls.reduce((t, l) => t + l.debit - l.credit, 0n) }; })
+    .filter((x) => x.fxBalance !== 0n || x.baseBalance !== 0n).sort((a, b) => a.code.localeCompare(b.code));
+  const used = [...new Set(bs.map((x) => x.currency))];
+  const info = Object.fromEntries(used.map((c) => [c, rateForM(companyId, c, pe)]));
+  const r = Fx.revalue(bs, Object.fromEntries(used.map((c) => [c, info[c] ? Fx.parseRate(info[c]!.rate) : undefined])));
+  const posted = fxdb.revals.filter((x) => x.companyId === companyId && x.status === 'posted');
+  const later = posted.filter((x) => x.periodEnd > pe).map((x) => x.periodEnd).sort().at(-1) ?? null;
+  return { periodEnd: pe, base: company(companyId).currency, locked: isLocked(companyId, pe), alreadyDone: posted.find((x) => x.periodEnd === pe)?.id ?? null, laterDone: later,
+    lines: r.lines.map((l) => ({ accountId: l.accountId, code: l.code, name: l.name, currency: l.currency, fxBalance: s(l.fxBalance), bookValue: s(l.baseBalance),
+      rate: l.rate === null ? null : Fx.rateText(l.rate), rateDate: info[l.currency]?.rateDate ?? null, rateSource: info[l.currency]?.source ?? null,
+      stale: Boolean(info[l.currency] && info[l.currency]!.rateDate < addD(pe, -7)), closingValue: l.target === null ? null : s(l.target), adjustment: s(l.adjustment), kind: l.kind })),
+    unrealised: s(r.unrealised), realised: s(r.realised), missing: r.missing, raw: r };
+}
+function fxPostM(companyId: string, pe: string, automatic = false) {
+  canPostIn(companyId);
+  const p = fxPreviewM(companyId, pe);
+  if (p.locked) fail(400, 'This month is locked.', 'err.periodLocked');
+  if (p.alreadyDone) fail(400, 'This month is already revalued.', 'err.fxDone');
+  if (p.laterDone) fail(400, 'A later month is already revalued. Reverse it first.', 'err.fxLater');
+  if (p.missing.length) fail(400, `There is no rate for ${p.missing.join(', ')}.`, 'err.fxNoRate');
+  const moves = p.raw.lines.filter((l) => l.adjustment !== 0n);
+  const side = (accountId: string, v: bigint) => ({ accountId, costCentreId: null, debit: v > 0n ? v : 0n, credit: v < 0n ? -v : 0n });
+  let entryId: string | null = null;
+  if (moves.length) {
+    const u = acctBy(companyId, '4950').id, rl = acctBy(companyId, '4951').id;
+    entryId = post(session!, companyId, pe, `Exchange rate revaluation ${pe.slice(0, 7)} (IAS 21)`,
+      [...moves.map((l) => side(l.accountId, l.adjustment)), ...(p.raw.unrealised ? [side(u, -p.raw.unrealised)] : []), ...(p.raw.realised ? [side(rl, -p.raw.realised)] : [])], null, 'fx_revaluation');
+  }
+  const id = uid();
+  fxdb.revals.push({ id, companyId, periodEnd: pe, entryId, status: 'posted', automatic, unrealised: p.raw.unrealised, realised: p.raw.realised, createdBy: session!, createdAt: new Date().toISOString(), reversalEntryId: null });
+  return { id, entryId };
+}
+function fxReverseM(id: string) {
+  const r = fxdb.revals.find((x) => x.id === id && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+  canPostIn(r.companyId);
+  if (r.status !== 'posted') fail(400, 'This revaluation is already reversed.', 'err.fxReversed');
+  if (fxdb.revals.some((x) => x.companyId === r.companyId && x.status === 'posted' && x.periodEnd > r.periodEnd)) fail(400, 'A later month is already revalued. Reverse it first.', 'err.fxLater');
+  r.reversalEntryId = r.entryId ? reverse(session!, r.entryId, r.periodEnd) : null; r.status = 'reversed';
+}
+/** The automatic month-end run (the server does it hourly; the demo does it when the rates page is opened). */
+function fxAutoM(companyId: string) {
+  const st = fxSettingsM(companyId);
+  if (!st.autoRevalue || !st.enabledBy) return;
+  const pe = new Date(Date.UTC(+today().slice(0, 4), +today().slice(5, 7) - 1, 0)).toISOString().slice(0, 10);
+  if (fxdb.revals.some((x) => x.companyId === companyId && x.status === 'posted' && x.periodEnd >= pe) || isLocked(companyId, pe)) return;
+  if (!db.accounts.some((a) => a.companyId === companyId && a.currency && (a.revalue ?? true))) return;
+  const prev = session; session = st.enabledBy;
+  try { fxPostM(companyId, pe, true); st.lastProblem = null; } catch (e) { st.lastProblem = (e as Error).message; } finally { session = prev; st.lastRun = new Date().toISOString(); }
+}
+routes.push(
+  ['GET', /^\/api\/companies\/([\w-]+)\/fx\/rates$/, (m, _b, q) => { const id = inCo(m[1]!); fxAutoM(id); const asOf = q.get('asOf') || today(); const base = company(id).currency;
+    const inUse = [...new Set(db.accounts.filter((a) => a.companyId === id && a.currency).map((a) => a.currency!))];
+    const st = fxSettingsM(id);
+    return { base, asOf, list: Fx.CURRENCIES.filter((c) => c.code !== base).map((c) => ({ ...c, inUse: inUse.includes(c.code), latest: rateForM(id, c.code, asOf) })).sort((a, b) => Number(b.inUse) - Number(a.inUse)),
+      own: fxdb.rates.filter((x) => x.companyId === id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100).map((x) => ({ id: x.id, rateDate: x.date, currency: x.currency, rate: Fx.rateText(x.rate), createdBy: userName(x.createdBy) })),
+      lastSync: fxdb.rates.filter((x) => x.companyId === null && x.base === base).map((x) => x.createdAt).sort().at(-1) ?? null,
+      settings: { ...st, enabledBy: userName(st.enabledBy) } }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/fx\/rates$/, (m, b) => { saveRateM(inCo(m[1]!), b); return { ok: true }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/fx\/rate$/, (m, _b, q) => ({ rate: rateForM(inCo(m[1]!), String(q.get('currency') ?? ''), q.get('date') || today()) })],
+  ['POST', /^\/api\/companies\/([\w-]+)\/fx\/settings$/, (m, b) => { const id = inCo(m[1]!); canPostIn(id); const on = Boolean(b?.autoRevalue);
+    fxdb.settings.set(id, { ...fxSettingsM(id), autoRevalue: on, enabledBy: on ? session : null, enabledAt: on ? new Date().toISOString() : null }); return { ok: true }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/fx\/revaluation$/, (m, _b, q) => { const { raw: _raw, ...p } = fxPreviewM(inCo(m[1]!), String(q.get('month') ?? '')); return p; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/fx\/revaluation$/, (m, b) => fxPostM(inCo(m[1]!), String(b?.month ?? ''))],
+  ['GET', /^\/api\/companies\/([\w-]+)\/fx\/revaluations$/, (m) => { const id = inCo(m[1]!);
+    return fxdb.revals.filter((x) => x.companyId === id).sort((a, b) => b.periodEnd.localeCompare(a.periodEnd) || b.createdAt.localeCompare(a.createdAt))
+      .map((x) => ({ ...x, unrealised: s(x.unrealised), realised: s(x.realised), createdBy: userName(x.createdBy) })); }],
+  ['POST', /^\/api\/fx-revaluations\/([\w-]+)\/reverse$/, (m) => { fxReverseM(m[1]!); return { ok: true }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/fx\/sync$/, (m) => { const id = inCo(m[1]!); canPostIn(id); const base = company(id).currency; storePegsM(base, today());
+    return { results: [{ base, stored: Object.keys(Fx.pegRates(base)).length, provider: false, problem: 'the demo runs without an internet connection' }] }; }],
+);
+function seedFx(companyId: string, poster: string) {
+  const c = company(companyId); const prev = session; session = poster;
+  const lastEnd = new Date(Date.UTC(+today().slice(0, 4), +today().slice(5, 7) - 1, 0)).toISOString().slice(0, 10);
+  const beforeEnd = new Date(Date.UTC(+lastEnd.slice(0, 4), +lastEnd.slice(5, 7) - 1, 0)).toISOString().slice(0, 10);
+  for (const day of [beforeEnd, lastEnd, today()]) storePegsM(c.currency, day);
+  if (c.name === 'Al Noor Trading') {
+    const usd = saveAccountM(companyId, { code: '1020', name: 'USD deposit (Citibank)', nameAr: 'وديعة بالدولار (سيتي بنك)', type: 'asset', currency: 'USD' });
+    const eur = saveAccountM(companyId, { code: '2010', name: 'Loan from Hamburg supplier (EUR)', nameAr: 'قرض من مورد هامبورغ (يورو)', type: 'liability', currency: 'EUR' });
+    const cash = acctBy(companyId, '1000').id;
+    post(poster, companyId, daysAgo(100), 'USD deposit opened (bank rate 3.7480)', [{ accountId: usd, costCentreId: null, debit: 7_496_000n, credit: 0n, fxAmount: 2_000_000n, fxRate: Fx.parseRate('3.748') },
+      { accountId: cash, costCentreId: null, debit: 0n, credit: 7_496_000n }]);
+    post(poster, companyId, daysAgo(90), 'Machine supplier loan received in EUR', [{ accountId: cash, costCentreId: null, debit: 4_050_000n, credit: 0n },
+      { accountId: eur, costCentreId: null, debit: 0n, credit: 4_050_000n, fxAmount: 1_000_000n, fxRate: Fx.parseRate('4.05') }]);
+    saveRateM(companyId, { currency: 'EUR', date: beforeEnd, rate: '4.02' });
+    saveRateM(companyId, { currency: 'EUR', date: lastEnd, rate: '4.11' });
+    if (beforeEnd >= daysAgo(90)) fxPostM(companyId, beforeEnd);
   }
   session = prev;
 }

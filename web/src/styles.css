@@ -571,3 +571,9 @@ button.att-c:hover, button.att-c:focus-visible { outline: 2px solid var(--teal);
 .chip.on { background: var(--tealbg); border-color: var(--teal); color: var(--teal); }
 .chip input { position: absolute; opacity: 0; pointer-events: none; }
 .chip:focus-within { outline: 2px solid var(--teal); outline-offset: 1px; }
+
+/* Journal lines in another currency */
+.lines tr.fx-row td { border-top: 0; padding-top: 0; }
+.fx-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 2px 0 8px; }
+.fx-line label { display: inline-flex; align-items: center; gap: 6px; }
+.fx-rate { width: 120px; padding: 5px 8px; }

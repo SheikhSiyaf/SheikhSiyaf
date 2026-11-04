@@ -66,7 +66,7 @@ export interface Me {
   user: { id: string; name: string; email: string; kind: 'owner' | 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; firmName: string; firmKind?: 'platform' | 'firm' | 'company'; twoFactor: boolean };
   companies: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; role: Role }[];
 }
-export interface Account { id: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank?: boolean }
+export interface Account { id: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank?: boolean; currency?: string | null }
 export interface CostCentre { id: string; name: string; nameAr: string | null; kind: string }
 export interface Period { startDate: string; endDate: string; lockedAt: string | null }
 export interface CompanyBooks {
@@ -82,5 +82,6 @@ export interface CompanyBooks {
   /** The latest month the accounting firm signed off ("reviewed by your accountant"). */
   reviewedUpTo?: { periodEnd: string; signedBy: string; signedAt: string } | null;
 }
-export interface EntryLine { id: string; accountCode: string; accountName: string; accountNameAr: string | null; costCentre: string | null; costCentreAr: string | null; debit: string; credit: string }
+export interface EntryLine { id: string; accountCode: string; accountName: string; accountNameAr: string | null; costCentre: string | null; costCentreAr: string | null; debit: string; credit: string;
+  currency?: string | null; fxAmount?: string | null; fxRate?: string | null }
 export interface Entry { id: string; date: string; memo: string | null; createdBy: string | null; reversesEntryId: string | null; reversedById: string | null; lines: EntryLine[] }

@@ -9,11 +9,13 @@ import { useGo } from '../sales/common.tsx';
 import { ArabicHint, followArabic } from '../arabic.tsx';
 import { ExportBar } from '../print/Print.tsx';
 import { today } from '../router.ts';
+import { CURRENCIES } from '../../../src/books/fx.ts';
 
 type AccountType = 'asset' | 'liability' | 'equity' | 'income' | 'expense';
 const TYPES: AccountType[] = ['asset', 'liability', 'equity', 'income', 'expense'];
 const START: Record<AccountType, string> = { asset: '1', liability: '2', equity: '3', income: '4', expense: '5-9' };
-interface ChartRow { id: string; code: string; name: string; nameAr: string | null; type: AccountType; costCentreRequired: boolean; isBank: boolean; balance: string; postings: number; pnlGroup: string | null }
+interface ChartRow { id: string; code: string; name: string; nameAr: string | null; type: AccountType; costCentreRequired: boolean; isBank: boolean; balance: string; postings: number; pnlGroup: string | null;
+  currency: string | null; revalue: boolean; fxBalance: string }
 
 export function ChartOfAccounts({ books, onChanged }: { books: CompanyBooks; onChanged: () => void }) {
   const { t, has } = useI18n();
@@ -21,14 +23,16 @@ export function ChartOfAccounts({ books, onChanged }: { books: CompanyBooks; onC
   const go = useGo(books.company.id);
   const list = useApi<ChartRow[]>(`/api/companies/${books.company.id}/chart`);
   const ref = useRef<HTMLDivElement>(null);
-  const [edit, setEdit] = useState<{ id?: string; code: string; name: string; nameAr: string; type: AccountType; costCentreRequired: boolean; used: boolean; pnlGroup: string }>();
+  const [edit, setEdit] = useState<{ id?: string; code: string; name: string; nameAr: string; type: AccountType; costCentreRequired: boolean; used: boolean; pnlGroup: string;
+    currency: string; revalue: boolean; isBank: boolean }>();
   const [msg, setMsg] = useState<{ ok?: string; bad?: string }>({});
   const [busy, setBusy] = useState(false);
   const open = async (type: AccountType, r?: ChartRow) => {
     setMsg({});
-    if (r) { setEdit({ id: r.id, code: r.code, name: r.name, nameAr: r.nameAr ?? '', type: r.type, costCentreRequired: r.costCentreRequired, used: r.postings > 0, pnlGroup: r.pnlGroup ?? '' }); return; }
+    if (r) { setEdit({ id: r.id, code: r.code, name: r.name, nameAr: r.nameAr ?? '', type: r.type, costCentreRequired: r.costCentreRequired, used: r.postings > 0, pnlGroup: r.pnlGroup ?? '',
+      currency: r.currency ?? '', revalue: r.revalue, isBank: r.isBank }); return; }
     const { code } = await api<{ code: string }>(`/api/companies/${books.company.id}/chart/next-code?type=${type}`);
-    setEdit({ code, name: '', nameAr: '', type, costCentreRequired: false, used: false, pnlGroup: '' });
+    setEdit({ code, name: '', nameAr: '', type, costCentreRequired: false, used: false, pnlGroup: '', currency: '', revalue: true, isBank: false });
   };
   const codeOk = (e: NonNullable<typeof edit>) => /^[1-9]\d{3}$/.test(e.code) && (e.type === 'expense' ? '56789'.includes(e.code[0]!) : e.code[0] === START[e.type]);
   const taken = (e: NonNullable<typeof edit>) => (list.data ?? []).some((a) => a.code === e.code && a.id !== e.id);
@@ -36,7 +40,7 @@ export function ChartOfAccounts({ books, onChanged }: { books: CompanyBooks; onC
     if (!edit || !edit.name.trim() || !codeOk(edit) || taken(edit)) return;
     setBusy(true); setMsg({});
     try {
-      await api(edit.id ? `/api/accounts/${edit.id}` : `/api/companies/${books.company.id}/accounts`, { body: { ...edit, pnlGroup: edit.pnlGroup || null } });
+      await api(edit.id ? `/api/accounts/${edit.id}` : `/api/companies/${books.company.id}/accounts`, { body: { ...edit, pnlGroup: edit.pnlGroup || null, currency: edit.type === 'asset' || edit.type === 'liability' ? edit.currency || null : null } });
       setMsg({ ok: t('admin.saved') }); setEdit(undefined); list.reload(); onChanged();
     } catch (e) { setMsg({ bad: errorText(t, has, e) }); } finally { setBusy(false); }
   };
@@ -67,10 +71,22 @@ export function ChartOfAccounts({ books, onChanged }: { books: CompanyBooks; onC
                 </select>
               </label>
             )}
+            {(edit.type === 'asset' || edit.type === 'liability') && !edit.isBank && (
+              <label className="f">{t('fx.currency')}
+                <select id="coa-currency" value={edit.currency} disabled={edit.used} onChange={(e) => setEdit({ ...edit, currency: e.target.value })}>
+                  <option value="">{books.company.currency} ({t('fx.companyCurrency')})</option>
+                  {CURRENCIES.filter((c) => c.code !== books.company.currency).map((c) => <option key={c.code} value={c.code}>{c.code} · {local(c.en, c.ar)}</option>)}
+                </select>
+                <span className="small mut">{edit.used ? t('fx.currencyUsed') : t('fx.currencyHint')}</span>
+              </label>
+            )}
             <label className="actions small" style={{ alignSelf: 'end', paddingBottom: 10 }}>
               <input type="checkbox" checked={edit.costCentreRequired} onChange={(e) => setEdit({ ...edit, costCentreRequired: e.target.checked })} />{t('coa.ccRequired')}
             </label>
           </div>
+          {edit.currency && <label className="check-one small" style={{ marginBottom: 10 }}>
+            <input type="checkbox" id="coa-revalue" checked={edit.revalue} onChange={(e) => setEdit({ ...edit, revalue: e.target.checked })} />
+            <span>{t('fx.revalueAccount')}<span className="mut" style={{ display: 'block' }}>{t('fx.revalueHint')}</span></span></label>}
           <div className="actions">
             <button id="coa-save" className="b p" disabled={busy || !edit.name.trim() || !codeOk(edit) || taken(edit)} onClick={() => void save()}>{edit.id ? t('admin.saveDetails') : t('coa.add')}</button>
             <button className="b" onClick={() => setEdit(undefined)}>{t('cancel')}</button>
@@ -107,8 +123,10 @@ export function ChartOfAccounts({ books, onChanged }: { books: CompanyBooks; onC
                     <td><button className="link" onClick={() => go('Ledger', 'general-ledger', a.id)}>{local(a.name, a.nameAr)}</button>
                       {a.costCentreRequired && <span className="badge" style={{ marginInlineStart: 6 }}>{t('coa.ccBadge')}</span>}
                       {a.isBank && <span className="badge" style={{ marginInlineStart: 6 }}>{t('coa.bankBadge')}</span>}
+                      {a.currency && <span className="badge" style={{ marginInlineStart: 6 }}>{a.currency}</span>}
                       {a.pnlGroup && <div className="small mut">{t(`coa.pnl.${a.pnlGroup}` as Key)}</div>}</td>
-                    <td className="num ltr" data-label={t('led.balance')}>{toMinor(a.balance) === 0n ? '—' : fmt(a.balance)}</td>
+                    <td className="num ltr" data-label={t('led.balance')}>{toMinor(a.balance) === 0n ? '—' : fmt(a.balance)}
+                      {a.currency && toMinor(a.fxBalance) !== 0n && <div className="small mut">{a.currency} {fmt(a.fxBalance)}</div>}</td>
                     <td className="no-print">{books.canPost && <button className="link small" onClick={() => void open(type, a)}>{t('coa.editLink')}</button>}</td>
                   </tr>
                 ))}</tbody>

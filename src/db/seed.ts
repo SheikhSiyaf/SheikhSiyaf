@@ -19,6 +19,9 @@ import * as Inv from '../books/inventoryService.js';
 import * as Fa from '../books/assetsService.js';
 import * as Hr from '../books/hrmService.js';
 import * as Att from '../books/attendanceService.js';
+import * as FxS from '../books/fxService.js';
+import { saveAccount } from '../books/setupService.js';
+import { pegRates, rateText } from '../books/fx.js';
 import * as Crm from '../books/crmService.js';
 import * as Review from '../books/reviewService.js';
 import * as Cal from '../books/calendarService.js';
@@ -115,6 +118,26 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       await post(daysAgo(25), 'Salaries', [L('5200', '6000.00', undefined, 'Head office'), L('5200', '2500.00', undefined, 'Branch 1'), L('1000', undefined, '8500.00')]);
       const wrong = await post(daysAgo(12), 'Office water delivery', [L('5400', '180.00'), L('1000', undefined, '180.00')]);
       await reverseEntry(db, wrong, daysAgo(11), 'Reversal: posted twice');
+
+      // Foreign currency (Al Noor): shared rates from the central bank pegs (as the daily job stores them, with nobody signed in),
+      // a USD deposit and a EUR loan, the company's own EUR month-end rates, the month before last revalued, last month not yet.
+      const lastEnd = previousMonthEnd(daysAgo(0)), beforeEnd = previousMonthEnd(lastEnd);
+      await client.query("SELECT set_config('app.user_id', '', true)");
+      for (const day of [beforeEnd, lastEnd, daysAgo(0)]) {
+        await client.query('SELECT store_shared_rates($1)', [JSON.stringify(Object.entries(pegRates(c.currency)).map(([cur, r]) => ({ rate_date: day, currency: cur, base: c.currency, rate: rateText(r), source: 'central bank peg' })))]);
+      }
+      await asUser(poster);
+      if (c.key === 'alnoor') {
+        const usdAcct = await saveAccount(db, id, { code: '1020', name: 'USD deposit (Citibank)', nameAr: 'وديعة بالدولار (سيتي بنك)', type: 'asset', currency: 'USD' });
+        const eurAcct = await saveAccount(db, id, { code: '2010', name: 'Loan from Hamburg supplier (EUR)', nameAr: 'قرض من مورد هامبورغ (يورو)', type: 'liability', currency: 'EUR' });
+        await postEntry(db, { companyId: id, entryDate: daysAgo(100), memo: 'USD deposit opened (bank rate 3.7480)',
+          lines: [{ accountId: usdAcct, debit: '74960.00', fxAmount: '20000.00', fxRate: '3.748' }, { accountId: acct['1000'], credit: '74960.00' }] });
+        await postEntry(db, { companyId: id, entryDate: daysAgo(90), memo: 'Machine supplier loan received in EUR',
+          lines: [{ accountId: acct['1000'], debit: '40500.00' }, { accountId: eurAcct, credit: '40500.00', fxAmount: '10000.00', fxRate: '4.05' }] });
+        await FxS.saveRate(db, id, { currency: 'EUR', date: beforeEnd, rate: '4.02' });
+        await FxS.saveRate(db, id, { currency: 'EUR', date: lastEnd, rate: '4.11' });
+        if (beforeEnd >= daysAgo(90)) await FxS.post(db, id, beforeEnd);
+      }
 
       // Customers and suppliers (fictional).
       const sa = c.country === 'SA';

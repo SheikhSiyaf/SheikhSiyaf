@@ -31,7 +31,7 @@ portal, calendar, approvals and forecast) plus HRM, CRM and restaurant. Grouped 
 - **Recurring sales invoices** (rent, retainers, subscriptions), like recurring expenses.
 - **Customer statements and payment reminders**: a statement of account to send, and polite reminders when invoices
   are overdue.
-- **Multi-currency**: invoices, bills and bank accounts in USD, EUR and others, with exchange rates and gains or losses.
+- **Multi-currency documents**: ledger accounts in other currencies, daily rates and the month-end revaluation are done; invoices, bills, payments and bank accounts in other currencies are next.
 - **Debit notes** for customers (ZATCA supports them; the books do not yet).
 - **Purchase orders** before bills, and delivery notes for sales.
 - **Budgets**: budget against actual by account and cost centre (projects already have budgets).
@@ -46,7 +46,7 @@ portal, calendar, approvals and forecast) plus HRM, CRM and restaurant. Grouped 
 - **Restaurant POS import**: bring sales from the restaurant's own POS (which systems clients use is still open).
 - **Direct bank feeds** through a provider licensed by SAMA or the UAE Central Bank.
 - **Online payment of invoices** through the client portal (mada, Apple Pay, cards) via a payment provider.
-- **Inventory depth**: stock counts and adjustments, several warehouses, barcodes, price lists.
+- **Inventory depth**: stock counts and adjustments, several warehouses, price lists (barcodes and the warehouse counter are done).
 - **Approvals depth**: two levels above a higher amount; approvals for expenses and journal entries.
 - **CRM depth**: drag-and-drop pipeline; sending campaigns by email, SMS or WhatsApp.
 - **Fixed assets**: VAT on the sale of an asset; revaluation and impairment.

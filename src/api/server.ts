@@ -30,6 +30,8 @@ import { registerFxRoutes, registerYearEndRoutes } from './fx.js';
 import { registerEmailRoutes } from './email.js';
 import { registerToolRoutes } from './tools.js';
 import { registerBillingRoutes } from './billing.js';
+import { registerPaymentRoutes } from './payments.js';
+import { configurePayments } from '../books/onlinePayService.js';
 import { configureEInvoicing } from '../books/einvoiceService.js';
 import { reviewedUpTo } from '../books/reviewService.js';
 import { registerSetupRoutes } from './setup.js';
@@ -74,6 +76,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   };
   const ctx: Ctx = { pool, opts, as };
   configureEInvoicing({ encryptionKey: opts.encryptionKey || opts.sessionSecret });
+  configurePayments({ encryptionKey: opts.encryptionKey || opts.sessionSecret });
   registerPermissionCheck(app, ctx);
 
   async function companyRole(db: Db, companyId: string): Promise<string> {
@@ -270,6 +273,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerEmailRoutes(app, ctx);
   registerToolRoutes(app, ctx);
   registerBillingRoutes(app, ctx);
+  registerPaymentRoutes(app, ctx);
   registerSearchRoutes(app, ctx);
   registerSetupStatusRoutes(app, ctx);
   registerSetupRoutes(app, ctx);

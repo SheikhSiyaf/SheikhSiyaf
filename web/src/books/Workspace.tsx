@@ -43,6 +43,7 @@ import { AssetPage, AssetRegister, Depreciation } from '../assets/Assets.tsx';
 import { FoodSale, FoodSales, MenuList, RecipePage } from '../restaurant/Restaurant.tsx';
 import { WarehouseDesk } from '../inventory/Warehouse.tsx';
 import { EmailsSent } from '../sales/DocEmail.tsx';
+import { OnlinePayments } from '../sales/OnlinePayments.tsx';
 import { Budgets, RecurringInvoices, Reminders, Statements } from '../sales/Tools.tsx';
 import { Bell } from './Notifications.tsx';
 import { Counter } from '../inventory/Counter.tsx';
@@ -240,6 +241,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
       if (sub === 'overview') return <Overview books={books} side={side} />;
       if (sub === 'e-invoicing') return <EInvoicing books={books} />;
       if (sub === 'emails') return <EmailsSent books={books} />;
+      if (sub === 'online-payments') return <OnlinePayments books={books} />;
       if (sub === 'recurring-invoices') return <RecurringInvoices books={books} id={item} />;
       if (sub === 'reminders') return <Reminders books={books} />;
       if (sub === 'statements') return <Statements books={books} />;

@@ -327,3 +327,11 @@ Every change below is covered by a test in `test/`.
 | Change | Why |
 |---|---|
 | `counter_links` (goods note, the invoice or bill made with it, the payment taken at the counter; written once, never changed or deleted; goods out only with the same customer's invoice, goods in only with the same supplier's bill) | The warehouse counter joined to sales and purchases, while posted notes and issued documents stay unchanged. |
+
+## 0037_online_payments.sql
+| Change | Why |
+|---|---|
+| `payment_settings` (per company: on or off, provider sandbox or Moyasar, publishable key, secret key encrypted by the server, the bank or cash account the money lands in, who turned it on) | Customers pay invoices online. |
+| `online_payments` (each checkout from an invoice link: amount due then, provider reference, created, paid or failed, the payment recorded; never deleted) | One record per attempt, so a payment is recorded once and failures are visible. |
+| `online_pay_start()` (public, from a link), `online_pay_checkout()`, `online_pay_get()`, `online_pay_failed()` (server only), `online_pay_done()` (in the transaction that records the payment) | The customer is never signed in; the server checks with the provider before recording. |
+| `document_public()` also says whether the invoice can be paid online | The Pay online button on the invoice link. |

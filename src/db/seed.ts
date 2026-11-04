@@ -474,6 +474,11 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
     for (const b of (await client.query(`SELECT id, period_start FROM billing_invoices WHERE firm_id = $1 OR period_start < date_trunc('month', current_date)`, [firmId])).rows) {
       await client.query(`SELECT billing_mark_paid($1, $2::date + 5, 'Bank transfer')`, [b.id, b.period_start]);
     }
+    // Online payments in sandbox mode, so Pay online on an invoice link can be tried; recorded as a person who posts.
+    await client.query(`INSERT INTO payment_settings (company_id, enabled, provider, deposit_account_id, enabled_by)
+      SELECT c.id, true, 'sandbox', (SELECT a.id FROM accounts a WHERE a.company_id = c.id AND a.is_bank ORDER BY a.code LIMIT 1),
+             (SELECT m.user_id FROM memberships m WHERE m.company_id = c.id AND m.role IN ('partner', 'staff_accountant', 'client_accountant') ORDER BY m.role LIMIT 1)
+      FROM companies c WHERE EXISTS (SELECT 1 FROM accounts a WHERE a.company_id = c.id AND a.is_bank)`);
     await client.query('COMMIT');
     return 'seeded';
   } catch (err) {

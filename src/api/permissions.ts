@@ -102,6 +102,7 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/companies/${UUID}/fx(/.*)?$`), c(['Ledger'])],
   ['*', new RegExp(`^/api/companies/${UUID}/year-end(/.*)?$`), c(['Journal'])],
   ['GET', new RegExp(`^/api/companies/${UUID}/emails$`), c(['Sales'])],
+  ['*', new RegExp(`^/api/companies/${UUID}/online-payments$`), c(['Sales'])],
   ['*', new RegExp(`^/api/companies/${UUID}/(recurring-invoices|statement|reminders)(/.*)?$`), c(['Sales'])],
   ['*', new RegExp(`^/api/recurring-invoices/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'recurring_invoices', m[1]!, ['Sales'])],
   ['*', new RegExp(`^/api/companies/${UUID}/budgets$`), c(['Ledger', 'Reports'])],

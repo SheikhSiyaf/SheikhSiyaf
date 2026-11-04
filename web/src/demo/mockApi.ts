@@ -2700,12 +2700,36 @@ function emailDocM(id: string, b: Body) {
     lastError: 'No email provider is set up yet (EMAIL_PROVIDER).', documentId: d.id, attachments: 0, createdBy: userName(session), createdAt: new Date().toISOString(), sentAt: null });
   return { id: id2, to };
 }
+const payDb = { settings: {} as Record<string, { enabled: boolean; provider: 'sandbox'; depositAccountId: string | null; enabledBy: string | null }>,
+  payments: [] as { id: string; ref: string; companyId: string; documentId: string; token: string; amount: string; currency: string; status: 'created' | 'paid' | 'failed';
+    outcome: null | 'paid' | 'failed'; paymentId: string | null; createdAt: string; paidAt: string | null }[] };
+/** Records a sandbox payment once, as the person who turned online payments on. */
+function confirmPayM(x: (typeof payDb.payments)[number]) {
+  if (x.status !== 'created' || !x.outcome) return;
+  if (x.outcome === 'failed') { x.status = 'failed'; return; }
+  const st = payDb.settings[x.companyId]!; const d = sdb.docs.find((y) => y.id === x.documentId)!;
+  const was = session; session = st.enabledBy;
+  try {
+    const due = amountDue(d); const amt = toMinor(x.amount); const settle = due < amt ? due : amt;
+    x.paymentId = String(payM(x.companyId, { direction: 'received', contactId: d.contactId, date: today(), amount: x.amount, accountId: st.depositAccountId, method: 'card',
+      reference: `Online ${x.ref}`, allocations: settle > 0n ? [{ documentId: d.id, amount: s(settle) }] : [] }));
+    x.status = 'paid'; x.paidAt = new Date().toISOString();
+  } finally { session = was; }
+}
+function seedOnlinePay() {
+  for (const co of db.companies) {
+    const bank = db.accounts.find((a) => a.companyId === co.id && a.isBank);
+    const who = db.memberships.find((m) => m.companyId === co.id && ['partner', 'staff_accountant', 'client_accountant'].includes(m.role));
+    if (bank && who) payDb.settings[co.id] = { enabled: true, provider: 'sandbox', depositAccountId: bank.id, enabledBy: who.userId };
+  }
+}
 function publicDocM(token: string) {
   const l = mailDb.links.find((x) => x.token === token && !x.revokedAt) ?? fail(404, 'This link has expired or was withdrawn.', 'err.linkInvalid');
   l.lastSeenAt = new Date().toISOString();
   const d = sdb.docs.find((x) => x.id === l.documentId)!; const c = sdb.contacts.find((x) => x.id === d.contactId)!; const co = company(d.companyId); const t = docTotals(d);
   return { id: d.id, type: d.type, status: d.status, issuedAt: d.createdAt, number: d.number, issueDate: d.issueDate, dueDate: d.dueDate, reference: d.reference, notes: d.notes,
     netTotal: s(t.net), vatTotal: s(t.vat), grossTotal: s(t.gross), amountDue: s(amountDue(d)), qr: null, seller: sellerOf(co),
+    payOnline: ['invoice', 'debit_note'].includes(d.type) && d.status === 'issued' && amountDue(d) > 0n && Boolean(payDb.settings[d.companyId]?.enabled),
     buyer: { name: c.name, nameAr: c.nameAr, vatNumber: c.vatNumber, address: c.address, city: c.city },
     lines: d.lines.map((x) => ({ description: x.description, quantity: x.quantity, unitPrice: x.unitPrice, vatRate: x.vatRate, netAmount: s(x.net), vatAmount: s(x.vat) })) };
 }
@@ -2718,6 +2742,37 @@ routes.push(
   ['GET', /^\/api\/companies\/([\w-]+)\/emails$/, (m) => { const id = inCo(m[1]!); return { provider: 'none', emails: mailDb.emails.filter((e) => e.companyId === id) }; }],
   ['POST', /^\/api\/emails\/([\w-]+)\/retry$/, () => ({ ok: true })],
   ['GET', /^\/api\/public\/documents\/([\w-]+)$/, (m) => publicDocM(m[1]!)],
+  // online payments (same rules as src/books/onlinePayService.ts; the demo has the sandbox provider only)
+  ['GET', /^\/api\/companies\/([\w-]+)\/online-payments$/, (m) => { const id = inCo(m[1]!); const st = payDb.settings[id];
+    return { settings: st ? { enabled: st.enabled, provider: st.provider, publishableKey: null, hasSecret: false, depositAccountId: st.depositAccountId, enabledBy: db.users.find((u) => u.id === st.enabledBy)?.name ?? null }
+      : { enabled: false, provider: 'sandbox', publishableKey: null, hasSecret: false, depositAccountId: null, enabledBy: null },
+      payments: payDb.payments.filter((x) => x.companyId === id).slice().reverse().map((x) => { const d = sdb.docs.find((y) => y.id === x.documentId)!;
+        return { ...x, number: d.number, customer: sdb.contacts.find((c) => c.id === d.contactId)!.name, provider: 'sandbox', providerRef: x.ref, lastError: null,
+          paymentNumber: sdb.payments.find((p) => p.id === x.paymentId)?.number ?? null }; }) }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/online-payments$/, (m, b) => { const id = inCo(m[1]!); canPostIn(id);
+    if (b?.provider !== 'sandbox') fail(400, 'The demo tries online payments with the sandbox only.', 'err.payProvider');
+    const dep = b?.depositAccountId ? String(b.depositAccountId) : null;
+    if (dep && !db.accounts.some((a) => a.id === dep && a.companyId === id && a.isBank)) fail(400, 'Choose one of this company\'s bank or cash accounts.', 'err.payAccount');
+    if (b?.enabled && !dep) fail(400, 'Choose the account the money lands in before turning online payments on.', 'err.paySetup');
+    const prev = payDb.settings[id];
+    payDb.settings[id] = { enabled: Boolean(b?.enabled), provider: 'sandbox', depositAccountId: dep, enabledBy: b?.enabled ? (prev?.enabled ? prev.enabledBy : session) : null };
+    return { ok: true }; }],
+  ['POST', /^\/api\/public\/documents\/([\w-]+)\/pay$/, (m) => {
+    const l = mailDb.links.find((x) => x.token === m[1] && !x.revokedAt) ?? fail(404, 'This link has expired or was withdrawn.', 'err.linkInvalid');
+    const d = sdb.docs.find((x) => x.id === l.documentId)!;
+    if (!['invoice', 'debit_note'].includes(d.type) || d.status !== 'issued' || !payDb.settings[d.companyId]?.enabled) fail(400, 'This invoice cannot be paid online.', 'err.payNotOnline');
+    if (amountDue(d) <= 0n) fail(400, 'Nothing is left to pay on this invoice.', 'err.payNothingDue');
+    const x = { id: uid(), ref: `sbx_${uid().slice(0, 12)}`, companyId: d.companyId, documentId: d.id, token: l.token, amount: s(amountDue(d)), currency: company(d.companyId).currency,
+      status: 'created' as 'created' | 'paid' | 'failed', outcome: null as null | 'paid' | 'failed', paymentId: null as string | null, createdAt: new Date().toISOString(), paidAt: null as string | null };
+    payDb.payments.push(x);
+    return { url: `/pay/sandbox/${x.ref}` }; }],
+  ['GET', /^\/api\/public\/payments\/sandbox\/([\w-]+)$/, (m) => { const x = payDb.payments.find((y) => y.ref === m[1]) ?? fail(404, 'This checkout has ended.', 'err.payCheckoutGone');
+    return { amount: x.amount, currency: x.currency, outcome: x.outcome, returnUrl: `/i/${x.token}?paid=${x.id}` }; }],
+  ['POST', /^\/api\/public\/payments\/sandbox\/([\w-]+)$/, (m, b) => { const x = payDb.payments.find((y) => y.ref === m[1] && !y.outcome) ?? fail(404, 'This checkout has ended.', 'err.payCheckoutGone');
+    x.outcome = b?.outcome === 'paid' ? 'paid' : 'failed';
+    confirmPayM(x);
+    return { returnUrl: `/i/${x.token}?paid=${x.id}` }; }],
+  ['GET', /^\/api\/public\/payments\/([\w-]+)$/, (m) => { const x = payDb.payments.find((y) => y.id === m[1]); if (!x) return { status: 'unknown' }; confirmPayM(x); return { status: x.status }; }],
   ['POST', /^\/api\/password-reset$/, () => ({ ok: true })],
 );
 
@@ -4399,6 +4454,7 @@ function seedBilling() {
 // Sample data is created once everything above is defined.
 seed();
 seedBilling();
+seedOnlinePay();
 seedEinvoicing();
 seedApprovals();
 db.activity.push({ id: uid(), firmId: firms.find((f) => f.name === DEMO_FIRM)!.id, at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });

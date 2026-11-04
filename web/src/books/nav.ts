@@ -11,7 +11,7 @@ export const NAV: Module[] = [
   { key: 'Portal', subs: [s('overview'), s('requests'), s('documents'), s('monthly-reports')] },
   { key: 'Calendar', subs: [s('upcoming'), s('calendar-settings')] },
   { key: 'Approvals', subs: [s('waiting'), s('approval-history'), s('approval-rules')] },
-  { key: 'Sales', subs: [s('overview'), s('customers'), s('quotations'), s('invoices'), s('recurring-invoices'), s('credit-notes'), s('debit-notes'), s('payments-received'), s('statements'), s('reminders'), s('e-invoicing'), s('emails')] },
+  { key: 'Sales', subs: [s('overview'), s('customers'), s('quotations'), s('invoices'), s('recurring-invoices'), s('credit-notes'), s('debit-notes'), s('payments-received'), s('online-payments'), s('statements'), s('reminders'), s('e-invoicing'), s('emails')] },
   { key: 'Purchases', subs: [s('overview'), s('suppliers'), s('purchase-orders'), s('bills'), s('supplier-credits'), s('payments-made')] },
   { key: 'Expenses', subs: [s('overview'), s('expenses'), s('recurring'), s('categories'), s('claims'), s('approvals')] },
   { key: 'Bank', subs: [s('accounts'), s('import'), s('reconcile'), s('rules')] },

@@ -68,7 +68,9 @@ export interface Me {
 }
 export interface Account { id: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank?: boolean; currency?: string | null }
 export interface CostCentre { id: string; name: string; nameAr: string | null; kind: string }
-export interface Period { startDate: string; endDate: string; lockedAt: string | null }
+export interface Period { startDate: string; endDate: string; lockedAt: string | null;
+  /** A standing sign-off on this month: it stays locked until the sign-off is withdrawn (db/migrations/0039). */
+  signedOff?: { by: string; at: string; month: string } | null }
 export interface CompanyBooks {
   company: { id: string; name: string; nameAr: string | null; city?: string; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; vatStatus: string; invoicePrefix?: string; paymentTermsDays?: number; industry?: string; modules?: string[]; vatNumber?: string | null };
   role: Role; canPost: boolean; canLock: boolean;

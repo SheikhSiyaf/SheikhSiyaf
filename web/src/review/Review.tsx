@@ -357,6 +357,7 @@ function SignOff({ books, pe, setPe, picker }: { books: CompanyBooks; pe: string
           {confirm ? <ConfirmBar busy={busy} message={t('rv.signConfirm', { month: monthName(pe) })} onNo={() => setConfirm(false)}
             onYes={() => void run(async () => { await api(`/api/companies/${books.company.id}/review/sign-off`, { body: { month: pe, note } }); setConfirm(false); setNote(''); reload(); }, t('rv.signedDone'))} />
             : <button className="b p" id="so-sign" disabled={!ready || pe >= today()} onClick={() => setConfirm(true)}>{t('rv.signButton')}</button>}
+          <div className="small mut" id="so-locks" style={{ marginTop: 6 }}>{t('rv.signLocks')}</div>
         </div>
       )}
       <div className="card">

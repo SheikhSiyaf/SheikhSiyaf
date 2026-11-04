@@ -109,8 +109,15 @@ function newInvite(u: User) {
   return { userId: u.id, name: u.name, email: u.email, token: u.inviteToken };
 }
 function isLocked(companyId: string, date: string) {
-  return db.periods.some((p) => p.companyId === companyId && p.lockedAt && date >= p.startDate && date <= p.endDate);
+  return db.periods.some((p) => p.companyId === companyId && p.lockedAt && date >= p.startDate && date <= p.endDate)
+    || signoffOver(companyId, date, date) !== null;   // a signed-off month is locked (db/migrations/0039)
 }
+/** The standing sign-off of a month overlapping these dates, if any. */
+function signoffOver(companyId: string, from: string, to: string) {
+  return rvdb.signoffs.find((x) => x.companyId === companyId && !x.withdrawnAt && `${x.periodEnd.slice(0, 7)}-01` <= to && x.periodEnd >= from) ?? null;
+}
+const periodRow = (p: Period) => { const so = signoffOver(p.companyId, p.startDate, p.endDate);
+  return { ...p, signedOff: so ? { by: db.users.find((u) => u.id === so.signedBy)?.name ?? '', at: so.signedAt, month: so.periodEnd } : null }; };
 
 function post(userId: string, companyId: string, date: string, memo: string | null, lines: Omit<Line, 'id'>[], reverses: string | null = null, sourceType?: string): string {
   const role = roleOf(userId, companyId);
@@ -1581,7 +1588,7 @@ const routes: [string, RegExp, Handler][] = [
       portal: { firm: ptFirm(c.id), calendarEdit: calEdit(c.id), tenantKind: firmOf(c.firmId).kind },
       accounts: db.accounts.filter((a) => a.companyId === c.id).sort((a, b) => a.code.localeCompare(b.code)),
       costCentres: db.costCentres.filter((x) => x.companyId === c.id).sort((a, b) => a.name.localeCompare(b.name)),
-      periods: db.periods.filter((p) => p.companyId === c.id),
+      periods: db.periods.filter((p) => p.companyId === c.id).map(periodRow),
     };
   }],
   ['GET', /^\/api\/companies\/([\w-]+)\/summary$/, (m) => {
@@ -1637,6 +1644,7 @@ const routes: [string, RegExp, Handler][] = [
     const p = db.periods.find((x) => x.companyId === m[1] && x.startDate === m[2]);
     if (!p) fail(404, 'Not found.', 'err.notFound');
     if (!b?.locked && yeDb.years.some((y) => y.companyId === m[1] && y.status === 'closed' && p!.startDate >= y.startDate && p!.startDate <= y.endDate)) fail(400, 'This month is in a closed year.', 'err.yearClosedMonth');
+    if (!b?.locked && signoffOver(p!.companyId, p!.startDate, p!.endDate)) fail(400, 'This month is signed off. Withdraw the sign-off (with a reason) to reopen it.', 'err.signedOffLocked');
     p!.lockedAt = b?.locked ? new Date().toISOString() : null;
     return { ok: true };
   }],
@@ -3503,6 +3511,10 @@ function signOffM(companyId: string, pe: string, note: unknown) {
   if (pe >= today()) fail(400, 'A month is signed off after it has ended.', 'err.signoffEarly');
   if (activeSignoff(companyId, pe)) fail(400, 'A sign-off is never changed.', 'err.signoffFixed');
   const id = uid(); rvdb.signoffs.push({ id, companyId, periodEnd: pe, note: cstr(note), signedBy: session!, signedAt: new Date().toISOString(), withdrawnBy: null, withdrawnAt: null, withdrawReason: null });
+  // Signing off locks the month (db/migrations/0039), creating its period when there is none.
+  const ms = `${pe.slice(0, 7)}-01`; const over = db.periods.filter((p) => p.companyId === companyId && p.startDate <= pe && p.endDate >= ms);
+  for (const p of over) p.lockedAt ??= new Date().toISOString();
+  if (!over.length) db.periods.push({ companyId, startDate: ms, endDate: pe, lockedAt: new Date().toISOString() });
   return id;
 }
 const reviewedUpToM = (companyId: string) => { const so = rvdb.signoffs.filter((x) => x.companyId === companyId && !x.withdrawnAt).sort((a, b) => b.periodEnd.localeCompare(a.periodEnd))[0];
@@ -3544,6 +3556,12 @@ routes.push(
     if (!rvSign(so.companyId)) fail(400, 'Only a partner or reviewer withdraws a sign-off.', 'err.signoffRole');
     so.withdrawReason = cstr(b?.reason) ?? fail(400, 'Say why the sign-off is withdrawn.', 'err.withdrawReason');
     so.withdrawnBy = session; so.withdrawnAt = new Date().toISOString();
+    // Withdrawing reopens the month, unless year-end closing or another sign-off keeps it locked.
+    const ms = `${so.periodEnd.slice(0, 7)}-01`;
+    for (const p of db.periods.filter((x) => x.companyId === so.companyId && x.lockedAt && x.startDate <= so.periodEnd && x.endDate >= ms)) {
+      const closed = yeDb.years.some((y) => y.companyId === p.companyId && y.status === 'closed' && p.startDate <= y.endDate && p.endDate >= y.startDate);
+      if (!closed && !signoffOver(p.companyId, p.startDate, p.endDate)) p.lockedAt = null;
+    }
     return { ok: true };
   }],
 );

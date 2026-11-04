@@ -341,3 +341,13 @@ Every change below is covered by a test in `test/`.
 |---|---|
 | `bank_feeds` (bank account, provider sandbox / Lean / Tarabut, active, expired, disconnected or error, the bank's account id, consent end date, last sync and the day synced to, who connected it; one live feed per account; never deleted; a disconnected feed stays disconnected) and `bank_imports.feed_id` | Bank transactions come in without statement files, through the same import. |
 | `bank_feeds_due()`, `bank_feed_note()` (the sync job, nobody signed in; each sync runs as the person who connected the feed) | Syncing every six hours. |
+
+## 0039_signoff_locks_month.sql
+| Change | Why |
+|---|---|
+| Signing off a month (insert into `review_signoffs`) locks every period overlapping the month, or creates the month's period locked; done by `lock_signed_off_month()` from an AFTER trigger, so a reviewer who cannot lock periods can still sign off | A signed-off month must not change. Before, it stayed open unless the partner also locked it. |
+| `periods_signed_off` trigger: a period overlapping a month with a standing sign-off cannot be unlocked, by anyone (partner and owner role included) | The only way to reopen a reviewed month is to withdraw the sign-off with a reason, which is recorded. |
+| Withdrawing a sign-off unlocks the month's periods, except those in a year closed by year-end closing and those another standing sign-off still covers | Withdrawing is how a reviewed month is corrected; year-end closing keeps its own lock. |
+| `entries_signed_off` trigger: an entry (posting, reversal, imported entry) dated in a month with a standing sign-off is refused with "This period is locked. Choose a date in an open period." | Also covers days no period row covers. Same message, so the API maps it to `err.periodLocked`. |
+| `signed_off_on()`, `period_signed_off()` | Used by the triggers and the period list (why a month cannot be unlocked). |
+| Every month that already has a standing sign-off is locked by the migration | Old sign-offs follow the new rule. Entries posted after an old sign-off keep their "changed after sign-off" flag. |

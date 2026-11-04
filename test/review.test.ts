@@ -90,15 +90,26 @@ describe('Checklist and sign-off', () => {
     expect(await as(f.a.clientAccountant, (db) => R.reviewedUpTo(db, f.a.id))).toMatchObject({ periodEnd: PE, signedBy: 'Reviewer' });
     await expect(as(f.staff, (db) => R.tick(db, f.a.id, PE, 'vat_reviewed', false))).rejects.toThrow(/signed off/);
     await expect(as(f.reviewer, (db) => R.signOff(db, f.a.id, PE))).rejects.toThrow();
-    await as(f.staff, (db) => postEntry(db, { companyId: f.a.id, entryDate: '2026-03-30', memo: 'Late adjustment', lines: [{ accountId: f.a.rent, debit: '10.00' }, { accountId: f.a.cash, credit: '10.00' }] }));
+    // Signing off locks the month (db/migrations/0039): a late adjustment is refused until the sign-off is withdrawn.
+    const late = () => as(f.staff, (db) => postEntry(db, { companyId: f.a.id, entryDate: '2026-03-30', memo: 'Late adjustment', lines: [{ accountId: f.a.rent, debit: '10.00' }, { accountId: f.a.cash, credit: '10.00' }] }));
+    await expect(late()).rejects.toThrow(/This period is locked/);
+    // Sign-offs made before 0039 can have entries posted after them; those are still flagged. Simulate one by dating
+    // this sign-off just before the March bonus entry (triggers are bypassed for this fixture step only).
+    const c = await owner.connect();
+    try {
+      await c.query('BEGIN'); await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE review_signoffs SET signed_at = (SELECT created_at - interval '1 millisecond' FROM journal_entries WHERE company_id = $1 AND memo = 'Accrued bonus estimate') WHERE id = $2`, [f.a.id, id]);
+      await c.query('COMMIT');
+    } finally { c.release(); }
     const [m] = await as(f.reviewer, (db) => R.months(db, f.a.id, PE));
     expect(m).toMatchObject({ periodEnd: PE, signoff: { signedBy: 'Reviewer', changedAfter: 1 }, openQueries: 0, queries: 1 });
     await expect(as(f.staff, (db) => R.withdraw(db, id, 'x'))).rejects.toThrow();
     await expect(as(f.reviewer, (db) => R.withdraw(db, id, ''))).rejects.toThrow(/why/);
-    await as(f.reviewer, (db) => R.withdraw(db, id, 'Late adjustment posted; review again'));
+    await as(f.reviewer, (db) => R.withdraw(db, id, 'Late adjustment to post; review again'));
     expect(await as(f.a.clientAccountant, (db) => R.reviewedUpTo(db, f.a.id))).toBeNull();
     const [after] = await as(f.reviewer, (db) => R.months(db, f.a.id, PE));
-    expect(after).toMatchObject({ signoff: null, lastWithdrawn: { reason: 'Late adjustment posted; review again', by: 'Reviewer' } });
+    expect(after).toMatchObject({ signoff: null, lastWithdrawn: { reason: 'Late adjustment to post; review again', by: 'Reviewer' } });
+    await late();   // withdrawing reopened the month
     await expect(owner.query('DELETE FROM review_signoffs WHERE id = $1', [id])).rejects.toThrow(/never deleted/);
   });
 });

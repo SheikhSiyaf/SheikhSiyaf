@@ -280,10 +280,12 @@ function Periods({ books, onChanged }: { books: CompanyBooks; onChanged: () => v
               {books.periods.map((p) => (
                 <tr key={p.startDate}>
                   <td>{monthName(p.startDate)} <span className="mut small ltr">({p.startDate} – {p.endDate})</span></td>
-                  <td>{p.lockedAt ? <span className="badge warn">{t('journal.locked')}</span> : <span className="badge good">{t('journal.open')}</span>}</td>
+                  <td>{p.lockedAt ? <span className="badge warn">{t('journal.locked')}</span> : <span className="badge good">{t('journal.open')}</span>}
+                    {p.lockedAt && p.signedOff && <div className="small mut">{t('journal.signedOffWhy', { name: p.signedOff.by, date: p.signedOff.at.slice(0, 10) })}</div>}</td>
                   <td className="num">
                     {books.canLock && (
-                      <button className="b" disabled={busy} onClick={() => void toggle(p.startDate, !p.lockedAt)}>
+                      <button className="b" disabled={busy || Boolean(p.lockedAt && p.signedOff)} title={p.lockedAt && p.signedOff ? t('journal.signedOffWhy', { name: p.signedOff.by, date: p.signedOff.at.slice(0, 10) }) : undefined}
+                        onClick={() => void toggle(p.startDate, !p.lockedAt)}>
                         {p.lockedAt ? t('journal.unlock') : t('journal.lock')}
                       </button>
                     )}

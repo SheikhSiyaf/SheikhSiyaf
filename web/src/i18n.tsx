@@ -2065,7 +2065,7 @@ const en = {
   'rv.itemHint.payables_reviewed': 'Supplier balances agree with statements where available.',
   'rv.itemHint.accruals': 'Costs and income of the month are in the right month.',
   'rv.itemHint.queries_closed': 'Every query about this month is closed.',
-  'rv.signHintSigner': 'Sign off a month when its checklist is done and its queries are closed. The client then sees "Reviewed by your accountant". Changes after sign-off are flagged.',
+  'rv.signHintSigner': 'Sign off a month when its checklist is done and its queries are closed. The client then sees "Reviewed by your accountant". Signing off also locks the month.',
   'rv.signHintOther': 'A partner or reviewer signs off each month when the review is complete.',
   'rv.signTitle': 'Sign off {month}',
   'rv.readyChecklist': 'Checklist: {done} of {total} done',
@@ -3494,6 +3494,9 @@ const en = {
   'err.feedExists': 'This bank account is already connected.',
   'err.feedDisconnected': 'This bank feed is disconnected. Connect the bank again.',
   'err.feedNone': 'This bank account is not connected.',
+  'rv.signLocks': 'Signing off also locks the month: nothing more can be posted into it, by anyone, until the sign-off is withdrawn with a reason.',
+  'journal.signedOffWhy': 'Signed off by {name} on {date}. To unlock it, withdraw the sign-off in Review.',
+  'err.signedOffLocked': 'This month is signed off. Withdraw the sign-off (with a reason) in Review to reopen it.',
 };
 
 export type Key = keyof typeof en;
@@ -5562,7 +5565,7 @@ const ar: Record<Key, string> = {
   'rv.itemHint.payables_reviewed': 'أرصدة الموردين تطابق كشوفهم عند توفرها.',
   'rv.itemHint.accruals': 'تكاليف وإيرادات الشهر في شهرها الصحيح.',
   'rv.itemHint.queries_closed': 'جميع استفسارات هذا الشهر مغلقة.',
-  'rv.signHintSigner': 'اعتمد الشهر عند اكتمال قائمته وإغلاق استفساراته. يرى العميل حينها "تمت مراجعته من محاسبك". تُنبَّه التغييرات بعد الاعتماد.',
+  'rv.signHintSigner': 'اعتمد الشهر عند اكتمال قائمته وإغلاق استفساراته. يرى العميل حينها "تمت مراجعته من محاسبك". الاعتماد يقفل الشهر أيضاً.',
   'rv.signHintOther': 'يعتمد الشريك أو المراجع كل شهر عند اكتمال المراجعة.',
   'rv.signTitle': 'اعتماد {month}',
   'rv.readyChecklist': 'القائمة: {done} من {total} منجزة',
@@ -6991,6 +6994,9 @@ const ar: Record<Key, string> = {
   'err.feedExists': 'هذا الحساب مربوط بالفعل.',
   'err.feedDisconnected': 'أُلغي هذا الربط. اربط البنك مجدداً.',
   'err.feedNone': 'هذا الحساب غير مربوط.',
+  'rv.signLocks': 'الاعتماد يقفل الشهر أيضاً: لا يمكن لأحد الترحيل فيه حتى يُسحب الاعتماد مع ذكر السبب.',
+  'journal.signedOffWhy': 'اعتمده {name} في {date}. لفتحه اسحب الاعتماد من المراجعة.',
+  'err.signedOffLocked': 'هذا الشهر معتمد. اسحب الاعتماد (مع ذكر السبب) من المراجعة لفتحه.',
 };
 
 export type Lang = 'en' | 'ar';

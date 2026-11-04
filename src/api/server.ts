@@ -104,8 +104,12 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     const costCentres = await db.query(
       `SELECT id, name, name_ar AS "nameAr", kind FROM cost_centres WHERE company_id = $1 ORDER BY name`, [id]);
     const periods = await db.query(
-      `SELECT start_date::text AS "startDate", end_date::text AS "endDate", locked_at AS "lockedAt"
-       FROM periods WHERE company_id = $1 ORDER BY start_date`, [id]);
+      `SELECT p.start_date::text AS "startDate", p.end_date::text AS "endDate", p.locked_at AS "lockedAt",
+              (SELECT jsonb_build_object('by', person_name(s.signed_by), 'at', s.signed_at, 'month', s.period_end) FROM review_signoffs s
+               WHERE s.company_id = p.company_id AND s.withdrawn_at IS NULL
+                 AND daterange(date_trunc('month', s.period_end)::date, s.period_end, '[]') && daterange(p.start_date, p.end_date, '[]')
+               ORDER BY s.period_end LIMIT 1) AS "signedOff"
+       FROM periods p WHERE p.company_id = $1 ORDER BY p.start_date`, [id]);
     const access = (await db.query('SELECT permissions, can_approve AS "canApprove", name, name_ar AS "nameAr", can_review AS "canReview", can_sign_off AS "canSignOff", pos_mode AS "posMode" FROM app_client_role($1)', [id])).rows[0] ?? null;
     return {
       company: rows[0], role, access, reviewedUpTo: await reviewedUpTo(db, id),

@@ -7,6 +7,7 @@ export class HttpError extends Error {
 
 const RAISED: [RegExp, string][] = [
   [/period is locked/, 'err.periodLocked'],
+  [/This month is signed off. Withdraw the sign-off/, 'err.signedOffLocked'],
   [/does not balance/, 'err.notBalanced'],
   [/at least two lines/, 'err.twoLines'],
   [/cost centre is required/, 'err.costCentreRequired'],

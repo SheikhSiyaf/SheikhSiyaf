@@ -48,7 +48,7 @@ export async function costCentreLedger(db: Db, companyId: string, costCentreId: 
   const { rows } = await db.query<Row & { accountType: string }>(
     `SELECT ${LINE_COLS}, a.type AS "accountType" FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id JOIN accounts a ON a.id = l.account_id
      LEFT JOIN cost_centres cc ON cc.id = l.cost_centre_id
-     WHERE l.cost_centre_id = $1 AND e.entry_date BETWEEN $2 AND $3 ORDER BY e.entry_date, e.created_at, a.code`, [costCentreId, from, to]);
+     WHERE l.cost_centre_id = $1 AND e.entry_date BETWEEN $2 AND $3 AND e.source_type IS DISTINCT FROM 'year_end_close' ORDER BY e.entry_date, e.created_at, a.code`, [costCentreId, from, to]);
   let income = 0n, expense = 0n;
   for (const r of rows) {
     if (r.accountType === 'income') income += toMinor(r.credit) - toMinor(r.debit);
@@ -110,7 +110,7 @@ export async function listProjects(db: Db, companyId: string, from?: string, to?
      LEFT JOIN journal_lines l ON l.cost_centre_id = cc.id
      LEFT JOIN journal_entries e ON e.id = l.entry_id
      LEFT JOIN accounts a ON a.id = l.account_id
-     WHERE cc.company_id = $1 AND cc.kind = 'project' AND (l.id IS NULL OR (e.entry_date >= coalesce($2::date, '-infinity') AND e.entry_date <= coalesce($3::date, 'infinity')))
+     WHERE cc.company_id = $1 AND cc.kind = 'project' AND (l.id IS NULL OR (e.entry_date >= coalesce($2::date, '-infinity') AND e.entry_date <= coalesce($3::date, 'infinity') AND e.source_type IS DISTINCT FROM 'year_end_close'))
      GROUP BY cc.id, c.name, c.name_ar ORDER BY cc.status, cc.name`, [companyId, from ?? null, to ?? null]);
   return rows.map((r) => ({ ...r, profit: fromMinor(toMinor(r.income) - toMinor(r.expense)),
     budgetUsed: r.budget && toMinor(r.budget) > 0n ? Number((toMinor(r.expense) * 1000n) / toMinor(r.budget)) / 10 : null }));

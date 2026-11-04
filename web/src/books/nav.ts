@@ -21,7 +21,7 @@ export const NAV: Module[] = [
   { key: 'Projects', subs: [s('projects'), s('project-report')] },
   { key: 'HRM', subs: [s('overview'), s('employees'), s('attendance'), s('leave'), s('payroll'), s('loans'), s('end-of-service'), s('hr-documents')] },
   { key: 'CRM', subs: [s('pipeline'), s('leads'), s('activities'), s('campaigns')] },
-  { key: 'Journal', subs: [s('entries'), s('new'), s('periods')] },
+  { key: 'Journal', subs: [s('entries'), s('new'), s('periods'), s('year-end')] },
   { key: 'Ledger', subs: [s('chart-of-accounts'), s('cost-centres-setup'), s('general-ledger'), s('cost-centre-ledger'), s('customer-ledger'), s('supplier-ledger'), s('employee-ledger'), s('currencies'), s('fx-revaluation'), s('import-data')] },
   { key: 'Reports', subs: [s('owner-summary'), s('profit-and-loss'), s('balance-sheet'), s('cash-flow'), s('cash-forecast'), s('trial-balance'), s('cost-centres'), s('expenses-by-category'),
     s('expenses-by-payee'), s('aged-receivables'), s('aged-payables'), s('vat-summary'), s('vat-return')] },

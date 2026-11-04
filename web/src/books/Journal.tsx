@@ -6,6 +6,7 @@ import { fmt, isAmount, normalise, toMinor, fromMinor } from '../money.ts';
 import { today } from '../router.ts';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
 import { isLocked, lockedUpTo } from './Workspace.tsx';
+import { YearEnd } from './YearEnd.tsx';
 import { parseRate, rateText, toBase } from '../../../src/books/fx.ts';
 
 /** On an account kept in another currency, debit and credit hold the foreign amount, and `rate` turns it into the company's currency. */
@@ -24,6 +25,7 @@ export function Journal({ books, sub, reloadBooks, go }: { books: CompanyBooks; 
     return books.canPost ? <NewEntry books={books} onPosted={() => undefined} onShowEntries={() => go('entries')} /> : <div className="notice warn">{t('viewOnly')}</div>;
   }
   if (sub === 'periods') return <Periods books={books} onChanged={reloadBooks} />;
+  if (sub === 'year-end') return <YearEnd books={books} onChanged={reloadBooks} />;
   return (
     <div className="card">
       <div className="actions" style={{ marginBottom: 10 }}>

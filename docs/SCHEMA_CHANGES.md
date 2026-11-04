@@ -276,3 +276,10 @@ Every change below is covered by a test in `test/`.
 | `journal_lines.fx_amount`, `fx_rate`; on a foreign account every line gives both and debit or credit = foreign amount x rate (rounded to 2 decimals); only revaluation entries post company-currency differences; `reverse_entry` copies them | The foreign balance and the company-currency balance always agree with the rates used. |
 | `exchange_rates` (shared rates from the daily sync, written only with nobody signed in; a company's own rates, which win on the same day), `fx_rate_for()`, `store_shared_rates()`, `fx_sync_needs()` | Daily rates from a configurable provider, with the GCC central bank pegs always available. |
 | `fx_revaluations` (one posted per company and month end, with the balances and rates used; reversible, latest first) and `fx_settings` (automatic month-end run, by the person who turned it on), `fx_auto_due()`, `fx_auto_note()` | The month-end restatement at the closing rate (IAS 21.23), to 4950 unrealised and 4951 realised exchange gains and losses. |
+
+## 0030_year_end.sql
+| Change | Why |
+|---|---|
+| `fiscal_years` (closed or reopened; the closing entry, the result, who and when, the reason for reopening; never deleted) | Year-end closing: income and expenses of the year to 3100 Retained earnings (per cost centre), every month locked. Partner only; years close in order and reopen latest first. |
+| `year_is_closed()`; no posting into a closed year; no unlocking a month of a closed year | A closed year stays closed until it is reopened. |
+| `profit_and_loss()` and `profit_and_loss_by_cost_centre()` leave out closing entries (`source_type = 'year_end_close'`) | The year's P&L still shows its result after the year is closed. |

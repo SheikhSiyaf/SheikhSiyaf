@@ -19,8 +19,7 @@ portal, calendar, approvals and forecast) plus HRM, CRM and restaurant. Grouped 
 5. **Opening customer and supplier balances as open invoices.** Imported opening balances put receivables and
    payables in one total; the aged reports, statements and payments need each unpaid invoice and bill. Extend bulk
    import to open invoices and open bills.
-6. **Year-end closing.** Close the year: move the profit to retained earnings and lock the year. Today the balance sheet
-   shows this year's profit until it is closed by a journal entry.
+6. ~~**Year-end closing.**~~ Done (Journal > Year-end).
 7. **UAE service provider.** Choose the accredited service provider, validate our PINT AE XML with it, connect its API.
    Companies with AED 50 million or more go live on 1 January 2027.
 8. **Browser tests in the repository.** The page-by-page browser checks used during the build should move into the

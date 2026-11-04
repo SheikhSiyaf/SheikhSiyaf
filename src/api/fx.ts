@@ -37,3 +37,16 @@ export function registerFxRoutes(app: FastifyInstance, { as, pool }: Ctx) {
     return { results: r.map((x) => ({ base: x.base, stored: x.stored, provider: x.provider, problem: x.problem })) };
   });
 }
+
+// ------------------------------------------------------------------ year-end closing
+import * as YE from '../books/yearEndService.js';
+export function registerYearEndRoutes(app: FastifyInstance, { as }: Ctx) {
+  const inCompany = <T>(req: Parameters<Ctx['as']>[0], id: string, fn: (db: Db, companyId: string) => Promise<T>) => {
+    const companyId = uuidParam(id);
+    return as(req, async (db) => { await member(db, companyId); return fn(db, companyId); });
+  };
+  app.get<Q>('/api/companies/:id/year-end', async (req) => inCompany(req, req.params.id, (db, c) => YE.years(db, c)));
+  app.get<Q>('/api/companies/:id/year-end/preview', async (req) => inCompany(req, req.params.id, (db, c) => YE.preview(db, c, dateParam(req.query.end, ''))));
+  app.post<{ Params: P; Body: { end?: string } }>('/api/companies/:id/year-end/close', async (req) => inCompany(req, req.params.id, (db, c) => YE.close(db, c, dateParam(req.body?.end, ''))));
+  app.post<{ Params: P; Body: { reason?: string } }>('/api/fiscal-years/:id/reopen', async (req) => as(req, async (db) => { await YE.reopen(db, uuidParam(req.params.id), String(req.body?.reason ?? '')); return { ok: true }; }));
+}

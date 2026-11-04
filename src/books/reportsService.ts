@@ -11,7 +11,7 @@ export async function profitAndLoss(db: Db, companyId: string, from: string, to:
     `SELECT a.id AS "accountId", a.name, a.name_ar AS "nameAr", a.pnl_group AS "group",
             (CASE WHEN a.type = 'income' THEN sum(l.credit - l.debit) ELSE sum(l.debit - l.credit) END)::numeric(18,2)::text AS amount
      FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id JOIN accounts a ON a.id = l.account_id
-     WHERE e.company_id = $1 AND e.entry_date BETWEEN $2 AND $3 AND a.type IN ('income', 'expense')
+     WHERE e.company_id = $1 AND e.entry_date BETWEEN $2 AND $3 AND a.type IN ('income', 'expense') AND e.source_type IS DISTINCT FROM 'year_end_close'
      GROUP BY a.id HAVING sum(l.debit - l.credit) <> 0 ORDER BY a.code`, [companyId, from, to]);
   const lines = rows as { accountId: string; name: string; nameAr: string | null; group: PnlGroup; amount: string }[];
   const sum = (g: PnlGroup) => lines.filter((l) => l.group === g).reduce((t, l) => t + toMinor(l.amount), 0n);
@@ -91,7 +91,7 @@ export async function balanceSheet(db: Db, companyId: string, asOf: string) {
             coalesce(sum(l.debit - l.credit), 0)::numeric(18,2)::text AS dr,
             coalesce(sum(l.debit - l.credit) FILTER (WHERE e.entry_date < $3), 0)::numeric(18,2)::text AS "drBefore"
      FROM accounts a JOIN journal_lines l ON l.account_id = a.id JOIN journal_entries e ON e.id = l.entry_id
-     WHERE a.company_id = $1 AND e.entry_date <= $2 GROUP BY a.id ORDER BY a.code`, [companyId, asOf, start]);
+     WHERE a.company_id = $1 AND e.entry_date <= $2 AND e.source_type IS DISTINCT FROM 'year_end_close' GROUP BY a.id ORDER BY a.code`, [companyId, asOf, start]);
   const sections: Record<BsSection, BsLine[]> = { nonCurrentAssets: [], currentAssets: [], currentLiabilities: [], nonCurrentLiabilities: [], equity: [] };
   let earlier = 0n, thisYear = 0n;
   for (const r of rows) {

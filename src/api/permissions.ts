@@ -97,6 +97,8 @@ const RULES: Rule[] = [
   }],
   ['GET', new RegExp(`^/api/companies/${UUID}/fx/(rate|rates)$`), c([])],   // rates are open to everyone in the company
   ['*', new RegExp(`^/api/companies/${UUID}/fx(/.*)?$`), c(['Ledger'])],
+  ['*', new RegExp(`^/api/companies/${UUID}/year-end(/.*)?$`), c(['Journal'])],
+  ['*', new RegExp(`^/api/fiscal-years/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'fiscal_years', m[1]!, ['Journal'])],
   ['*', new RegExp(`^/api/fx-revaluations/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'fx_revaluations', m[1]!, ['Ledger'])],
   ['*', new RegExp(`^/api/payroll/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'payroll_runs', m[1]!, ['HRM'])],
   ['*', new RegExp(`^/api/payroll-lines/${UUID}$`), (db, m) => companyOf(db, 'payroll_lines', m[1]!, ['HRM'])],

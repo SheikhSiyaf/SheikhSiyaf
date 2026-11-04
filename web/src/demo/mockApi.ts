@@ -116,6 +116,7 @@ function post(userId: string, companyId: string, date: string, memo: string | nu
   if (!role || !POSTING.includes(role)) fail(403, 'Your role does not allow this.', 'err.forbidden');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(400, 'Some values are not in the right format.', 'err.format');
   if (isLocked(companyId, date)) fail(400, 'This period is locked. Choose a date in an open period.', 'err.periodLocked');
+  if (yeDb.years.some((y) => y.companyId === companyId && y.status === 'closed' && date >= y.startDate && date <= y.endDate)) fail(400, 'This financial year is closed.', 'err.yearClosedPost');
   for (const l of lines) {
     if (l.debit < 0n || l.credit < 0n || (l.debit && l.credit) || (!l.debit && !l.credit))
       fail(400, 'Each line needs a debit or a credit amount, not both, and never negative.', 'err.lineAmounts');
@@ -257,7 +258,7 @@ function balances(companyId: string, asOf: string) {
 }
 function pnl(companyId: string, from: string, to: string) {
   const rows = new Map<string | null, { income: bigint; expense: bigint }>();
-  for (const e of db.entries) if (e.companyId === companyId && e.date >= from && e.date <= to)
+  for (const e of db.entries) if (e.companyId === companyId && e.date >= from && e.date <= to && e.sourceType !== 'year_end_close')
     for (const l of e.lines) {
       const a = db.accounts.find((x) => x.id === l.accountId)!;
       if (a.type !== 'income' && a.type !== 'expense') continue;
@@ -1529,6 +1530,7 @@ const routes: [string, RegExp, Handler][] = [
     if (role !== 'partner') fail(403, 'Only the Firm partner can lock or unlock periods.', 'err.lockPartner');
     const p = db.periods.find((x) => x.companyId === m[1] && x.startDate === m[2]);
     if (!p) fail(404, 'Not found.', 'err.notFound');
+    if (!b?.locked && yeDb.years.some((y) => y.companyId === m[1] && y.status === 'closed' && p!.startDate >= y.startDate && p!.startDate <= y.endDate)) fail(400, 'This month is in a closed year.', 'err.yearClosedMonth');
     p!.lockedAt = b?.locked ? new Date().toISOString() : null;
     return { ok: true };
   }],
@@ -1553,7 +1555,7 @@ const routes: [string, RegExp, Handler][] = [
     const sums: Record<string, bigint> = { revenue: 0n, other_income: 0n, cost_of_sales: 0n, indirect_expense: 0n };
     const lines = db.accounts.filter((a) => a.companyId === id && (a.type === 'income' || a.type === 'expense')).sort((a, b) => a.code.localeCompare(b.code)).map((a) => {
       let v = 0n;
-      for (const e of db.entries) if (e.companyId === id && e.date >= from && e.date <= to) for (const l of e.lines) if (l.accountId === a.id) v += a.type === 'income' ? l.credit - l.debit : l.debit - l.credit;
+      for (const e of db.entries) if (e.companyId === id && e.date >= from && e.date <= to && e.sourceType !== 'year_end_close') for (const l of e.lines) if (l.accountId === a.id) v += a.type === 'income' ? l.credit - l.debit : l.debit - l.credit;
       const group = pnlGroupOf(a)!; sums[group]! += v;
       return { accountId: a.id, name: a.name, nameAr: a.nameAr, group, amount: s(v), v };
     }).filter((a) => a.v !== 0n).map(({ v: _v, ...a }) => a);
@@ -2597,6 +2599,77 @@ function seedHrm(companyId: string, poster: string) {
   session = prev;
 }
 
+// ---------------------------------------------------------------- year-end closing (same rules as src/books/yearEndService.ts and db/migrations/0030)
+interface MYear { id: string; companyId: string; startDate: string; endDate: string; status: 'closed' | 'reopened'; profit: bigint; entryId: string | null; closedBy: string; closedAt: string;
+  reopenedBy: string | null; reopenedAt: string | null; reopenReason: string | null }
+const yeDb = { years: [] as MYear[] };
+function yearsM(companyId: string) {
+  const first = db.entries.filter((e) => e.companyId === companyId).map((e) => e.date).sort()[0] ?? today();
+  const out = []; let start = fyStartM(companyId, first); const lastStart = fyStartM(companyId, today());
+  for (let i = 0; start <= lastStart && i < 50; i++) {
+    const end = addD(fyStartM(companyId, addD(start, 370)), -1);
+    const profit = [...pnl(companyId, start, end).values()].reduce((t, r) => t + r.income - r.expense, 0n);
+    const row = (y: MYear) => ({ ...y, profit: s(y.profit), closedBy: userName(y.closedBy), reopenedBy: userName(y.reopenedBy) });
+    const closed = yeDb.years.find((y) => y.companyId === companyId && y.endDate === end && y.status === 'closed');
+    out.push({ startDate: start, endDate: end, profit: s(profit), ended: end < today(), closed: closed ? row(closed) : null,
+      history: yeDb.years.filter((y) => y.companyId === companyId && y.endDate === end && y.status !== 'closed').map(row) });
+    start = addD(end, 1);
+  }
+  out.reverse();
+  const open = [...out].reverse().find((y) => !y.closed);
+  return { years: out, nextToClose: open && open.ended ? open.endDate : null };
+}
+function yePreviewM(companyId: string, end: string) {
+  const start = fyStartM(companyId, end);
+  const m = new Map<string, bigint>();
+  for (const e of db.entries) if (e.companyId === companyId && e.date >= start && e.date <= end && e.sourceType !== 'year_end_close') for (const l of e.lines) {
+    const a = db.accounts.find((x) => x.id === l.accountId)!; if (a.type !== 'income' && a.type !== 'expense') continue;
+    const k = `${a.id}|${l.costCentreId ?? ''}`; m.set(k, (m.get(k) ?? 0n) + l.debit - l.credit);
+  }
+  const lines = [...m.entries()].filter(([, v]) => v !== 0n).map(([k, v]) => { const [aid, cc] = k.split('|'); const a = db.accounts.find((x) => x.id === aid)!;
+    return { accountId: aid!, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, costCentreId: cc || null, costCentre: db.costCentres.find((x) => x.id === cc)?.name ?? null, balance: s(v) }; })
+    .sort((a, b) => a.code.localeCompare(b.code));
+  const profit = -lines.reduce((t, l) => t + toMinor(l.balance), 0n);
+  return { startDate: start, endDate: end, lines, profit: s(profit), retainedCode: '3100',
+    openMonths: db.periods.filter((p) => p.companyId === companyId && p.startDate >= start && p.startDate <= end && !p.lockedAt).length,
+    drafts: sdb.docs.filter((d) => d.companyId === companyId && d.status === 'draft' && d.issueDate >= start && d.issueDate <= end).length };
+}
+function yeCloseM(companyId: string, end: string) {
+  if (roleOf(session, companyId) !== 'partner') fail(403, 'Only the Firm partner closes or reopens a year.', 'err.yearPartner');
+  const ys = yearsM(companyId);
+  if (ys.years.find((y) => y.endDate === end)?.closed) fail(400, 'This year is already closed.', 'err.yearClosed');
+  if (ys.nextToClose !== end) fail(400, 'Close the earlier years first.', 'err.yearOrder');
+  const p = yePreviewM(companyId, end);
+  const last = db.periods.find((x) => x.companyId === companyId && end >= x.startDate && end <= x.endDate); if (last) last.lockedAt = null;
+  const id = uid(); let entryId: string | null = null;
+  if (p.lines.length) {
+    let re = db.accounts.find((a) => a.companyId === companyId && a.code === '3100');
+    if (!re) { re = { id: uid(), companyId, code: '3100', name: 'Retained earnings', nameAr: 'الأرباح المبقاة', type: 'equity', costCentreRequired: false, isBank: false }; db.accounts.push(re); }
+    const profit = toMinor(p.profit);
+    entryId = post(session!, companyId, end, `Year-end closing ${p.startDate} – ${end}`, [
+      ...p.lines.map((l) => { const b = toMinor(l.balance); return { accountId: l.accountId, costCentreId: l.costCentreId, debit: b < 0n ? -b : 0n, credit: b > 0n ? b : 0n }; }),
+      ...(profit !== 0n ? [{ accountId: re.id, costCentreId: null, debit: profit < 0n ? -profit : 0n, credit: profit > 0n ? profit : 0n }] : [])], null, 'year_end_close');
+  }
+  yeDb.years.push({ id, companyId, startDate: p.startDate, endDate: end, status: 'closed', profit: toMinor(p.profit), entryId, closedBy: session!, closedAt: new Date().toISOString(), reopenedBy: null, reopenedAt: null, reopenReason: null });
+  for (const x of db.periods.filter((x) => x.companyId === companyId && x.startDate >= p.startDate && x.startDate <= end && !x.lockedAt)) x.lockedAt = new Date().toISOString();
+  return { id, entryId };
+}
+function yeReopenM(id: string, reason: string) {
+  const y = yeDb.years.find((x) => x.id === id && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+  if (roleOf(session, y.companyId) !== 'partner') fail(403, 'Only the Firm partner closes or reopens a year.', 'err.yearPartner');
+  if (y.status !== 'closed') fail(400, 'This year is not closed.', 'err.yearNotClosed');
+  if (yeDb.years.some((x) => x.companyId === y.companyId && x.status === 'closed' && x.startDate > y.endDate)) fail(400, 'A later year is closed. Reopen it first.', 'err.yearLater');
+  if (!reason.trim()) fail(400, 'Say why the year is reopened.', 'err.reopenReason');
+  Object.assign(y, { status: 'reopened', reopenReason: reason.trim(), reopenedBy: session, reopenedAt: new Date().toISOString() });
+  if (y.entryId) { const p = db.periods.find((x) => x.companyId === y.companyId && y.endDate >= x.startDate && y.endDate <= x.endDate); const was = p?.lockedAt ?? null; if (p) p.lockedAt = null; reverse(session!, y.entryId, y.endDate); if (p) p.lockedAt = was; }
+}
+routes.push(
+  ['GET', /^\/api\/companies\/([\w-]+)\/year-end$/, (m) => yearsM(inCo(m[1]!))],
+  ['GET', /^\/api\/companies\/([\w-]+)\/year-end\/preview$/, (m, _b, q) => yePreviewM(inCo(m[1]!), String(q.get('end') ?? ''))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/year-end\/close$/, (m, b) => yeCloseM(inCo(m[1]!), String(b?.end ?? ''))],
+  ['POST', /^\/api\/fiscal-years\/([\w-]+)\/reopen$/, (m, b) => { yeReopenM(m[1]!, String(b?.reason ?? '')); return { ok: true }; }],
+);
+
 // ---------------------------------------------------------------- foreign currency (same rules as src/books/fxService.ts and db/migrations/0029)
 interface MRate { id: string; companyId: string | null; date: string; currency: string; base: string; rate: bigint; source: string; createdBy: string | null; createdAt: string }
 interface MReval { id: string; companyId: string; periodEnd: string; entryId: string | null; status: 'posted' | 'reversed'; automatic: boolean; unrealised: bigint; realised: bigint;
@@ -3189,7 +3262,7 @@ function pnlStatementM(id: string, from: string, to: string) {
   const sums: Record<string, bigint> = { revenue: 0n, other_income: 0n, cost_of_sales: 0n, indirect_expense: 0n };
   const lines = db.accounts.filter((a) => a.companyId === id && (a.type === 'income' || a.type === 'expense')).sort((a, b) => a.code.localeCompare(b.code)).map((a) => {
     let v = 0n;
-    for (const e of db.entries) if (e.companyId === id && e.date >= from && e.date <= to) for (const l of e.lines) if (l.accountId === a.id) v += a.type === 'income' ? l.credit - l.debit : l.debit - l.credit;
+    for (const e of db.entries) if (e.companyId === id && e.date >= from && e.date <= to && e.sourceType !== 'year_end_close') for (const l of e.lines) if (l.accountId === a.id) v += a.type === 'income' ? l.credit - l.debit : l.debit - l.credit;
     const group = pnlGroupOf(a)!; sums[group]! += v;
     return { accountId: a.id, name: a.name, nameAr: a.nameAr, group, amount: s(v), v };
   }).filter((a) => a.v !== 0n).map(({ v: _v, ...a }) => a);
@@ -3208,7 +3281,7 @@ function balanceSheetM(id: string, asOf: string) {
   let earlier = 0n, thisYear = 0n;
   for (const a of db.accounts.filter((x) => x.companyId === id).sort((x, y) => x.code.localeCompare(y.code))) {
     let dr = 0n, before = 0n;
-    for (const e of db.entries) if (e.companyId === id && e.date <= asOf) for (const l of e.lines) if (l.accountId === a.id) { dr += l.debit - l.credit; if (e.date < start) before += l.debit - l.credit; }
+    for (const e of db.entries) if (e.companyId === id && e.date <= asOf && e.sourceType !== 'year_end_close') for (const l of e.lines) if (l.accountId === a.id) { dr += l.debit - l.credit; if (e.date < start) before += l.debit - l.credit; }
     if (a.type === 'income' || a.type === 'expense') { earlier += -before; thisYear += -(dr - before); continue; }
     const k = a.type === 'asset' ? (a.code >= '1500' && a.code <= '1599' ? 'nonCurrentAssets' : 'currentAssets') : a.type === 'liability' ? (a.code === '2230' || a.code >= '2500' ? 'nonCurrentLiabilities' : 'currentLiabilities') : 'equity';
     const amt = k.endsWith('Assets') ? dr : -dr;

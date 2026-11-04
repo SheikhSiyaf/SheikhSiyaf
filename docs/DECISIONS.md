@@ -30,6 +30,8 @@
 - Compliance calendar: deadlines are worked out from the company's country, VAT status and registration date, financial year end, CR expiry, modules and calendar settings, never typed in; only "done" (with the filing reference) and the client's own deadlines are stored. Rules used: Saudi VAT by the end of the month after the period, zakat 120 days after the year end, GOSI by the 15th; UAE VAT by the 28th day of the month after the period, corporate tax 9 months after the year end, GPSSA by the 10th, WPS salaries by the 15th; Oman VAT within 30 days.
 - E-invoicing (step 4) is one adapter per country on the same invoice data (src/einvoice). Saudi Arabia: ZATCA phase 2 built to the published XML Implementation and Security Features standards as the Fatoora SDK applies them (UBL 2.1, invoice hash over C14N 1.1 without the signature and QR, ECDSA secp256k1, XAdES signed properties, QR tags 1-9, ICV and PIH chain, API version 2). One device (EGS unit) per company; its key is encrypted with ENCRYPTION_KEY; the chain is enforced in the database. Every invoice and credit note is e-invoiced from the moment a device is connected; a tax invoice to a Saudi business is refused without the buyer's national address. UAE: Peppol PINT AE XML for B2B and B2G (buyer with a TRN), handed to the accredited service provider; B2C is outside UAE e-invoicing for now.
 - Debit notes are not part of the books yet; the ZATCA compliance checks use debit-note samples only.
+- Approvals (step 5) cover supplier bills, supplier payments and customer credit notes, each from an amount set per client by an approver; expenses are recorded after the money is spent and stay outside (employee claims keep their own approval). Single level: one approver, never the sender. What would stop issuing (missing cost centre, locked period) is checked when it is sent, so nothing is approved that cannot be issued.
+- The cash flow forecast is worked out from the books each time (nothing stored but people's own items and the minimum cash). Payroll repeats last month's net pay; social insurance repeats last month's contributions on the calendar's due date; VAT due is the VAT payable of each return period so far.
 
 ## Open
 - Restaurant POS integration (importing sales from the restaurant's own POS instead of entering them in Nusuh Books): which POS systems.
@@ -44,4 +46,5 @@
 - UAE: choose the accredited service provider (Phase 1 appointment deadline was 30 October 2026; go-live 1 January 2027 for AED 50 million and above, 1 July 2027 for the rest), then check our PINT AE XML with its validator and connect its API.
 - Oman Fawtara: dates and specs with the Oman Tax Authority.
 - Confirm the calendar's deadline rules with ZATCA, the FTA, GOSI, GPSSA and MOHRE (src/books/compliance.ts), and whether Saudi Mudad/WPS salary deadlines should be added.
-- Email or SMS reminders for deadlines and portal requests: needs a sending provider.
+- Email or SMS reminders for deadlines, portal requests and approvals: needs a sending provider.
+- Approvals: whether some clients need two levels (for example a second approver above a higher amount).

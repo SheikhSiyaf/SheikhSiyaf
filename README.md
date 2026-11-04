@@ -63,7 +63,10 @@ Read `CLAUDE.md` first. It holds the non-negotiable accounting rules.
     - **Activity:** who changed clients, people and access. It never shows the books.
     - **Settings:** firm name and sign-in security.
   - **Sign-in links:** new people set their own password from a one-time link that expires after 7 days. The Administrator copies the link and sends it to the person; sending it by email comes later.
-  - **Two-factor sign-in:** each person turns it on from the bottom of the sidebar by scanning a QR code with an authenticator app. After 5 wrong passwords or codes, sign-in for that account is blocked for 15 minutes.
+  - **Approvals:** what waits for a decision (bills, supplier payments, customer credit notes, with a link to employee claims), the history, and the rules (from which amount, with VAT, each needs approval). A bill or credit note at or above the amount shows **Send for approval** instead of Issue; a supplier payment the same. While waiting the draft is locked; the sender never approves; approvers are the firm's partner and reviewer and client roles with the approve right; once approved the sender issues it or records the payment exactly as approved. Home and My clients show what waits for you.
+  - **Cash flow forecast** (Reports): 13 weeks or 6 months from today's cash and bank: customers and suppliers by due date, bills waiting for approval, employee claims, recurring expenses, last month's payroll, social insurance and VAT returns due, plus your own items (once or repeating). A chart of the cash at the end of each period, the lowest point, a warning below the minimum cash you set, "customers pay N days late", and every figure opens what makes it up.
+  - **Sidebar:** your initials, name and role sit in one row at the bottom with a sign-out button; your email and two-factor sign-in open from your name. The menu scrolls above it and keeps the open module in view.
+  - **Two-factor sign-in:** each person turns it on from their name at the bottom of the sidebar by scanning a QR code with an authenticator app. After 5 wrong passwords or codes, sign-in for that account is blocked for 15 minutes.
   - English and Arabic (right to left), light and dark mode, and phone layout
 
 ## Run it on your computer

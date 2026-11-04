@@ -107,7 +107,9 @@ export async function getNote(db: Db, id: string) {
             l.value::text, l.cost_centre_id AS "costCentreId", cc.name AS "costCentre", cc.name_ar AS "costCentreAr"
      FROM stock_note_lines l JOIN items i ON i.id = l.item_id LEFT JOIN cost_centres cc ON cc.id = l.cost_centre_id
      WHERE l.note_id = $1 ORDER BY l.line_no`, [id])).rows;
-  return { ...note, lines };
+  // The invoice or bill made with it at the counter (db/migrations/0036).
+  const counter = (await db.query(`SELECT d.id, d.type, d.number, d.status FROM counter_links k JOIN documents d ON d.id = k.document_id WHERE k.stock_note_id = $1`, [id])).rows[0] ?? null;
+  return { ...note, lines, counter };
 }
 
 async function lockNote(db: Db, id: string) {

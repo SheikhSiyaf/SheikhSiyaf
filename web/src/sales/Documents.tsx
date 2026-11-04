@@ -585,6 +585,11 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
           </tbody></table>
         </div>
       )}
+      {x.counter && (
+        <div className="card small" id="doc-counter">
+          <button className="link" onClick={() => go('Inventory', x.counter!.type, x.counter!.id)}>{t('doc.fromCounter', { number: x.counter.number })}</button>
+        </div>
+      )}
       {x.related.length > 0 && (
         <div className="card">
           <h2>{t('doc.related')}</h2>

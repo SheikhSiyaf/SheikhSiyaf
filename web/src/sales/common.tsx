@@ -27,6 +27,8 @@ export interface DocDetail extends DocRow {
   lines: DocLine[];
   payments: { id: string; number: string; date: string; amount: string; method: string; voidedAt: string | null }[];
   related: { id: string; type: DocType; status: string; number: string | null; issueDate: string; grossTotal: string }[];
+  /** The goods note made with it at the warehouse counter. */
+  counter?: { id: string; type: 'grn' | 'gdn'; number: string } | null;
   contact: Contact | null;
   seller: { name: string; nameAr: string | null; vatNumber: string | null; crNumber: string; address: string; city: string; country: string; currency: string };
 }

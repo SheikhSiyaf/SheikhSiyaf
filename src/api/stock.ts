@@ -7,6 +7,7 @@ import { dateParam, uuidParam, type Ctx } from './context.js';
 import * as I from '../books/inventoryService.js';
 import * as F from '../books/assetsService.js';
 import * as R from '../books/restaurantService.js';
+import * as K from '../books/counterService.js';
 import { today } from './context.js';
 
 async function member(db: Db, companyId: string) {
@@ -45,6 +46,15 @@ export function registerStockRoutes(app: FastifyInstance, { as }: Ctx) {
     as(req, async (db) => ({ id: await I.saveNoteDraft(db, await companyOf(db, 'stock_notes', req.params.id), req.body ?? {}, req.params.id) })));
   // warehouse counter: find an item by scanned code; record and post goods in or out in one step
   app.get<{ Params: P; Querystring: { code?: string } }>('/api/companies/:id/items/by-code', async (req) => inCompany(req, req.params.id, async (db, c) => ({ item: await I.findByCode(db, c, req.query.code ?? '') })));
+  // The counter joined to sales and purchases: goods out with the invoice, goods in with the supplier's bill.
+  app.post<{ Params: P; Body: K.CounterSaleInput }>('/api/companies/:id/counter/sale', async (req) => {
+    const r = await inCompany(req, req.params.id, (db, c) => K.counterSale(db, c, req.body ?? {}));
+    await sendAfterIssue(as, req, r.invoice.id).catch(() => undefined);   // a problem with ZATCA shows on the invoice
+    return r;
+  });
+  app.post<{ Params: P; Body: K.CounterReceiveInput }>('/api/companies/:id/counter/receive', async (req) => inCompany(req, req.params.id, (db, c) => K.counterReceive(db, c, req.body ?? {})));
+  app.get<{ Params: P; Querystring: { contactId?: string } }>('/api/companies/:id/counter/orders', async (req) =>
+    inCompany(req, req.params.id, (db, c) => K.openOrders(db, c, uuidParam(String(req.query.contactId ?? '')))));
   app.post<{ Params: P; Body: I.NoteInput }>('/api/companies/:id/stock-notes/quick', async (req) => inCompany(req, req.params.id, (db, c) => I.quickNote(db, c, req.body ?? {})));
   app.post<{ Params: P }>('/api/stock-notes/:id/post', async (req) => as(req, async (db) => { await I.postNote(db, uuidParam(req.params.id)); return ok; }));
   app.post<{ Params: P }>('/api/stock-notes/:id/delete', async (req) => as(req, async (db) => { await I.deleteNoteDraft(db, uuidParam(req.params.id)); return ok; }));

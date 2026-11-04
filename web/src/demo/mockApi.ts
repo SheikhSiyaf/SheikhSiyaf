@@ -1008,6 +1008,47 @@ function saveItemM(companyId: string, b: Record<string, unknown>, id?: string) {
   const nid = uid(); odb.items.push({ id: nid, companyId, q: 0n, v: 0n, ...v }); return nid;
 }
 let barcodeSeq = 0;
+/** The counter joined to sales and purchases (same rules as src/books/counterService.ts). */
+const counterLinks: { noteId: string; documentId: string; paymentId: string | null }[] = [];
+const acctCodeM = (companyId: string, code: string) => db.accounts.find((a) => a.companyId === companyId && a.code === code)?.id ?? fail(400, `This client's chart of accounts has no account ${code}.`, 'err.chart');
+const termsM = (companyId: string, contactId: string): number => sdb.contacts.find((c) => c.id === contactId)?.paymentTermsDays ?? (Number(db.companies.find((c) => c.id === companyId)!.fields.paymentTermsDays) || 30);
+const plusDaysM = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+function counterSaleM(companyId: string, b: Record<string, unknown>) {
+  if (!b.contactId) fail(400, 'Choose the customer to make the invoice.', 'err.counterCustomer');
+  const lines = ((b.lines ?? []) as { itemId?: string; quantity?: string; unitPrice?: string }[]).filter((l) => l.itemId);
+  const priced = lines.map((l) => { const it = odb.items.find((x) => x.id === l.itemId && x.companyId === companyId) ?? fail(400, 'Choose the item.', 'err.noteItem');
+    const price = String(l.unitPrice ?? '').trim() || it.salePrice || '';
+    let ok = false; try { ok = toMinor(price) > 0n; } catch { /* not an amount */ }
+    if (!ok) fail(400, `Enter the selling price of ${it.name} (${it.sku}).`, 'err.counterPrice');
+    return { l, it, price }; });
+  const note = quickNoteM(companyId, { type: 'gdn', date: b.date, contactId: b.contactId, reference: b.reference, lines: lines.map((l) => ({ itemId: l.itemId, quantity: l.quantity })) });
+  const date = String(b.date); const paid = Boolean(b.paidToAccountId);
+  const id = saveDraftM(companyId, { type: 'invoice', contactId: b.contactId, issueDate: date, dueDate: paid ? date : plusDaysM(date, termsM(companyId, String(b.contactId))),
+    reference: String(b.reference ?? '').trim() || note.number, notes: `Delivered from the counter: ${note.number}`,
+    lines: priced.map((x) => ({ description: `${x.it.name} (${x.it.sku})`, quantity: String(x.l.quantity).trim(), unitPrice: x.price, accountId: acctCodeM(companyId, SYSTEM_ACCOUNTS.sales), vatCode: 'standard' })) });
+  issueM(id);
+  const d = sdb.docs.find((x) => x.id === id)!; const total = s(docTotals(d).gross);
+  let paymentId: string | null = null;
+  if (paid) paymentId = String(payM(companyId, { direction: 'received', contactId: b.contactId, date, amount: total, accountId: b.paidToAccountId, method: b.method || 'cash', reference: d.number,
+    allocations: [{ documentId: id, amount: total }] }));
+  counterLinks.push({ noteId: note.id, documentId: id, paymentId });
+  return { note, invoice: { id, number: d.number, total }, paymentId };
+}
+function counterReceiveM(companyId: string, b: Record<string, unknown>) {
+  if (!b.contactId) fail(400, 'Choose the supplier to make the bill.', 'err.counterSupplier');
+  const po = b.purchaseOrderId ? sdb.docs.find((x) => x.id === b.purchaseOrderId && x.companyId === companyId && x.type === 'purchase_order' && ['sent', 'received'].includes(x.status) && x.contactId === b.contactId)
+    ?? fail(400, 'Choose an open purchase order of this supplier.', 'err.counterPo') : null;
+  const lines = ((b.lines ?? []) as { itemId?: string; quantity?: string; unitCost?: string }[]).filter((l) => l.itemId);
+  const note = quickNoteM(companyId, { type: 'grn', date: b.date, contactId: b.contactId, reference: b.reference, lines });
+  const date = String(b.date);
+  const id = saveDraftM(companyId, { type: 'bill', contactId: b.contactId, issueDate: date, dueDate: plusDaysM(date, termsM(companyId, String(b.contactId))),
+    reference: String(b.reference ?? '').trim() || po?.number || note.number, notes: `Goods received at the counter: ${note.number}${po ? ` (purchase order ${po.number})` : ''}`, originalId: po?.id ?? null,
+    lines: lines.map((l) => { const it = odb.items.find((x) => x.id === l.itemId)!; return { description: `${it.name} (${it.sku})`, quantity: String(l.quantity).trim(), unitPrice: String(l.unitCost ?? '').trim(),
+      accountId: acctCodeM(companyId, SYSTEM_ACCOUNTS.goodsReceived), vatCode: 'standard' }; }) });
+  if (po) po.status = 'billed';
+  counterLinks.push({ noteId: note.id, documentId: id, paymentId: null });
+  return { note, bill: { id } };
+}
 /** The warehouse counter: save and post in one step; nothing is left behind when posting fails. */
 function quickNoteM(companyId: string, b: Record<string, unknown>) {
   const id = saveNoteM(companyId, b);
@@ -1019,7 +1060,8 @@ function noteRow(n: MNote) {
   const c = sdb.contacts.find((x) => x.id === n.contactId); const a = db.accounts.find((x) => x.id === n.otherAccountId)!;
   return { id: n.id, companyId: n.companyId, type: n.type, status: n.status, number: n.number, date: n.date, contactId: n.contactId, contactName: c?.name ?? null, contactNameAr: c?.nameAr ?? null,
     reference: n.reference, notes: n.notes, otherAccountId: a.id, otherAccountCode: a.code, otherAccountName: a.name, otherAccountNameAr: a.nameAr, totalValue: s(n.total),
-    journalEntryId: n.journalEntryId, createdAt: n.createdAt, lineCount: n.lines.length };
+    journalEntryId: n.journalEntryId, createdAt: n.createdAt, lineCount: n.lines.length,
+    counter: (() => { const k = counterLinks.find((x) => x.noteId === n.id); const d = k && sdb.docs.find((x) => x.id === k.documentId); return d ? { id: d.id, type: d.type, number: d.number, status: d.status } : null; })() };
 }
 const noteOf = (id: string) => odb.notes.find((n) => n.id === id && roleOf(session, n.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
 function saveNoteM(companyId: string, b: Record<string, unknown>, id?: string) {
@@ -1677,7 +1719,8 @@ const routes: [string, RegExp, Handler][] = [
         return { id: l.id, lineNo: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, accountId: a.id, accountCode: a.code, accountName: a.name, accountNameAr: a.nameAr,
           costCentreId: l.costCentreId ?? null, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null, vatCode: l.vatCode, vatRate: l.vatRate, net: s(l.net), vat: s(l.vat) }; }),
       payments: sdb.payments.filter((p) => p.allocations.some((a) => a.documentId === d.id)).map((p) => ({ id: p.id, number: p.number, date: p.date, amount: s(p.allocations.find((a) => a.documentId === d.id)!.amount), method: p.method, voidedAt: p.voidedAt })),
-      related: sdb.docs.filter((x) => (x.originalId === d.id || x.id === d.originalId) && x.id !== d.id).map((x) => ({ id: x.id, type: x.type, status: x.status, number: x.number, issueDate: x.issueDate, grossTotal: s(docTotals(x).gross) })) };
+      related: sdb.docs.filter((x) => (x.originalId === d.id || x.id === d.originalId) && x.id !== d.id).map((x) => ({ id: x.id, type: x.type, status: x.status, number: x.number, issueDate: x.issueDate, grossTotal: s(docTotals(x).gross) })),
+      counter: (() => { const k = counterLinks.find((x) => x.documentId === d.id); const n = k && odb.notes.find((x) => x.id === k.noteId); return n ? { id: n.id, type: n.type, number: n.number } : null; })() };
   }],
   ['POST', /^\/api\/documents\/([\w-]+)$/, (m, b) => { const d = docOf(m[1]!); return { id: saveDraftM(d.companyId, { ...b, type: d.type, originalId: d.originalId }, d.id) }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/delete$/, (m) => { const d = docOf(m[1]!); canPostIn(d.companyId); if (d.status !== 'draft') fail(400, 'Only drafts can be deleted.', 'err.notDraft'); aprLockM(d.id); sdb.docs = sdb.docs.filter((x) => x.id !== d.id); return { ok: true }; }],
@@ -1755,6 +1798,11 @@ const routes: [string, RegExp, Handler][] = [
     const i = c ? odb.items.find((x) => x.companyId === id && x.status === 'active' && x.barcode === c) ?? odb.items.find((x) => x.companyId === id && x.status === 'active' && x.sku.toLowerCase() === c.toLowerCase()) : undefined;
     return { item: i ? itemRow(i) : null }; }],
   ['POST', /^\/api\/companies\/([\w-]+)\/stock-notes\/quick$/, (m, b) => quickNoteM(inCo(m[1]!), b ?? {})],
+  ['POST', /^\/api\/companies\/([\w-]+)\/counter\/sale$/, (m, b) => counterSaleM(inCo(m[1]!), b ?? {})],
+  ['POST', /^\/api\/companies\/([\w-]+)\/counter\/receive$/, (m, b) => counterReceiveM(inCo(m[1]!), b ?? {})],
+  ['GET', /^\/api\/companies\/([\w-]+)\/counter\/orders$/, (m, _b, q) => { const id = inCo(m[1]!);
+    return sdb.docs.filter((x) => x.companyId === id && x.contactId === q.get('contactId') && x.type === 'purchase_order' && ['sent', 'received'].includes(x.status))
+      .sort((a, b) => a.issueDate.localeCompare(b.issueDate)).map((x) => ({ id: x.id, number: x.number, date: x.issueDate, total: s(docTotals(x).gross), status: x.status })); }],
   ['POST', /^\/api\/companies\/([\w-]+)\/items$/, (m, b) => ({ id: saveItemM(inCo(m[1]!), b ?? {}) })],
   ['GET', /^\/api\/items\/([\w-]+)$/, (m) => { const i = itemOf(m[1]!); let q = 0n, v = 0n;
     const movements = odb.notes.filter((n) => n.status === 'posted').sort((a, b) => a.postedAt!.localeCompare(b.postedAt!)).flatMap((n) => n.lines.filter((l) => l.itemId === i.id).map((l) => {

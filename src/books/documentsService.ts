@@ -346,7 +346,8 @@ export async function getDocument(db: Db, id: string) {
      FROM companies c LEFT JOIN LATERAL (SELECT bank_name, iban FROM bank_accounts WHERE company_id = c.id AND kind = 'bank' AND status = 'active' AND iban IS NOT NULL
                                          ORDER BY created_at LIMIT 1) b ON true
      WHERE c.id = $1`, [d.companyId, d.originalId]);
-  return { ...d, state: stateOf(d, today()), lines: lines.rows, payments: payments.rows, related: related.rows, contact, seller: seller.rows[0] };
+  const counter = (await db.query(`SELECT n.id, n.type, n.number FROM counter_links k JOIN stock_notes n ON n.id = k.stock_note_id WHERE k.document_id = $1`, [id])).rows[0] ?? null;
+  return { ...d, state: stateOf(d, today()), lines: lines.rows, payments: payments.rows, related: related.rows, contact, seller: seller.rows[0], counter };
 }
 
 // ------------------------------------------------------------------ employee claims

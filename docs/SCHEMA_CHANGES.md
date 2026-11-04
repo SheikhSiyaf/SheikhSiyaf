@@ -322,3 +322,8 @@ Every change below is covered by a test in `test/`.
 | `billing_invoices` (number NB-year-0001, the customer's name, period, lines, subtotal, discount, VAT, total; only open → paid or void, never changed or deleted; one per customer and period unless voided) | Each customer's bills. |
 | `billing_usage()`, `billing_quote()`, `billing_run()` (bills what is due, catches up missed periods, ends trials, applies cancellations, marks overdue customers past due), `billing_mark_paid()`, `billing_void()`, `billing_recipients()` | Owner or the server only; the customer's Administrator reads its own usage and quote. |
 | Row-level security: the owner writes; an Administrator reads only its own subscription and invoices; plans and seller details readable when signed in. `email_outbox.kind` gains `billing`. | Customers never see each other's billing. |
+
+## 0036_counter_links.sql
+| Change | Why |
+|---|---|
+| `counter_links` (goods note, the invoice or bill made with it, the payment taken at the counter; written once, never changed or deleted; goods out only with the same customer's invoice, goods in only with the same supplier's bill) | The warehouse counter joined to sales and purchases, while posted notes and issued documents stay unchanged. |

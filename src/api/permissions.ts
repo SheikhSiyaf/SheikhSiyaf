@@ -78,6 +78,9 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/bank-imports/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'bank_imports', m[1]!, ['Bank'])],
   ['*', new RegExp(`^/api/bank-rules/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'bank_rules', m[1]!, ['Bank'])],
   // stock (inventory, or the restaurant's materials)
+  // the counter's invoice needs Sales too, its supplier bill (and open purchase orders) Purchases
+  ['POST', new RegExp(`^/api/companies/${UUID}/counter/sale$`), (_db, m) => ({ companyId: m[1]!, modules: ['Inventory', 'Restaurant'], also: ['Sales'] })],
+  ['*', new RegExp(`^/api/companies/${UUID}/counter/(receive|orders)$`), (_db, m) => ({ companyId: m[1]!, modules: ['Inventory', 'Restaurant'], also: ['Purchases'] })],
   ['*', new RegExp(`^/api/companies/${UUID}/(items|stock-notes|stock-value)(/.*)?$`), c(['Inventory', 'Restaurant'])],
   ['*', new RegExp(`^/api/items/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'items', m[1]!, ['Inventory', 'Restaurant'])],
   ['*', new RegExp(`^/api/stock-notes/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'stock_notes', m[1]!, ['Inventory', 'Restaurant'])],

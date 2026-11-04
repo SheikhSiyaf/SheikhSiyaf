@@ -10,6 +10,7 @@ import { bankAccounts, useGo } from '../sales/common.tsx';
 import { download, printPdf } from '../print/Print.tsx';
 import { PayslipPdf, type PayslipLine, type Seller } from '../print/Pdf.tsx';
 import { AttachmentsCard } from '../print/Attachments.tsx';
+import { ClockImport, ClockMonth, CorrectionForm } from './AttendanceClock.tsx';
 
 // ------------------------------------------------------------------ shared
 export interface HrEmp {
@@ -93,7 +94,7 @@ export function HrOverview({ books }: { books: CompanyBooks }) {
 }
 
 // ------------------------------------------------------------------ attendance
-interface AttRow { contactId: string; name: string; nameAr: string | null; employeeNo: string | null; absentDays: number; overtimeHours: string; notes: string;
+interface AttRow { contactId: string; fromClock?: boolean; name: string; nameAr: string | null; employeeNo: string | null; absentDays: number; overtimeHours: string; notes: string;
   annualLeave: number; sickLeave: number; unpaidLeave: number; otherLeave: number }
 
 export function Attendance({ books }: { books: CompanyBooks }) {
@@ -103,6 +104,10 @@ export function Attendance({ books }: { books: CompanyBooks }) {
   const pe = monthEndOf(month);
   const a = useApi<{ posted: boolean; rows: AttRow[] }>(`/api/companies/${books.company.id}/hr/attendance?month=${pe}`);
   const [edit, setEdit] = useState<Record<string, { absentDays: string; overtimeHours: string; notes: string }>>({});
+  const [view, setView] = useState<'sheet' | 'days'>('sheet');
+  const [importing, setImporting] = useState(false);
+  const [ver, setVer] = useState(0);
+  const staff = useApi<HrEmp[]>(`/api/companies/${books.company.id}/hr/employees`);
   const { run, busy, notes } = useRun();
   const file = useRef<HTMLInputElement>(null);
   const val = (r: AttRow) => edit[r.contactId] ?? { absentDays: String(r.absentDays), overtimeHours: r.overtimeHours, notes: r.notes };
@@ -123,15 +128,22 @@ export function Attendance({ books }: { books: CompanyBooks }) {
       <div className="actions" style={{ marginBottom: 10 }}>
         <label className="f">{t('hr.month')}<input id="att-month" type="month" value={month} max={today().slice(0, 7)} onChange={(e) => { if (e.target.value) { setMonth(e.target.value); setEdit({}); } }} /></label>
         <span className="spacer" />
-        {canEdit && <>
-          <input ref={file} id="att-file" type="file" accept=".csv,.txt" hidden onChange={(e) => void importFile(e.target.files?.[0])} />
-          <button className="b" disabled={busy} onClick={() => file.current?.click()}>{t('hr.attImport')}</button>
-          <button className="b p" id="att-save" disabled={busy || !Object.keys(edit).length} onClick={save}>{t('hr.attSave')}</button>
-        </>}
+        <div className="seg">
+          <button id="att-view-sheet" className={view === 'sheet' ? 'on' : ''} onClick={() => setView('sheet')}>{t('att.viewSheet')}</button>
+          <button id="att-view-days" className={view === 'days' ? 'on' : ''} onClick={() => setView('days')}>{t('att.viewDays')}</button>
+        </div>
+        {canEdit && <button className={`b ${importing ? '' : 'p'}`} id="att-clock" onClick={() => setImporting(!importing)}>{importing ? t('att.closeImport') : t('att.importClock')}</button>}
       </div>
+      {importing && canEdit && <ClockImport books={books} periodEnd={pe} onDone={() => { a.reload(); setVer((v) => v + 1); setView('days'); }} />}
+      {view === 'days' ? <ClockMonth key={`${pe}-${ver}`} books={books} periodEnd={pe} people={(staff.data ?? []).map((e) => ({ id: e.id, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo }))} reloadSheet={a.reload} /> : <>
       <div className="mut small" style={{ marginBottom: 8 }}>{a.data?.posted ? t('hr.attPosted') : t('hr.attHint')}</div>
       {notes}
       <div className="card">
+        {canEdit && <div className="actions" style={{ marginBottom: 8, justifyContent: 'flex-end' }}>
+          <input ref={file} id="att-file" type="file" accept=".csv,.txt" hidden onChange={(e) => void importFile(e.target.files?.[0])} />
+          <button className="b" disabled={busy} onClick={() => file.current?.click()}>{t('hr.attImport')}</button>
+          <button className="b p" id="att-save" disabled={busy || !Object.keys(edit).length} onClick={save}>{t('hr.attSave')}</button>
+        </div>}
         {a.error && <ErrorNote error={a.error} onRetry={a.reload} />}
         {!a.data ? <Loading /> : a.data.rows.length === 0 ? <div className="mut">{t('hr.nobodyThisMonth')}</div> : (
           <div className="wrap"><table className="stack">
@@ -142,11 +154,11 @@ export function Attendance({ books }: { books: CompanyBooks }) {
                 r.otherLeave && `${t('hr.kind.other_paid')} ${r.otherLeave}`].filter(Boolean).join(' · ');
               return (
                 <tr key={r.contactId}>
-                  <td>{local(r.name, r.nameAr)} <span className="mut small ltr">{r.employeeNo}</span></td>
+                  <td>{local(r.name, r.nameAr)} <span className="mut small ltr">{r.employeeNo}</span>{r.fromClock && <div><span className="badge" title={t('att.fromClockHint')}>{t('att.fromClock')}</span></div>}</td>
                   <td className="num small" data-label={t('hr.leaveTaken')}>{leave || '—'}</td>
-                  <td className="num" data-label={t('hr.absentDays')}><input aria-label={`${r.name} ${t('hr.absentDays')}`} inputMode="numeric" className="num ltr" style={{ width: 70 }} disabled={!canEdit}
+                  <td className="num" data-label={t('hr.absentDays')}><input aria-label={`${r.name} ${t('hr.absentDays')}`} inputMode="numeric" className="num ltr" style={{ width: 70 }} disabled={!canEdit || r.fromClock}
                     value={v.absentDays} onChange={(e) => set(r, 'absentDays', e.target.value.replace(/\D/g, ''))} /></td>
-                  <td className="num" data-label={t('hr.overtimeHours')}><input aria-label={`${r.name} ${t('hr.overtimeHours')}`} inputMode="decimal" className="num ltr" style={{ width: 80 }} disabled={!canEdit}
+                  <td className="num" data-label={t('hr.overtimeHours')}><input aria-label={`${r.name} ${t('hr.overtimeHours')}`} inputMode="decimal" className="num ltr" style={{ width: 80 }} disabled={!canEdit || r.fromClock}
                     value={v.overtimeHours} onChange={(e) => set(r, 'overtimeHours', e.target.value.replace(/[^\d.]/g, ''))} /></td>
                   <td data-label={t('hr.notes')}><input aria-label={`${r.name} ${t('hr.notes')}`} disabled={!canEdit} value={v.notes} onChange={(e) => set(r, 'notes', e.target.value)} /></td>
                 </tr>
@@ -156,6 +168,7 @@ export function Attendance({ books }: { books: CompanyBooks }) {
         )}
       </div>
       <p className="mut small">{t('hr.attFileHint')}</p>
+      </>}
     </>
   );
 }
@@ -174,7 +187,8 @@ export function Leave({ books }: { books: CompanyBooks }) {
   const bal = useApi<Balance[]>(tab === 'balances' ? `/api/companies/${books.company.id}/hr/leave-balances` : null);
   const staff = useApi<HrEmp[]>(`/api/companies/${books.company.id}/hr/employees`);
   const [form, setForm] = useState<{ contactId: string; kind: string; startDate: string; endDate: string; reason: string; approve: boolean }>();
-  const { run, busy, notes } = useRun();
+  const { run, busy, notes, setMsg } = useRun();
+  const [giveBack, setGiveBack] = useState<LeaveRow>();
   const canApprove = books.canPost && (!books.access || books.access.canApprove);
   const save = (e: FormEvent) => {
     e.preventDefault();
@@ -193,6 +207,9 @@ export function Leave({ books }: { books: CompanyBooks }) {
         {books.canPost && !form && <button className="b p" id="leave-new" onClick={() => setForm({ contactId: people[0]?.id ?? '', kind: 'annual', startDate: today(), endDate: today(), reason: '', approve: canApprove })}>{t('hr.leaveNew')}</button>}
       </div>
       {notes}
+      {giveBack && <CorrectionForm books={books} day={{ day: giveBack.startDate, status: 'leave', leaveId: giveBack.id }} range={[giveBack.startDate, giveBack.endDate]}
+        person={{ id: giveBack.contactId, name: giveBack.name, nameAr: giveBack.nameAr, employeeNo: null }}
+        onDone={(m) => { setGiveBack(undefined); setMsg({ ok: m }); list.reload(); }} onCancel={() => setGiveBack(undefined)} />}
       {form && (
         <form className="card inset" onSubmit={save}>
           <h2>{t('hr.leaveNew')}</h2>
@@ -234,7 +251,8 @@ export function Leave({ books }: { books: CompanyBooks }) {
                   <td className="num"><span className="actions" style={{ justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
                     {l.status === 'requested' && canApprove && <><button className="b small p" disabled={busy} onClick={() => decide(l.id, 'approved')}>{t('appr.approve')}</button>
                       <button className="b small" disabled={busy} onClick={() => decide(l.id, 'rejected')}>{t('appr.reject')}</button></>}
-                    {(l.status === 'requested' || l.status === 'approved') && books.canPost && <button className="b small" disabled={busy} onClick={() => decide(l.id, 'cancelled')}>{t('hr.cancelLeave')}</button>}
+                    {l.status === 'requested' && books.canPost && <button className="b small" disabled={busy} onClick={() => decide(l.id, 'cancelled')}>{t('hr.cancelLeave')}</button>}
+                    {l.status === 'approved' && books.canPost && <button className="b small" disabled={busy} title={t('att.giveBackHint')} onClick={() => { setMsg({}); setGiveBack(l); }}>{t('att.giveBack')}</button>}
                   </span></td>
                 </tr>
               ))}</tbody>

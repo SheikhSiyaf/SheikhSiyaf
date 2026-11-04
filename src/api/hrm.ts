@@ -4,6 +4,7 @@ import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
 import { uuidParam, today, type Ctx } from './context.js';
 import * as H from '../books/hrmService.js';
+import * as AT from '../books/attendanceService.js';
 
 type P = { id: string };
 async function member(db: Db, companyId: string) {
@@ -35,6 +36,14 @@ export function registerHrmRoutes(app: FastifyInstance, { as }: Ctx) {
   app.post<{ Params: P; Body: { month?: string; rows?: []; csv?: string } }>('/api/companies/:id/hr/attendance', async (req) => inCompany(req, req.params.id, (db, c) =>
     H.saveAttendance(db, c, String(req.body?.month ?? ''), req.body?.csv ? H.parseAttendanceCsv(req.body.csv) : req.body?.rows ?? [])));
 
+  // time-clock files and corrections
+  app.post<{ Params: P; Body: AT.ImportInput }>('/api/companies/:id/hr/attendance-import/preview', async (req) => inCompany(req, req.params.id, (db, c) => AT.importPreview(db, c, req.body ?? {})));
+  app.post<{ Params: P; Body: AT.ImportInput }>('/api/companies/:id/hr/attendance-import/run', async (req) => inCompany(req, req.params.id, (db, c) => AT.importRun(db, c, req.body ?? {})));
+  app.get<Q>('/api/companies/:id/hr/attendance-days', async (req) => inCompany(req, req.params.id, (db, c) => AT.monthDays(db, c, String(req.query.month ?? ''))));
+  app.get<Q>('/api/companies/:id/hr/corrections', async (req) => inCompany(req, req.params.id, (db, c) => AT.listCorrections(db, c, req.query.status ?? '')));
+  app.post<{ Params: P; Body: AT.CorrectionInput }>('/api/companies/:id/hr/corrections', async (req) => inCompany(req, req.params.id, async (db, c) => ({ id: await AT.requestCorrection(db, c, req.body ?? {}) })));
+  app.post<{ Params: P; Body: { status?: string; note?: string } }>('/api/attendance-corrections/:id/status', async (req) =>
+    as(req, async (db) => { await AT.decideCorrection(db, uuidParam(req.params.id), String(req.body?.status), req.body?.note); return ok; }));
   // leave
   app.get<Q>('/api/companies/:id/hr/leave', async (req) => inCompany(req, req.params.id, (db, c) => H.listLeave(db, c, req.query.status ?? '')));
   app.get<Q>('/api/companies/:id/hr/leave-balances', async (req) => inCompany(req, req.params.id, (db, c) => H.leaveBalances(db, c, req.query.asOf || today())));

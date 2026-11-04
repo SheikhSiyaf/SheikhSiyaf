@@ -546,3 +546,28 @@ input[aria-invalid="true"] { border-color: var(--bad); }
 .label .barcode { width: 46mm; height: 13mm; }
 .label-code { font-size: 9pt; letter-spacing: 0.5mm; font-family: ui-monospace, monospace; }
 .label-foot { display: flex; justify-content: space-between; width: 100%; font-size: 8pt; }
+
+/* Attendance: the month day by day */
+.att-grid { border-collapse: separate; border-spacing: 2px; }
+.att-grid th, .att-grid td { padding: 0; border: 0; text-align: center; font-size: 12px; }
+.att-grid th[scope="row"] { text-align: start; padding-inline-end: 8px; white-space: nowrap; font-weight: 600; font-size: 13px; }
+.att-grid thead th { color: var(--mut); font-weight: 500; min-width: 24px; }
+.att-c { display: inline-grid; place-items: center; width: 24px; height: 26px; border-radius: 6px; font-style: normal; font-weight: 700; font-size: 12px; border: 0; padding: 0; font-family: inherit; }
+button.att-c { cursor: pointer; }
+button.att-c:hover, button.att-c:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+.att-c.present { background: var(--goodbg); color: var(--good); }
+.att-c.absent { background: var(--badbg); color: var(--bad); }
+.att-c.leave { background: var(--tealbg); color: var(--teal); }
+.att-c.off { background: transparent; color: var(--mut); }
+.att-c.corrected { box-shadow: inset 0 0 0 2px var(--good); }
+.att-c.pend { background: var(--warnbg); color: var(--warn); }
+.att-c.flag { text-decoration: underline dotted; }
+.att-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 6px; align-items: center; }
+.att-legend .att-c { width: 20px; height: 20px; }
+.att-week .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.att-week { border: 0; padding: 0; margin: 0 0 12px; }
+.att-week legend { padding: 0; margin-bottom: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 20px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
+.chip.on { background: var(--tealbg); border-color: var(--teal); color: var(--teal); }
+.chip input { position: absolute; opacity: 0; pointer-events: none; }
+.chip:focus-within { outline: 2px solid var(--teal); outline-offset: 1px; }

@@ -18,6 +18,7 @@ import * as Bank from '../books/bankService.js';
 import * as Inv from '../books/inventoryService.js';
 import * as Fa from '../books/assetsService.js';
 import * as Hr from '../books/hrmService.js';
+import * as Att from '../books/attendanceService.js';
 import * as Crm from '../books/crmService.js';
 import * as Review from '../books/reviewService.js';
 import * as Cal from '../books/calendarService.js';
@@ -260,6 +261,23 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
         [mona, 'contract', 'C-2019-07', ''],
       ];
       for (const [who, kind, number, expiry] of docs) await Hr.saveDocument(db, id, { contactId: who, kind, number, expiryDate: expiry || undefined });
+      // Time clock: this month so far, Yusuf absent on the first working day, and a correction to sick leave waiting for approval.
+      const clockFrom = `${daysAgo(0).slice(0, 8)}01`, clockTo = daysAgo(1);
+      if (clockTo >= clockFrom) {
+        const weekend = sa ? [5, 6] : [6, 0];
+        const rows = [['Employee no', 'Date', 'Time in', 'Time out']];
+        let absentDay: string | null = null;
+        for (let d = clockFrom; d <= clockTo; d = new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10)) {
+          if (weekend.includes(new Date(`${d}T00:00:00Z`).getUTCDay())) continue;
+          rows.push(['E-002', d, '07:55', d.endsWith('3') ? '19:10' : '17:05']);
+          if (!absentDay) { absentDay = d; continue; }
+          rows.push(['E-001', d, '08:02', '16:05']);
+        }
+        if (rows.length > 1) {
+          await Att.importRun(db, id, { periodEnd: monthEnd(clockFrom), rows, fileName: 'time-clock.csv' });
+          if (absentDay) await Att.requestCorrection(db, id, { contactId: yusuf, kind: 'absence_to_leave', leaveKind: 'sick', dayFrom: absentDay, reason: 'Medical certificate from the clinic' });
+        }
+      }
 
       // CRM: a campaign and its leads, a lead made a customer with a deal and quotation, deals at each stage, follow-ups.
       const crmCampaign = await Crm.saveCampaign(db, id, { name: sa ? 'Ramadan offer' : 'Dubai expo stand', channel: sa ? 'whatsapp' : 'event', startDate: daysAgo(40), endDate: daysAgo(10),

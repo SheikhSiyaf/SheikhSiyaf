@@ -258,3 +258,13 @@ Every change below is covered by a test in `test/`.
 |---|---|
 | `items.barcode` (unique per company; printable characters, no spaces; when empty a trigger makes one: 2 + 11 digits from `item_barcode_seq` + EAN-13 check digit; existing items were given one) and `ean13_check()` | Goods are scanned at the warehouse counter. Supplier codes (EAN-13, UPC or any code) are kept; goods without a code get one the client can print on labels. A mistyped retail code (wrong check digit) is refused by the service. |
 | `client_roles.pos_mode`, returned by `app_client_role()` | Counter roles (store keeper, cashier): people with this role see only the counter screens. What they can do is still the role's modules, checked in the API and the database as before. |
+
+## 0028_attendance_days.sql
+| Change | Why |
+|---|---|
+| `hr_attendance_imports` (who imported which time-clock file for which month, how many people and days, how many kept) | A record of every file. |
+| `hr_attendance_days` (one status per person per day: present, absent, leave, off; times in and out in minutes, minutes worked and overtime, the leave or correction behind it; never deleted) | Attendance comes from the time clock instead of being typed as monthly totals. |
+| The monthly sheet `hr_attendance` follows the days (`attendance_month_totals`, `sync_attendance_month`); for a month with days, its absent days and overtime cannot be typed over | Payroll keeps reading the monthly sheet; the numbers come from the clock. |
+| Days: an absence or a leave day changes only at trigger depth 2 or more (inside an approved correction or leave); a leave day needs approved leave covering it; months with posted payroll do not change | Overturning cannot be done by hand or by re-importing a file. |
+| `hr_attendance_corrections` (absence into leave, absence excused, leave given back; days, reason; requested, approved, rejected with a reason, withdrawn; never deleted). Deciding needs `app_can_approve()` and someone other than the asker; only the asker withdraws. Approving applies it: leave is created approved, days become present, or the leave is cancelled and what is left of it is approved again | Any overturn of an absence or of approved leave goes through approval by someone else. |
+| `leave_requests`: approved leave is no longer cancelled or rejected directly (only through a correction); approving leave over days the clock recorded absent needs someone else with the approve right; approved leave marks its recorded days as leave and gives them back when it ends | The same rule, whichever screen is used. |

@@ -191,7 +191,8 @@ export async function attendance(db: Db, companyId: string, periodEnd: string) {
   for (const e of (await employees(db, companyId)).filter((x) => inMonth(x, periodEnd))) {
     const a = sheet.get(e.id);
     const from = monthStartOf(periodEnd);
-    rows.push({ contactId: e.id, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo, absentDays: a?.absent_days ?? 0, overtimeHours: a?.ot ?? '0.00', notes: a?.notes ?? '',
+    const fromClock = (await db.query('SELECT has_days FROM attendance_month_totals($1, $2)', [e.id, periodEnd])).rows[0].has_days as boolean;
+    rows.push({ contactId: e.id, fromClock, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo, absentDays: a?.absent_days ?? 0, overtimeHours: a?.ot ?? '0.00', notes: a?.notes ?? '',
       annualLeave: await leaveDaysIn(db, e.id, 'annual', from, periodEnd), sickLeave: await leaveDaysIn(db, e.id, 'sick', from, periodEnd),
       unpaidLeave: await leaveDaysIn(db, e.id, 'unpaid', from, periodEnd), otherLeave: await leaveDaysIn(db, e.id, 'other_paid', from, periodEnd) });
   }
@@ -209,6 +210,12 @@ export async function saveAttendance(db: Db, companyId: string, periodEnd: strin
     if (!Number.isInteger(absent) || absent < 0 || absent > 31) bad(`Absent days for ${e.name} must be a whole number of days.`, 'err.absentDays', [e.name]);
     let ot: number;
     try { ot = P.hoursToHundredths(String(r.overtimeHours ?? '0')); } catch { return bad(`Overtime hours for ${e.name} have at most 2 decimals.`, 'err.overtimeHours', [e.name]); }
+    // A month that comes from the time clock keeps its numbers; only the notes change here.
+    const clock = (await db.query('SELECT has_days, absent, overtime::text FROM attendance_month_totals($1, $2)', [e.id, periodEnd])).rows[0];
+    if (clock.has_days) {
+      await db.query(`UPDATE hr_attendance SET notes = $3 WHERE contact_id = $1 AND period_end = $2`, [e.id, periodEnd, t(r.notes)]);
+      continue;
+    }
     await db.query(`INSERT INTO hr_attendance (company_id, contact_id, period_end, absent_days, overtime_hours, notes) VALUES ($1,$2,$3,$4,$5,$6)
       ON CONFLICT (contact_id, period_end) DO UPDATE SET absent_days = $4, overtime_hours = $5, notes = $6`, [companyId, e.id, periodEnd, absent, (ot / 100).toFixed(2), t(r.notes)]);
   }

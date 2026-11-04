@@ -108,5 +108,6 @@ export async function waiting(db: Db, companyId: string) {
   const requests = (await db.query(`SELECT count(*)::int AS n FROM approval_requests WHERE company_id = $1 AND status = 'pending' AND requested_by <> app_user_id()`, [companyId])).rows[0].n;
   const claims = (await db.query(`SELECT count(*)::int AS n FROM documents WHERE company_id = $1 AND type = 'claim' AND status = 'submitted' AND submitted_by IS DISTINCT FROM app_user_id()`, [companyId])).rows[0].n;
   const approved = (await db.query(`SELECT count(*)::int AS n FROM approval_requests WHERE company_id = $1 AND status = 'approved'`, [companyId])).rows[0].n;
-  return { canApprove, toDecide: canApprove ? requests : 0, claims, approvedToAction: approved };
+  const corrections = (await db.query(`SELECT count(*)::int AS n FROM hr_attendance_corrections WHERE company_id = $1 AND status = 'requested' AND created_by <> app_user_id()`, [companyId])).rows[0].n;
+  return { canApprove, toDecide: canApprove ? requests : 0, claims, approvedToAction: approved, corrections: canApprove ? corrections : 0 };
 }

@@ -23,6 +23,7 @@ import { pintAeInScope, pintAeXml } from '../../../src/einvoice/pintAe.ts';
 import * as Fc from '../../../src/books/forecast.ts';
 import * as Im from '../../../src/books/importRules.ts';
 import { cleanBarcode, internalEan, validBarcode } from '../../../src/books/barcode.ts';
+import * as AtR from '../../../src/books/attendanceRules.ts';
 import type { EInvoiceData, EParty } from '../../../src/einvoice/invoiceData.ts';
 import { tinyPdf } from '../../../src/db/tinyPdf.ts';
 import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, previousMonthEnd, targetDepreciation, type AssetTerms } from '../../../src/books/assets.ts';
@@ -2037,7 +2038,13 @@ interface MSettlement { id: string; companyId: string; contactId: string; leavin
 interface MHrDoc { id: string; companyId: string; contactId: string; kind: string; number: string | null; issueDate: string | null; expiryDate: string | null; notes: string | null }
 const hdb = { profiles: [] as MProfile[], settings: new Map<string, { employerId: string | null; bankRouting: string | null; insuranceNo: string | null }>(),
   attendance: [] as { companyId: string; contactId: string; periodEnd: string; absentDays: number; overtimeHours: string; notes: string | null }[],
-  leave: [] as MLeave[], loans: [] as MLoan[], runs: [] as MPayRun[], settlements: [] as MSettlement[], docs: [] as MHrDoc[] };
+  leave: [] as MLeave[], loans: [] as MLoan[], runs: [] as MPayRun[], settlements: [] as MSettlement[], docs: [] as MHrDoc[],
+  days: [] as MDay[], corrections: [] as MCorr[], imports: [] as { id: string; companyId: string; periodEnd: string; fileName: string | null; people: number; days: number; kept: number; createdBy: string; createdAt: string }[] };
+// Daily attendance and corrections (same rules as db/migrations/0028_attendance_days.sql)
+interface MDay { id: string; companyId: string; contactId: string; day: string; status: AtR.DayStatus; checkIn: number | null; checkOut: number | null; workedMinutes: number | null;
+  overtimeMinutes: number; leaveId: string | null; correctionId: string | null; flags: string[] }
+interface MCorr { id: string; companyId: string; contactId: string; kind: 'absence_to_leave' | 'absence_excused' | 'leave_to_working'; leaveKind: string | null; leaveId: string | null;
+  dayFrom: string; dayTo: string; reason: string; status: 'requested' | 'approved' | 'rejected' | 'withdrawn'; decisionNote: string | null; createdBy: string; createdAt: string; decidedBy: string | null; decidedAt: string | null }
 const userName = (id: string | null) => db.users.find((u) => u.id === id)?.name ?? null;
 const hrPostedBetween = (companyId: string, from: string, to: string) => hdb.runs.some((r) => r.companyId === companyId && r.status !== 'draft' && r.periodEnd >= from && `${r.periodEnd.slice(0, 7)}-01` <= to);
 const empOf = (id: string) => sdb.contacts.find((c) => c.id === id && c.isEmployee && roleOf(session, c.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
@@ -2237,6 +2244,7 @@ function saveLeaveM(companyId: string, b: Body) {
   if (hdb.leave.some((l) => l.contactId === e.id && ['requested', 'approved'].includes(l.status) && l.startDate <= end && l.endDate >= start)) fail(400, 'This person already has leave on some of these days.', 'err.leaveOverlap');
   const approve = Boolean(b?.approve);
   if (approve && hrPostedBetween(companyId, start, end)) fail(400, 'Payroll is posted for these dates.', 'err.leavePosted');
+  if (approve && absentIn(e.id, start, end)) fail(400, 'Some of these days are recorded absent by the time clock.', 'err.leaveOverAbsence');
   const id = uid();
   hdb.leave.push({ id, companyId, contactId: e.id, kind, startDate: start, endDate: end, days: Pay.daysBetween(start, end), reason: str(b?.reason), status: approve ? 'approved' : 'requested', createdBy: session, decidedBy: approve ? session : null });
   return id;
@@ -2247,7 +2255,9 @@ function decideLeaveM(id: string, status: string) {
   if (!['approved', 'rejected', 'cancelled'].includes(status)) fail(400, 'Choose approve, reject or cancel.', 'err.leaveStatus');
   if (l.status === 'rejected' || l.status === 'cancelled') fail(400, 'This leave request is closed.', 'err.leaveClosed');
   if (hrPostedBetween(l.companyId, l.startDate, l.endDate) && (l.status === 'approved' || status === 'approved')) fail(400, 'Payroll is posted for these dates.', 'err.leavePosted');
-  l.status = status; l.decidedBy = session;
+  if (l.status === 'approved' && status !== 'approved') fail(400, 'Approved leave is overturned only through a correction request.', 'err.leaveOverturn');
+  if (status === 'approved' && absentIn(l.contactId, l.startDate, l.endDate) && (!canApproveM(l.companyId) || l.createdBy === session)) fail(400, 'Some of these days are recorded absent by the time clock.', 'err.leaveOverAbsence');
+  const was = l.status; l.status = status; l.decidedBy = session; leaveDaysM(l, was);
 }
 function issueLoanM(companyId: string, b: Body) {
   canPostIn(companyId);
@@ -2275,12 +2285,130 @@ function saveAttendanceM(companyId: string, pe: string, rows: { contactId?: stri
     const absent = Number(String(r.absentDays ?? '0').trim() || 0);
     if (!Number.isInteger(absent) || absent < 0 || absent > 31) fail(400, 'Days absent are whole days.', 'err.absentDays', [e.name]);
     let ot: number; try { ot = Pay.hoursToHundredths(String(r.overtimeHours ?? '0')); } catch { return fail(400, 'Overtime hours have at most 2 decimals.', 'err.overtimeHours', [e.name]); }
-    const row = { companyId, contactId: e.id, periodEnd: pe, absentDays: absent, overtimeHours: (ot / 100).toFixed(2), notes: str(r.notes) };
+    const clock = monthTotalsM(e.id, pe);
+    const row = { companyId, contactId: e.id, periodEnd: pe, absentDays: clock.has ? clock.absent : absent, overtimeHours: clock.has ? clock.ot : (ot / 100).toFixed(2), notes: str(r.notes) };
     const old = hdb.attendance.find((a) => a.contactId === e.id && a.periodEnd === pe);
     if (old) Object.assign(old, row); else hdb.attendance.push(row);
   }
   if (unknown.length) fail(400, 'Some employee numbers were not found.', 'err.attendanceUnknown', unknown);
   return { saved: rows.length };
+}
+const monthTotalsM = (contactId: string, pe: string) => {
+  const ds = hdb.days.filter((d) => d.contactId === contactId && d.day >= mStart(pe) && d.day <= pe);
+  return { has: ds.length > 0, absent: ds.filter((d) => d.status === 'absent').length, ot: AtR.hoursText(ds.reduce((x, d) => x + d.overtimeMinutes, 0)) };
+};
+function syncMonthM(companyId: string, contactId: string, day: string) {
+  const pe = monthEndM(day); const t = monthTotalsM(contactId, pe);
+  const old = hdb.attendance.find((a) => a.contactId === contactId && a.periodEnd === pe);
+  if (old) Object.assign(old, { absentDays: t.absent, overtimeHours: t.ot }); else hdb.attendance.push({ companyId, contactId, periodEnd: pe, absentDays: t.absent, overtimeHours: t.ot, notes: null });
+}
+const monthEndM = (d: string) => new Date(Date.UTC(+d.slice(0, 4), +d.slice(5, 7), 0)).toISOString().slice(0, 10);
+/** Approved leave marks the recorded days as leave; leave no longer approved puts them back. */
+function leaveDaysM(l: MLeave, was: string) {
+  if (l.status === 'approved' && was !== 'approved') {
+    for (const d of hdb.days.filter((x) => x.contactId === l.contactId && x.day >= l.startDate && x.day <= l.endDate && (x.status === 'absent' || x.status === 'present'))) {
+      Object.assign(d, { status: 'leave', leaveId: l.id, overtimeMinutes: 0 }); syncMonthM(d.companyId, d.contactId, d.day);
+    }
+  } else if (was === 'approved' && l.status !== 'approved') {
+    for (const d of hdb.days.filter((x) => x.leaveId === l.id)) {
+      Object.assign(d, { status: d.checkIn !== null || d.checkOut !== null ? 'present' : 'absent', leaveId: null }); syncMonthM(d.companyId, d.contactId, d.day);
+    }
+  }
+}
+const absentIn = (contactId: string, from: string, to: string) => hdb.days.some((d) => d.contactId === contactId && d.day >= from && d.day <= to && d.status === 'absent');
+function attPlanM(companyId: string, b: Body) {
+  const pe = String(b?.periodEnd ?? ''); if (!isMonthEnd(pe)) fail(400, 'Choose the month.', 'err.date');
+  const co = db.companies.find((c) => c.id === companyId)!;
+  const weekend = Array.isArray(b?.weekend) ? (b!.weekend as unknown[]).map(Number).filter((d) => d >= 0 && d <= 6) : AtR.defaultWeekend(co.country);
+  const holidays = (Array.isArray(b?.holidays) ? (b!.holidays as unknown[]) : []).map(String).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  const dailyHours = Number(b?.dailyHours ?? 8); if (!(dailyHours >= 1 && dailyHours <= 12)) fail(400, 'Normal hours a day are between 1 and 12.', 'err.dailyHours');
+  const staff = empsOf(companyId).filter((e) => e.hasProfile);
+  const file = AtR.mapAttendance(((b?.rows as string[][]) ?? []).map((r) => r.map((c) => String(c ?? ''))));
+  const month = AtR.buildMonth({ periodEnd: pe, records: file.records, weekend, holidays, dailyHours,
+    leaves: hdb.leave.filter((l) => l.companyId === companyId && l.status === 'approved' && l.endDate >= mStart(pe) && l.startDate <= pe).map((l) => ({ id: l.id, contactId: l.contactId, startDate: l.startDate, endDate: l.endDate })),
+    employees: staff.map((e) => ({ id: e.id, employeeNo: e.employeeNo, joinDate: e.joinDate, leavingDate: e.leavingDate })) });
+  const work = month.days.map((d) => {
+    const was = hdb.days.find((x) => x.contactId === d.contactId && x.day === d.day);
+    const action = !was ? 'new' : was.correctionId || (['absent', 'leave'].includes(was.status) && was.status !== d.status) ? (was.status === d.status ? 'same' : 'kept') : 'update';
+    return { d, was, action };
+  });
+  const people = month.inFile.map((id) => { const e = staff.find((x) => x.id === id)!; const mine = work.filter((w) => w.d.contactId === id);
+    const n = (st: string) => mine.filter((w) => w.d.status === st).length;
+    return { contactId: id, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo, present: n('present'), absent: n('absent'), leave: n('leave'), off: n('off'),
+      overtimeHours: AtR.hoursText(mine.reduce((x, w) => x + w.d.overtimeMinutes, 0)), flags: mine.reduce((x, w) => x + w.d.flags.length, 0), kept: mine.filter((w) => w.action === 'kept').length }; });
+  return { pe, file, month, work, people, weekend, dailyHours, posted: hrPostedBetween(companyId, pe, pe),
+    notInFile: staff.filter((e) => !month.inFile.includes(e.id) && e.joinDate! <= pe && (!e.leavingDate || e.leavingDate >= mStart(pe))).map((e) => ({ name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo })) };
+}
+function attImportM(companyId: string, b: Body) {
+  canPostIn(companyId);
+  const p = attPlanM(companyId, b);
+  if (p.posted) fail(400, 'Payroll for this month is posted, so its attendance no longer changes.', 'err.attPosted');
+  if (!p.file.layout) fail(400, 'The file needs an employee number column and a date column.', 'err.attColumns');
+  if (!p.people.length) fail(400, 'Nobody in the file matches an employee number in this company.', 'err.attNobody');
+  const kept = p.work.filter((w) => w.action === 'kept').length; let saved = 0;
+  for (const w of p.work) {
+    const v = { status: w.d.status, checkIn: w.d.checkIn, checkOut: w.d.checkOut, workedMinutes: w.d.minutes, overtimeMinutes: w.d.overtimeMinutes, leaveId: w.d.leaveId, flags: w.d.flags };
+    if (w.action === 'new') { hdb.days.push({ id: uid(), companyId, contactId: w.d.contactId, day: w.d.day, correctionId: null, ...v }); saved++; }
+    else if (w.action === 'update') { Object.assign(w.was!, v); saved++; } else continue;
+    syncMonthM(companyId, w.d.contactId, w.d.day);
+  }
+  hdb.imports.push({ id: uid(), companyId, periodEnd: p.pe, fileName: str(b?.fileName), people: p.people.length, days: saved, kept, createdBy: session!, createdAt: new Date().toISOString() });
+  return { people: p.people.length, saved, kept };
+}
+const corrRow = (k: MCorr) => { const c = sdb.contacts.find((x) => x.id === k.contactId)!;
+  return { ...k, name: c.name, nameAr: c.nameAr, employeeNo: c.employeeNo, days: Pay.daysBetween(k.dayFrom, k.dayTo), createdBy: userName(k.createdBy), mine: k.createdBy === session, decidedBy: userName(k.decidedBy) }; };
+const corrsOf = (companyId: string, status = '', from = '0000', to = '9999') => hdb.corrections.filter((k) => k.companyId === companyId && (!status || k.status === status) && k.dayTo >= from && k.dayFrom <= to)
+  .sort((a, b) => Number(b.status === 'requested') - Number(a.status === 'requested') || b.createdAt.localeCompare(a.createdAt)).map(corrRow);
+function requestCorrM(companyId: string, b: Body) {
+  canPostIn(companyId);
+  if (!b?.contactId) fail(400, 'Choose the employee.', 'err.employee');
+  const e = empOf(String(b!.contactId));
+  const kind = (['absence_to_leave', 'absence_excused', 'leave_to_working'] as const).find((k) => k === b?.kind) ?? fail(400, 'Choose what the days should become.', 'err.corrKind');
+  const from = dt(b?.dayFrom) ?? fail(400, 'Choose the days.', 'err.date'); const to = dt(b?.dayTo) ?? from;
+  if (to < from) fail(400, 'The last day is before the first day.', 'err.leaveDates');
+  const reason = String(b?.reason ?? '').trim() || fail(400, 'Say why the days should change.', 'err.corrReason');
+  const leaveKind = kind === 'absence_to_leave' ? (['annual', 'sick', 'unpaid', 'other_paid'].includes(String(b?.leaveKind)) ? String(b!.leaveKind) : fail(400, 'Choose the type of leave.', 'err.leaveKind')) : null;
+  if (hrPostedBetween(companyId, from, to)) fail(400, 'Payroll is posted for these dates.', 'err.attPosted');
+  let leaveId: string | null = null;
+  if (kind === 'leave_to_working') {
+    const l = hdb.leave.find((x) => x.id === b?.leaveId);
+    if (!l || l.contactId !== e.id || l.status !== 'approved' || from < l.startDate || to > l.endDate) fail(400, "Choose days inside this person's approved leave.", 'err.corrLeaveDays');
+    leaveId = l!.id;
+  } else {
+    const ds = hdb.days.filter((d) => d.contactId === e.id && d.day >= from && d.day <= to && d.status !== 'off');
+    if (!ds.length || ds.some((d) => d.status !== 'absent')) fail(400, 'Choose days the time clock recorded as absent.', 'err.corrNotAbsent');
+  }
+  if (hdb.corrections.some((k) => k.contactId === e.id && k.status === 'requested' && k.dayFrom <= to && k.dayTo >= from)) fail(400, 'A correction for some of these days is already waiting.', 'err.corrWaiting');
+  const id = uid();
+  hdb.corrections.push({ id, companyId, contactId: e.id, kind, leaveKind, leaveId, dayFrom: from, dayTo: to, reason, status: 'requested', decisionNote: null, createdBy: session!, createdAt: new Date().toISOString(), decidedBy: null, decidedAt: null });
+  return id;
+}
+function decideCorrM(id: string, status: string, note: string) {
+  const k = hdb.corrections.find((x) => x.id === id && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+  if (k.status !== 'requested') fail(400, 'This correction has been decided.', 'err.corrDecided');
+  if (status === 'withdrawn') { if (k.createdBy !== session) fail(400, 'Only the person who asked can withdraw it.', 'err.corrWithdraw'); }
+  else if (status === 'approved' || status === 'rejected') {
+    if (!canApproveM(k.companyId)) fail(403, 'Your role does not allow approving.', 'err.roleNoApprove');
+    if (k.createdBy === session) fail(400, 'Someone else approves a correction you asked for.', 'err.corrSelf');
+    if (status === 'rejected' && !note.trim()) fail(400, 'Say why it is rejected.', 'err.rejectReason');
+  } else fail(400, 'Approve, reject or withdraw.', 'err.corrStatus');
+  Object.assign(k, { status, decisionNote: note.trim() || null, decidedBy: session, decidedAt: new Date().toISOString() });
+  if (status !== 'approved') return;
+  const days = () => hdb.days.filter((d) => d.contactId === k.contactId && d.day >= k.dayFrom && d.day <= k.dayTo);
+  if (k.kind === 'absence_to_leave') {
+    const l: MLeave = { id: uid(), companyId: k.companyId, contactId: k.contactId, kind: k.leaveKind!, startDate: k.dayFrom, endDate: k.dayTo, days: Pay.daysBetween(k.dayFrom, k.dayTo), reason: k.reason, status: 'approved', createdBy: session, decidedBy: session };
+    hdb.leave.push(l); leaveDaysM(l, 'requested');
+    for (const d of days().filter((x) => x.status === 'leave')) d.correctionId = k.id;
+  } else if (k.kind === 'absence_excused') {
+    for (const d of days().filter((x) => x.status === 'absent')) { Object.assign(d, { status: 'present', correctionId: k.id }); syncMonthM(d.companyId, d.contactId, d.day); }
+  } else {
+    const l = hdb.leave.find((x) => x.id === k.leaveId)!;
+    l.status = 'cancelled'; l.decidedBy = session; leaveDaysM(l, 'approved');
+    const part = (a: string, z: string) => { const n: MLeave = { ...l, id: uid(), startDate: a, endDate: z, days: Pay.daysBetween(a, z), status: 'approved', createdBy: session, decidedBy: session }; hdb.leave.push(n); leaveDaysM(n, 'requested'); };
+    if (k.dayFrom > l.startDate) part(l.startDate, addD(k.dayFrom, -1));
+    if (k.dayTo < l.endDate) part(addD(k.dayTo, 1), l.endDate);
+    for (const d of days().filter((x) => x.status === 'absent' || x.status === 'present')) { Object.assign(d, { status: 'present', correctionId: k.id }); syncMonthM(d.companyId, d.contactId, d.day); }
+  }
 }
 const parseCsvM = (text: string) => String(text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => l.split(/[,;\t]/).map((c) => c.trim().replace(/^"|"$/g, '')))
   .filter((c) => c.length >= 2 && /\d/.test(c[1] ?? '')).map(([employeeNo, absentDays, overtimeHours]) => ({ employeeNo, absentDays, overtimeHours: overtimeHours ?? '0' }));
@@ -2321,10 +2449,21 @@ routes.push(
     const id = inCo(m[1]!); const pe = q.get('month') ?? ''; if (!isMonthEnd(pe)) fail(400, 'Choose the month.', 'err.date');
     const from = mStart(pe);
     return { periodEnd: pe, posted: hrPostedBetween(id, pe, pe), rows: empsOf(id).filter((e) => inMonthM(e, pe)).map((e) => { const a = hdb.attendance.find((x) => x.contactId === e.id && x.periodEnd === pe);
-      return { contactId: e.id, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo, absentDays: a?.absentDays ?? 0, overtimeHours: a?.overtimeHours ?? '0.00', notes: a?.notes ?? '',
+      return { contactId: e.id, fromClock: monthTotalsM(e.id, pe).has, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo, absentDays: a?.absentDays ?? 0, overtimeHours: a?.overtimeHours ?? '0.00', notes: a?.notes ?? '',
         annualLeave: leaveDaysInM(e.id, 'annual', from, pe), sickLeave: leaveDaysInM(e.id, 'sick', from, pe), unpaidLeave: leaveDaysInM(e.id, 'unpaid', from, pe), otherLeave: leaveDaysInM(e.id, 'other_paid', from, pe) }; }) };
   }],
   ['POST', /^\/api\/companies\/([\w-]+)\/hr\/attendance$/, (m, b) => saveAttendanceM(inCo(m[1]!), String(b?.month ?? ''), b?.csv ? parseCsvM(String(b.csv)) : (b?.rows as []) ?? [])],
+  ['POST', /^\/api\/companies\/([\w-]+)\/hr\/attendance-import\/preview$/, (m, b) => { const p = attPlanM(inCo(m[1]!), b);
+    return { periodEnd: p.pe, posted: p.posted, layout: p.file.layout, missing: p.file.missing, problems: p.file.problems.slice(0, 200), problemCount: p.file.problems.length, unknownNumbers: p.month.unknownNumbers,
+      outsideMonth: p.month.outsideMonth, weekend: p.weekend, dailyHours: p.dailyHours, people: p.people, notInFile: p.notInFile, kept: p.work.filter((w) => w.action === 'kept').length }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/hr\/attendance-import\/run$/, (m, b) => attImportM(inCo(m[1]!), b)],
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/attendance-days$/, (m, _b, q) => { const id = inCo(m[1]!); const pe = q.get('month') ?? ''; if (!isMonthEnd(pe)) fail(400, 'Choose the month.', 'err.date');
+    return { periodEnd: pe, days: hdb.days.filter((d) => d.companyId === id && d.day >= mStart(pe) && d.day <= pe).sort((a, b) => a.day.localeCompare(b.day))
+      .map((d) => ({ ...d, leaveKind: hdb.leave.find((l) => l.id === d.leaveId)?.kind ?? null })),
+      imports: hdb.imports.filter((i) => i.companyId === id && i.periodEnd === pe).reverse().map((i) => ({ ...i, createdBy: userName(i.createdBy) })), corrections: corrsOf(id, '', mStart(pe), pe) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/hr\/corrections$/, (m, _b, q) => corrsOf(inCo(m[1]!), q.get('status') ?? '')],
+  ['POST', /^\/api\/companies\/([\w-]+)\/hr\/corrections$/, (m, b) => ({ id: requestCorrM(inCo(m[1]!), b) })],
+  ['POST', /^\/api\/attendance-corrections\/([\w-]+)\/status$/, (m, b) => { decideCorrM(m[1]!, String(b?.status), String(b?.note ?? '')); return { ok: true }; }],
   ['GET', /^\/api\/companies\/([\w-]+)\/hr\/leave$/, (m, _b, q) => { const id = inCo(m[1]!); const st = q.get('status') ?? '';
     return hdb.leave.filter((l) => l.companyId === id && (!st || l.status === st)).sort((a, b) => b.startDate.localeCompare(a.startDate)).map((l) => { const c = sdb.contacts.find((x) => x.id === l.contactId)!;
       return { ...l, name: c.name, nameAr: c.nameAr, createdBy: userName(l.createdBy), decidedBy: userName(l.decidedBy) }; }); }],
@@ -2414,6 +2553,21 @@ function seedHrm(companyId: string, poster: string) {
   for (const [who, kind, number, expiry] of [[yusuf, sa ? 'iqama' : 'emirates_id', sa ? '2398765432' : '784-1990-1234567-1', daysAgo(-25)], [yusuf, 'passport', 'A1234567', daysAgo(-900)],
     [yusuf, 'medical_insurance', 'MED-44821', daysAgo(-50)], [mona, sa ? 'national_id' : 'emirates_id', sa ? '1087654321' : '784-1985-7654321-2', daysAgo(-1400)], [mona, 'contract', 'C-2019-07', '']] as const) {
     saveHrDocM(companyId, { contactId: who, kind, number, expiryDate: expiry || undefined });
+  }
+  // Time clock: this month so far, Yusuf absent on the first working day, and a correction to sick leave waiting for approval (as src/db/seed.ts).
+  const clockFrom = `${today().slice(0, 8)}01`, clockTo = daysAgo(1);
+  if (clockTo >= clockFrom) {
+    const weekend = sa ? [5, 6] : [6, 0]; const rows = [['Employee no', 'Date', 'Time in', 'Time out']]; let absentDay: string | null = null;
+    for (let d = clockFrom; d <= clockTo; d = addD(d, 1)) {
+      if (weekend.includes(new Date(`${d}T00:00:00Z`).getUTCDay())) continue;
+      rows.push(['E-002', d, '07:55', d.endsWith('3') ? '19:10' : '17:05']);
+      if (!absentDay) { absentDay = d; continue; }
+      rows.push(['E-001', d, '08:02', '16:05']);
+    }
+    if (rows.length > 1) {
+      attImportM(companyId, { periodEnd: monthEndM(clockFrom), rows, fileName: 'time-clock.csv' });
+      if (absentDay) requestCorrM(companyId, { contactId: yusuf, kind: 'absence_to_leave', leaveKind: 'sick', dayFrom: absentDay, reason: 'Medical certificate from the clinic' });
+    }
   }
   session = prev;
 }
@@ -3456,7 +3610,8 @@ routes.push(
   ['GET', /^\/api\/companies\/([\w-]+)\/approvals\/waiting$/, (m) => { const id = inCo(m[1]!); const can = canApproveM(id);
     return { canApprove: can, toDecide: can ? apdb.requests.filter((r) => r.companyId === id && r.status === 'pending' && r.requestedBy !== session).length : 0,
       claims: sdb.docs.filter((d) => d.companyId === id && d.type === 'claim' && d.status === 'submitted' && d.submittedBy !== session).length,
-      approvedToAction: apdb.requests.filter((r) => r.companyId === id && r.status === 'approved').length }; }],
+      approvedToAction: apdb.requests.filter((r) => r.companyId === id && r.status === 'approved').length,
+      corrections: can ? hdb.corrections.filter((k) => k.companyId === id && k.status === 'requested' && k.createdBy !== session).length : 0 }; }],
   ['GET', /^\/api\/companies\/([\w-]+)\/approvals\/rules$/, (m) => { const id = inCo(m[1]!);
     return { canEdit: canApproveM(id), rules: (['bill', 'payment', 'credit_note'] as AprKind[]).map((k) => { const r = apdb.rules.find((x) => x.companyId === id && x.kind === k);
       return r ? { kind: k, threshold: s(r.threshold), active: r.active, updatedBy: userName(r.updatedBy), updatedAt: r.updatedAt } : { kind: k, threshold: '0.00', active: false, updatedBy: null, updatedAt: null }; }) }; }],

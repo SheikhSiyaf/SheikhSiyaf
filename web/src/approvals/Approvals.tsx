@@ -2,6 +2,8 @@
 // and the rules (from which amount each needs approval). The sender never decides; approvers are the firm's
 // partner or reviewer, or a client role with the approve right. Issuing or paying is refused until approved.
 import { useState } from 'react';
+import { CorrectionList, type Correction } from '../hrm/AttendanceClock.tsx';
+import { accessTo } from '../../../src/books/modules.ts';
 import { api, useApi, type CompanyBooks } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { fmt } from '../money.ts';
@@ -92,15 +94,22 @@ function RequestList({ books, history }: { books: CompanyBooks; history: boolean
   const [status, setStatus] = useState('');
   const [done, setDone] = useState<string>();
   const list = useApi<ApprovalRequest[]>(`/api/companies/${books.company.id}/approvals?status=${history ? status : 'open'}`);
-  const w = useApi<{ canApprove: boolean; toDecide: number; claims: number; approvedToAction: number }>(`/api/companies/${books.company.id}/approvals/waiting`);
+  const w = useApi<{ canApprove: boolean; toDecide: number; claims: number; approvedToAction: number; corrections?: number }>(`/api/companies/${books.company.id}/approvals/waiting`);
+  const hrm = (books.company.modules ?? []).includes('HRM') && accessTo(books.access?.permissions, 'HRM') !== 'none';
+  const corr = useApi<Correction[]>(!history && hrm ? `/api/companies/${books.company.id}/hr/corrections?status=requested` : null);
   if (list.error) return <ErrorNote error={list.error} onRetry={list.reload} />;
-  const reload = () => { list.reload(); w.reload(); };
+  const reload = () => { list.reload(); w.reload(); corr.reload(); };
   return (
     <>
       {!history && <div className="grid">
         <div className={`card fig ${w.data?.toDecide ? 'warn' : ''}`}><small>{t('apr.toDecide')}</small><b>{w.data?.toDecide ?? '—'}</b><small>{t(w.data?.canApprove ? 'apr.toDecideSub' : 'apr.notApprover')}</small></div>
         <div className="card fig"><small>{t('apr.approvedToAction')}</small><b>{w.data?.approvedToAction ?? '—'}</b><small>{t('apr.approvedToActionSub')}</small></div>
         <button className="card fig tile" onClick={() => go('Expenses', 'approvals')}><small>{t('apr.claims')}</small><b>{w.data?.claims ?? '—'}</b><small>{t('apr.claimsSub')}</small></button>
+        {hrm && <button className="card fig tile" onClick={() => go('HRM', 'attendance')}><small>{t('appr.attCorrections')}</small><b>{corr.data?.length ?? '—'}</b><small>{t('appr.attCorrectionsSub')}</small></button>}
+      </div>}
+      {!history && hrm && (corr.data?.length ?? 0) > 0 && <div className="card" id="apr-corrections">
+        <h3>{t('appr.attCorrections')}</h3>
+        <CorrectionList books={books} list={corr.data!} onChanged={(m) => { setDone(m); reload(); }} />
       </div>}
       {history && <div className="actions" style={{ marginBottom: 10 }}>
         <select aria-label={t('apr.status')} value={status} onChange={(e) => setStatus(e.target.value)}>

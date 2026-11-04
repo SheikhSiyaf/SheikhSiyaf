@@ -91,6 +91,10 @@ const RULES: Rule[] = [
     const n = await companyOf(db, 'leave_requests', m[1]!, ['HRM']);
     return n && { ...n, approve: body(req).status === 'approved' || body(req).status === 'rejected' };
   }],
+  ['POST', new RegExp(`^/api/attendance-corrections/${UUID}/status$`), async (db, m, req) => {
+    const n = await companyOf(db, 'hr_attendance_corrections', m[1]!, ['HRM']);
+    return n && { ...n, approve: body(req).status === 'approved' || body(req).status === 'rejected' };
+  }],
   ['*', new RegExp(`^/api/payroll/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'payroll_runs', m[1]!, ['HRM'])],
   ['*', new RegExp(`^/api/payroll-lines/${UUID}$`), (db, m) => companyOf(db, 'payroll_lines', m[1]!, ['HRM'])],
   ['*', new RegExp(`^/api/hr-documents/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'employee_documents', m[1]!, ['HRM'])],

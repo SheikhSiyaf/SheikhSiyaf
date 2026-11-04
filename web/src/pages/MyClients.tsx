@@ -15,6 +15,8 @@ export function MyClients({ me, onSignOut }: { me: Me; onSignOut: () => void }) 
   const dt = useDates();
   const cl = (id: string) => cal.data?.find((r) => r.companyId === id);
   const pt = (id: string) => portal.data?.find((r) => r.companyId === id);
+  const apr = useApi<{ companyId: string; toDecide: number }[]>('/api/approvals/my-clients');
+  const ap = (id: string) => apr.data?.find((r) => r.companyId === id)?.toDecide ?? 0;
   return (
     <div className="app">
       <Sidebar subtitle={me.user.firmName} user={me.user} roleLabel={role ? t(`role.${role}`) : undefined} onSignOut={onSignOut}>
@@ -30,7 +32,7 @@ export function MyClients({ me, onSignOut }: { me: Me; onSignOut: () => void }) 
           {me.companies.length === 0 ? <div className="mut">{t('clients.empty')}</div> : (
             <div className="wrap">
               <table>
-                <thead><tr><th>{t('col.client')}</th><th>{t('col.country')}</th><th>{t('col.currency')}</th><th>{t('col.vat')}</th><th>{t('col.yourRole')}</th><th>{t('rv.reviewedCol')}</th><th>{t('rv.queriesCol')}</th><th>{t('cal.col')}</th><th>{t('pt.col')}</th><th /></tr></thead>
+                <thead><tr><th>{t('col.client')}</th><th>{t('col.country')}</th><th>{t('col.currency')}</th><th>{t('col.vat')}</th><th>{t('col.yourRole')}</th><th>{t('rv.reviewedCol')}</th><th>{t('rv.queriesCol')}</th><th>{t('cal.col')}</th><th>{t('pt.col')}</th><th>{t('apr.col')}</th><th /></tr></thead>
                 <tbody>
                   {me.companies.map((c) => (
                     <tr key={c.id}>
@@ -46,6 +48,7 @@ export function MyClients({ me, onSignOut }: { me: Me; onSignOut: () => void }) 
                         {cl(c.id)?.next ? <div className="mut">{t(`cal.short.${cl(c.id)!.next!.kind}` as Key)} · {dt.day(cl(c.id)!.next!.due)}</div> : !cl(c.id)?.overdue ? '—' : null}</td>
                       <td className="small">{pt(c.id)?.newUploads || pt(c.id)?.answeredRequests ? <button className="link" onClick={() => navigate(`/c/${c.id}/Portal/documents`)}><span className="badge warn">{t('pt.newDocsN', { n: (pt(c.id)?.newUploads ?? 0) })}</span></button> : null}
                         {pt(c.id)?.openRequests ? <div className="mut">{t('pt.waitingN', { n: pt(c.id)!.openRequests })}</div> : null}{!pt(c.id)?.newUploads && !pt(c.id)?.answeredRequests && !pt(c.id)?.openRequests ? '—' : null}</td>
+                      <td className="small">{ap(c.id) ? <button className="link" onClick={() => navigate(`/c/${c.id}/Approvals/waiting`)}><span className="badge warn">{t('apr.toDecideN', { n: ap(c.id) })}</span></button> : '—'}</td>
                       <td className="num"><button className="b p" onClick={() => navigate(`/c/${c.id}/Home`)}>{t('clients.open')}</button></td>
                     </tr>
                   ))}

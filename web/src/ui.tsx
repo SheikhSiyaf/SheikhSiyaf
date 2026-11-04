@@ -1,5 +1,5 @@
 // Shared bits: top bar controls, error and loading states.
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError, api, useApi } from './api.ts';
 import { useI18n } from './i18n.tsx';
 import { toggleTheme } from './theme.ts';
@@ -41,20 +41,40 @@ export function Sidebar({ subtitle, user, roleLabel, onSignOut, children }: {
   subtitle: string; user: { name: string; email: string; twoFactor?: boolean }; roleLabel?: string; onSignOut: () => void; children: ReactNode;
 }) {
   const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  // The small menu closes on a click elsewhere or Escape.
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', away); document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  const initials = user.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
   return (
     <nav className="side" aria-label={t('app.name')}>
       <div className="brand"><b>{t('app.name')}</b><span>{subtitle}</span></div>
       <div className="side-items">{children}</div>
-      <div className="side-user">
-        <div className="who">
-          <b>{user.name}</b>
-          <span className="ltr">{user.email}</span>
-          {roleLabel && <span>{roleLabel}</span>}
-          <button className="link small security-link" onClick={() => navigate('/security')}>
-            {t('security.title')}: {user.twoFactor ? t('security.on') : t('security.off')}
+      {/* The signed-in person, pinned to the bottom: one compact row; details and two-factor in a small menu above it. */}
+      <div className="side-user" ref={box}>
+        {open && (
+          <div className="side-menu" role="menu">
+            <span className="ltr small mut">{user.email}</span>
+            <button className="link small security-link" role="menuitem" onClick={() => { setOpen(false); navigate('/security'); }}>
+              {t('security.title')}: {user.twoFactor ? t('security.on') : t('security.off')}
+            </button>
+          </div>
+        )}
+        <div className="side-me">
+          <button className="me" aria-expanded={open} aria-haspopup="menu" title={user.email} onClick={() => setOpen(!open)}>
+            <span className="avatar" aria-hidden="true">{initials}</span>
+            <span className="who"><b>{user.name}</b>{roleLabel && <span>{roleLabel}</span>}</span>
+          </button>
+          <button className="signout" aria-label={t('signOut')} title={t('signOut')} onClick={onSignOut}>
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
         </div>
-        <button className="b signout" onClick={onSignOut}>{t('signOut')}</button>
       </div>
     </nav>
   );

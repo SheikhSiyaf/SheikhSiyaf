@@ -37,6 +37,13 @@ export async function requestDocument(db: Db, documentId: string, note?: string)
   if (!['bill', 'credit_note'].includes(d.type)) bad('Only bills and credit notes are sent for approval.', 'err.format');
   if (!(await db.query(`SELECT 1 FROM document_lines WHERE document_id = $1`, [documentId])).rows[0]) bad('Add at least one line.', 'err.noLines');
   if ((await db.query(`SELECT 1 FROM approval_requests WHERE document_id = $1 AND status IN ('pending', 'approved')`, [documentId])).rows[0]) bad('This is already waiting for approval.', 'err.waitingApproval');
+  // What would stop it being issued once approved is caught now, so nobody approves something that cannot be issued.
+  if ((await db.query(`SELECT 1 FROM document_lines l JOIN accounts a ON a.id = l.account_id WHERE l.document_id = $1 AND a.cost_centre_required AND l.cost_centre_id IS NULL`, [documentId])).rows[0]) {
+    bad('A cost centre is required for one of the accounts used.', 'err.costCentreRequired');
+  }
+  if ((await db.query(`SELECT 1 FROM documents d JOIN periods p ON p.company_id = d.company_id AND d.issue_date BETWEEN p.start_date AND p.end_date WHERE d.id = $1 AND p.locked_at IS NOT NULL`, [documentId])).rows[0]) {
+    bad('This period is locked.', 'err.periodLocked');
+  }
   return (await db.query(
     `INSERT INTO approval_requests (company_id, kind, document_id, contact_id, amount, note, requested_by) VALUES ($1, $2, $3, $4, 1, $5, app_user_id()) RETURNING id`,
     [d.company_id, d.type, documentId, d.contact_id, text(note)])).rows[0].id;

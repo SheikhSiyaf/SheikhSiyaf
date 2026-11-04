@@ -83,6 +83,11 @@ describe('Bills', () => {
     const row = await as(f.a.clientViewer, (db) => A.forDocument(db, big));
     expect(row).toMatchObject({ status: 'done', decidedBy: 'Finance Manager', requestedBy: 'Client Accountant SA', amount: '6325.00' });
   });
+  it('what would stop issuing is caught when it is sent, not after approval', async () => {
+    const b = await as(f.a.clientAccountant, (db) => S.saveDraft(db, f.a.id, { type: 'bill', contactId: supplier, issueDate: '2026-11-01',
+      lines: [{ description: 'Branch repairs', quantity: '1', unitPrice: '9000.00', accountId: f.a.branchCosts, vatCode: 'standard' }] }));
+    await expect(as(f.a.clientAccountant, (db) => A.requestDocument(db, b))).rejects.toThrow(/cost centre/);
+  });
   it('withdrawn, the draft can be changed and deleted again', async () => {
     const b = await bill('7000.00');
     const r = await as(f.a.clientAccountant, (db) => A.requestDocument(db, b));

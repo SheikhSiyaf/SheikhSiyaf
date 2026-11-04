@@ -20,6 +20,7 @@ import { averageCost, issueCost, notePrefix, receivedValue, type NoteType } from
 import * as Comp from '../../../src/books/compliance.ts';
 import { FIRST_PIH, invoiceXml, kindFor } from '../../../src/einvoice/zatca/ubl.ts';
 import { pintAeInScope, pintAeXml } from '../../../src/einvoice/pintAe.ts';
+import * as Fc from '../../../src/books/forecast.ts';
 import type { EInvoiceData, EParty } from '../../../src/einvoice/invoiceData.ts';
 import { tinyPdf } from '../../../src/db/tinyPdf.ts';
 import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, previousMonthEnd, targetDepreciation, type AssetTerms } from '../../../src/books/assets.ts';
@@ -360,6 +361,7 @@ function saveDraftM(companyId: string, b: Record<string, unknown>, id?: string):
   canPostIn(companyId);
   const existing = id ? sdb.docs.find((d) => d.id === id) ?? fail(404, 'Not found.', 'err.notFound') : undefined;
   if (existing && existing.status !== 'draft') fail(400, 'Only drafts can be changed.', 'err.notDraft');
+  if (existing) aprLockM(existing.id);
   const type = (existing?.type ?? b.type) as DocType;
   if (!['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense', 'claim'].includes(type)) fail(400, 'Choose the document type.', 'err.format');
   const isExpense = type === 'expense';
@@ -398,6 +400,7 @@ function issueM(id: string) {
     const before = sdb.docs.filter((x) => x.originalId === o.id && x.type === d.type && x.status === 'issued').reduce((sum, x) => sum + docTotals(x).gross, 0n);
     if (before + docTotals(d).gross > docTotals(o).gross) fail(400, 'A credit note cannot be more than what is left on the original.', 'err.creditTooMuch');
   }
+  aprIssueM(d);       // approvals: a bill or credit note at or above the rule's amount needs an approved request
   einvPrecheckM(d);   // e-invoicing: a connected device, and the buyer's national address on tax invoices
   const company = db.companies.find((c) => c.id === d.companyId)!;
   const seqKey = `${d.companyId}:${d.type}`;
@@ -409,6 +412,7 @@ function issueM(id: string) {
       postingFor(d.type, d.lines, sysAccts(d.companyId), d.paidFromAccountId ?? undefined).map((l) => ({ accountId: l.accountId, costCentreId: l.costCentreId ?? null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
   } catch (e) { if (savedSeq === undefined) sdb.seqs.delete(seqKey); else sdb.seqs.set(seqKey, savedSeq); throw e; }   // no gap in numbers
   d.number = number; d.status = 'issued';
+  aprDoneM(d.id);
   einvAfterIssueM(d);
 }
 function quoteStatusM(id: string, status: string) {
@@ -477,6 +481,7 @@ function payM(companyId: string, b: Record<string, unknown>) {
   } catch { return fail(400, 'Amounts must be numbers with at most 2 decimals.', 'err.amountFormat'); }
   if (amount <= 0n) fail(400, 'Enter the amount.', 'err.amount');
   if (allocs.reduce((x, a) => x + a.amount, 0n) > amount) fail(400, 'The amounts settled are more than the payment.', 'err.overAllocated');
+  if (direction === 'made') aprPaymentM(companyId, contact!.id, amount, b.approvalRequestId as string | undefined);
   for (const a of allocs) {
     const d = sdb.docs.find((x) => x.id === a.documentId);
     if (!d || d.contactId !== contact!.id || d.status !== 'issued' || d.type !== (direction === 'received' ? 'invoice' : contact!.isEmployee ? 'claim' : 'bill'))
@@ -491,6 +496,7 @@ function payM(companyId: string, b: Record<string, unknown>) {
   const je = post(session!, companyId, date, `${number} · ${contact!.name}`, entry.map((l) => ({ accountId: l.accountId, costCentreId: null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
   sdb.payments.push({ id, companyId, direction, number, contactId: contact!.id, date, amount, accountId: bank!.id, method: String(b.method ?? 'bank_transfer'),
     reference: (b.reference as string)?.trim() || null, journalEntryId: je, voidedAt: null, allocations: allocs, createdAt: new Date().toISOString() });
+  if (direction === 'made' && b.approvalRequestId) aprPaidM(String(b.approvalRequestId), id);
   return id;
 }
 const payOf = (id: string) => sdb.payments.find((p) => p.id === id && roleOf(session, p.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
@@ -1608,7 +1614,7 @@ const routes: [string, RegExp, Handler][] = [
       related: sdb.docs.filter((x) => (x.originalId === d.id || x.id === d.originalId) && x.id !== d.id).map((x) => ({ id: x.id, type: x.type, status: x.status, number: x.number, issueDate: x.issueDate, grossTotal: s(docTotals(x).gross) })) };
   }],
   ['POST', /^\/api\/documents\/([\w-]+)$/, (m, b) => { const d = docOf(m[1]!); return { id: saveDraftM(d.companyId, { ...b, type: d.type, originalId: d.originalId }, d.id) }; }],
-  ['POST', /^\/api\/documents\/([\w-]+)\/delete$/, (m) => { const d = docOf(m[1]!); canPostIn(d.companyId); if (d.status !== 'draft') fail(400, 'Only drafts can be deleted.', 'err.notDraft'); sdb.docs = sdb.docs.filter((x) => x.id !== d.id); return { ok: true }; }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/delete$/, (m) => { const d = docOf(m[1]!); canPostIn(d.companyId); if (d.status !== 'draft') fail(400, 'Only drafts can be deleted.', 'err.notDraft'); aprLockM(d.id); sdb.docs = sdb.docs.filter((x) => x.id !== d.id); return { ok: true }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/issue$/, (m) => { issueM(m[1]!); return { ok: true }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/quotation-status$/, (m, b) => { quoteStatusM(m[1]!, String(b?.status)); return { ok: true }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/convert$/, (m) => ({ id: convertM(m[1]!) })],
@@ -3313,9 +3319,192 @@ function seedEinvoicing() {
   for (const c of db.companies) { const a = addr[c.name]; if (a) edb.settings.set(c.id, { ...EINV_DEFAULTS, street: a[0], buildingNumber: a[1], district: a[2], postalCode: a[3] }); }
 }
 
+
+// ---------------------------------------------------------------- approvals and cash flow forecast (same rules as db/migrations/0026)
+type AprKind = 'bill' | 'payment' | 'credit_note';
+interface MAprRule { companyId: string; kind: AprKind; threshold: bigint; active: boolean; updatedBy: string | null; updatedAt: string | null }
+interface MApr { id: string; companyId: string; kind: AprKind; documentId: string | null; payment: Record<string, unknown> | null; contactId: string; amount: bigint; note: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'withdrawn' | 'done'; requestedBy: string; requestedAt: string; decidedBy: string | null; decidedAt: string | null; reason: string | null;
+  paymentId: string | null; doneAt: string | null }
+interface MFcItem { id: string; companyId: string; description: string; direction: 'in' | 'out'; amount: bigint; firstDate: string; repeat: Fc.Repeat; endDate: string | null; status: 'active' | 'archived'; createdBy: string }
+const apdb = { rules: [] as MAprRule[], requests: [] as MApr[], items: [] as MFcItem[], minimum: new Map<string, bigint>() };
+/** Approvers: the firm's partner or reviewer, or a client role with the approve right. */
+const canApproveM = (companyId: string) => ['partner', 'reviewer'].includes(roleOf(session, companyId) ?? '') || Boolean(roleFor(session, companyId)?.canApprove);
+const aprNeeded = (companyId: string, kind: AprKind, amount: bigint) => apdb.rules.some((r) => r.companyId === companyId && r.kind === kind && r.active && amount >= r.threshold);
+const openApr = (docId: string) => apdb.requests.find((r) => r.documentId === docId && (r.status === 'pending' || r.status === 'approved'));
+function aprLockM(docId: string) { if (openApr(docId)) fail(400, 'This is waiting for approval. Withdraw the request to change it.', 'err.waitingApproval'); }
+function aprIssueM(d: MDoc) {
+  if (d.type !== 'bill' && d.type !== 'credit_note') return;
+  const r = openApr(d.id);
+  if (r?.status === 'pending') fail(400, 'This is waiting for approval.', 'err.waitingApproval');
+  if (aprNeeded(d.companyId, d.type, docTotals(d).gross) && r?.status !== 'approved') fail(400, 'This needs approval before it is issued.', 'err.needsApproval');
+}
+function aprDoneM(docId: string) { const r = apdb.requests.find((x) => x.documentId === docId && x.status === 'approved'); if (r) { r.status = 'done'; r.doneAt = new Date().toISOString(); } }
+function aprPaymentM(companyId: string, contactId: string, amount: bigint, requestId?: string) {
+  if (requestId) {
+    const r = apdb.requests.find((x) => x.id === requestId && x.companyId === companyId && x.kind === 'payment') ?? fail(400, 'That belongs to a different company.', 'err.otherCompany');
+    if (r.status !== 'approved') fail(400, 'This payment is not approved.', 'err.approvalNotApproved');
+    if (r.contactId !== contactId || r.amount !== amount) fail(400, 'The payment is not the one that was approved (supplier or amount).', 'err.approvalMismatch');
+  } else if (aprNeeded(companyId, 'payment', amount)) fail(400, 'This payment needs approval before it is made.', 'err.paymentNeedsApproval');
+}
+function aprPaidM(requestId: string, paymentId: string) { const r = apdb.requests.find((x) => x.id === requestId)!; r.status = 'done'; r.paymentId = paymentId; r.doneAt = new Date().toISOString(); }
+const aprRow = (r: MApr) => {
+  const d = r.documentId ? sdb.docs.find((x) => x.id === r.documentId) : null; const c = sdb.contacts.find((x) => x.id === r.contactId);
+  return { id: r.id, kind: r.kind, status: r.status, amount: s(r.amount), note: r.note, reason: r.reason, documentId: r.documentId, docNumber: d?.number ?? null, docType: d?.type ?? null, docDate: d?.issueDate ?? null,
+    payment: r.payment, paymentId: r.paymentId, paymentNumber: r.paymentId ? sdb.payments.find((p) => p.id === r.paymentId)?.number ?? null : null, contact: c?.name ?? '', contactAr: c?.nameAr ?? null,
+    requestedBy: userName(r.requestedBy), requestedAt: r.requestedAt, decidedBy: userName(r.decidedBy), decidedAt: r.decidedAt, doneAt: r.doneAt,
+    mine: r.requestedBy === session, canDecide: r.requestedBy !== session && canApproveM(r.companyId) };
+};
+const aprOf = (id: string) => apdb.requests.find((x) => x.id === id && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+function newAprM(companyId: string, v: Omit<MApr, 'id' | 'companyId' | 'status' | 'requestedBy' | 'requestedAt' | 'decidedBy' | 'decidedAt' | 'reason' | 'paymentId' | 'doneAt'>) {
+  canPostIn(companyId);
+  if (v.amount <= 0n) fail(400, 'Enter the amount.', 'err.amount');
+  const id = uid();
+  apdb.requests.push({ id, companyId, status: 'pending', requestedBy: session!, requestedAt: new Date().toISOString(), decidedBy: null, decidedAt: null, reason: null, paymentId: null, doneAt: null, ...v });
+  return id;
+}
+function requestDocM(docId: string, note?: unknown) {
+  const d = docOf(docId);
+  if (d.status !== 'draft' || (d.type !== 'bill' && d.type !== 'credit_note')) fail(400, 'Only drafts are sent for approval.', 'err.approvalDraft');
+  if (openApr(d.id)) fail(400, 'This is already waiting for approval.', 'err.waitingApproval');
+  if (d.lines.some((l) => !l.costCentreId && db.accounts.find((a) => a.id === l.accountId)?.costCentreRequired)) fail(400, 'A cost centre is required for one of the accounts used.', 'err.costCentreRequired');
+  return newAprM(d.companyId, { kind: d.type as AprKind, documentId: d.id, payment: null, contactId: d.contactId!, amount: docTotals(d).gross, note: cstr(note) });
+}
+function aprDecideM(id: string, decision: string, reason?: unknown) {
+  const r = aprOf(id);
+  if (r.status !== 'pending') fail(400, 'This is no longer waiting for approval.', 'err.approvalClosed');
+  if (r.requestedBy === session) fail(400, 'You sent this for approval, so someone else must approve or reject it.', 'err.selfApprove');
+  if (!canApproveM(r.companyId)) fail(403, 'Your role does not allow approving.', 'err.roleNoApprove');
+  if (decision === 'rejected' && !cstr(reason)) fail(400, 'Give a reason for rejecting.', 'err.rejectReason');
+  r.status = decision === 'approved' ? 'approved' : 'rejected'; r.reason = cstr(reason); r.decidedBy = session; r.decidedAt = new Date().toISOString();
+}
+
+/** The forecast from the demo's books, with the same rules as the server (src/books/forecastService.ts). */
+function forecastM(companyId: string, grain: Fc.Grain, delay: number) {
+  const t = today(); const ps = Fc.periods(t, grain, grain === 'week' ? 13 : 6); const to = ps.at(-1)!.end;
+  const flows: Fc.Flow[] = [];
+  for (const d of sdb.docs.filter((x) => x.companyId === companyId && x.status === 'issued' && ['invoice', 'bill', 'claim'].includes(x.type) && amountDue(x) > 0n)) {
+    const c = sdb.contacts.find((x) => x.id === d.contactId);
+    flows.push({ date: d.type === 'claim' ? t : d.dueDate ?? d.issueDate, amount: amountDue(d), direction: d.type === 'invoice' ? 'in' : 'out',
+      category: d.type === 'invoice' ? 'receivables' : d.type === 'bill' ? 'payables' : 'claims', label: `${d.number} · ${c?.name ?? ''}`, ref: { type: 'document', id: d.id } });
+  }
+  for (const r of apdb.requests.filter((x) => x.companyId === companyId && (x.status === 'pending' || x.status === 'approved') && x.kind !== 'credit_note')) {
+    const d = r.documentId ? sdb.docs.find((x) => x.id === r.documentId) : null;
+    flows.push({ date: d ? d.dueDate ?? d.issueDate : t, amount: r.amount, direction: 'out', category: 'approvals', label: sdb.contacts.find((x) => x.id === r.contactId)?.name ?? '',
+      ref: d ? { type: 'document', id: d.id } : { type: 'approval', id: r.id } });
+  }
+  const rate = db.companies.find((c) => c.id === companyId)!.vatRate;
+  for (const r of sdb.recurring.filter((x) => x.companyId === companyId && x.active)) {
+    const gross = r.lines.reduce((x, l) => { try { const p = priceLine(l, rate); return x + p.net + p.vat; } catch { return x; } }, 0n);
+    for (const date of Fc.repeatDates(r.nextDate, r.frequency as Fc.Repeat, t, to, r.endDate)) flows.push({ date, amount: gross, direction: 'out', category: 'recurring', label: r.name, ref: { type: 'recurring', id: r.id } });
+  }
+  const run = hdb.runs.filter((x) => x.companyId === companyId && x.status !== 'draft').sort((a, b) => b.periodEnd.localeCompare(a.periodEnd))[0];
+  if (run && db.companies.find((c) => c.id === companyId)!.modules.includes('HRM')) {
+    const net = run.lines.reduce((x, l) => x + l.l.net, 0n);
+    for (const pe of Fc.repeatDates(run.periodEnd, 'monthly', t, to, null)) if (pe > run.periodEnd) flows.push({ date: pe, amount: net, direction: 'out', category: 'payroll', label: 'Salaries (as last month)' });
+  }
+  for (const i of apdb.items.filter((x) => x.companyId === companyId && x.status === 'active')) {
+    for (const date of Fc.repeatDates(i.firstDate, i.repeat, t, to, i.endDate)) flows.push({ date, amount: i.amount, direction: i.direction, category: i.direction === 'in' ? 'other_in' : 'other_out', label: i.description, ref: { type: 'item', id: i.id } });
+  }
+  const opening = db.accounts.filter((a) => a.companyId === companyId && a.isBank).reduce((x, a) => x + (balances(companyId, t).get(a.id) ?? 0n), 0n);
+  const minimum = apdb.minimum.get(companyId) ?? 0n;
+  const r = Fc.forecast(opening, Fc.delayReceivables(flows, delay, t), ps, { minimumCash: minimum });
+  const map = (x: Record<string, bigint>) => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, s(v)]));
+  return { grain, delayDays: delay, today: t, opening: s(opening), minimumCash: s(minimum),
+    rows: r.rows.map((x) => ({ start: x.start, end: x.end, opening: s(x.opening), inflows: map(x.inflows), outflows: map(x.outflows), totalIn: s(x.totalIn), totalOut: s(x.totalOut), net: s(x.net), closing: s(x.closing), belowMinimum: x.belowMinimum })),
+    lowest: { amount: s(r.lowest.amount), period: r.lowest.period },
+    flows: r.flows.filter((f) => f.period !== null).map((f) => ({ date: f.date, amount: s(f.amount), direction: f.direction, category: f.category, label: f.label, ref: f.ref ?? null, period: f.period, overdue: f.overdue })) };
+}
+function saveFcItemM(companyId: string, b: Body, id?: string) {
+  canPostIn(companyId);
+  const description = cstr(b?.description) ?? fail(400, 'Say what the money is for.', 'err.forecastItem');
+  let amount: bigint; try { amount = toMinor(String(b?.amount ?? '').replace(/,/g, '')); } catch { return fail(400, 'Enter the amount.', 'err.amount'); }
+  if (amount <= 0n) fail(400, 'Enter the amount.', 'err.amount');
+  const firstDate = String(b?.firstDate ?? ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(firstDate)) fail(400, 'Choose the date.', 'err.date');
+  const v = { description, direction: (b?.direction === 'in' ? 'in' : 'out') as 'in' | 'out', amount, firstDate, repeat: (['weekly', 'monthly', 'quarterly', 'yearly'].includes(String(b?.repeat)) ? b!.repeat : 'none') as Fc.Repeat,
+    endDate: cstr(b?.endDate), status: (b?.status === 'archived' ? 'archived' : 'active') as 'active' | 'archived' };
+  if (id) { Object.assign(apdb.items.find((x) => x.id === id && x.companyId === companyId) ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
+  const nid = uid(); apdb.items.push({ id: nid, companyId, createdBy: session!, ...v }); return nid;
+}
+
+routes.push(
+  ['GET', /^\/api\/approvals\/my-clients$/, () => db.memberships.filter((m) => m.userId === session).map((m) => ({ companyId: m.companyId,
+    toDecide: canApproveM(m.companyId) ? apdb.requests.filter((r) => r.companyId === m.companyId && r.status === 'pending' && r.requestedBy !== session).length : 0 }))],
+  ['GET', /^\/api\/companies\/([\w-]+)\/approvals$/, (m, _b, q) => { const id = inCo(m[1]!); const st = q.get('status');
+    const order = { pending: 0, approved: 1, rejected: 2, withdrawn: 2, done: 2 };
+    return apdb.requests.filter((r) => r.companyId === id && (!st || (st === 'open' ? r.status === 'pending' || r.status === 'approved' : r.status === st)))
+      .sort((a, b) => order[a.status] - order[b.status] || b.requestedAt.localeCompare(a.requestedAt)).map(aprRow); }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/approvals\/waiting$/, (m) => { const id = inCo(m[1]!); const can = canApproveM(id);
+    return { canApprove: can, toDecide: can ? apdb.requests.filter((r) => r.companyId === id && r.status === 'pending' && r.requestedBy !== session).length : 0,
+      claims: sdb.docs.filter((d) => d.companyId === id && d.type === 'claim' && d.status === 'submitted' && d.submittedBy !== session).length,
+      approvedToAction: apdb.requests.filter((r) => r.companyId === id && r.status === 'approved').length }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/approvals\/rules$/, (m) => { const id = inCo(m[1]!);
+    return { canEdit: canApproveM(id), rules: (['bill', 'payment', 'credit_note'] as AprKind[]).map((k) => { const r = apdb.rules.find((x) => x.companyId === id && x.kind === k);
+      return r ? { kind: k, threshold: s(r.threshold), active: r.active, updatedBy: userName(r.updatedBy), updatedAt: r.updatedAt } : { kind: k, threshold: '0.00', active: false, updatedBy: null, updatedAt: null }; }) }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/approvals\/rules$/, (m, b) => {
+    const id = inCo(m[1]!); if (!canApproveM(id)) fail(403, 'Your role does not allow this.', 'err.forbidden');
+    const kind = (['bill', 'payment', 'credit_note'] as AprKind[]).find((k) => k === b?.kind) ?? fail(400, 'Choose what needs approval.', 'err.format');
+    let threshold: bigint; try { threshold = toMinor(String(b?.threshold ?? '0') || '0'); } catch { return fail(400, 'Enter the amount from which approval is needed.', 'err.amount'); }
+    apdb.rules = apdb.rules.filter((r) => !(r.companyId === id && r.kind === kind));
+    apdb.rules.push({ companyId: id, kind, threshold, active: b?.active !== false, updatedBy: session, updatedAt: new Date().toISOString() });
+    return { ok: true };
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/approvals\/payments$/, (m, b) => {
+    const id = inCo(m[1]!);
+    let amount: bigint; try { amount = toMinor(String(b?.amount ?? '').replace(/,/g, '')); } catch { return fail(400, 'Enter the amount.', 'err.amount'); }
+    if (!b?.contactId) fail(400, 'Choose the supplier.', 'err.contact');
+    if (!b?.accountId) fail(400, 'Choose the bank or cash account.', 'err.bankAccount');
+    return { id: newAprM(id, { kind: 'payment', documentId: null, payment: { ...b, direction: 'made' }, contactId: String(b!.contactId), amount, note: cstr(b?.note) }) };
+  }],
+  ['GET', /^\/api\/documents\/([\w-]+)\/approval$/, (m) => { docOf(m[1]!); const r = apdb.requests.filter((x) => x.documentId === m[1]).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt))[0]; return r ? aprRow(r) : null; }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/approval$/, (m, b) => ({ id: requestDocM(m[1]!, b?.note) })],
+  ['POST', /^\/api\/approvals\/([\w-]+)\/decide$/, (m, b) => { aprDecideM(m[1]!, String(b?.decision), b?.reason); return { ok: true }; }],
+  ['POST', /^\/api\/approvals\/([\w-]+)\/withdraw$/, (m) => { const r = aprOf(m[1]!);
+    if (r.status !== 'pending' && r.status !== 'approved') fail(400, 'This is no longer open.', 'err.approvalClosed');
+    if (r.requestedBy !== session && !canApproveM(r.companyId)) fail(403, 'Only the person who sent it, or an approver, withdraws it.', 'err.forbidden');
+    r.status = 'withdrawn'; return { ok: true }; }],
+  ['POST', /^\/api\/approvals\/([\w-]+)\/pay$/, (m) => { const r = aprOf(m[1]!);
+    if (r.kind !== 'payment' || r.status !== 'approved') fail(400, 'This payment is not approved.', 'err.approvalNotApproved');
+    return { id: payM(r.companyId, { ...r.payment, approvalRequestId: r.id }) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/forecast$/, (m, _b, q) => forecastM(inCo(m[1]!), q.get('grain') === 'month' ? 'month' : 'week', [0, 7, 14, 30, 60].includes(Number(q.get('delay'))) ? Number(q.get('delay')) : 0)],
+  ['GET', /^\/api\/companies\/([\w-]+)\/forecast\/items$/, (m) => { const id = inCo(m[1]!);
+    return apdb.items.filter((x) => x.companyId === id).sort((a, b) => a.status.localeCompare(b.status) || a.firstDate.localeCompare(b.firstDate)).map((x) => ({ ...x, amount: s(x.amount), createdBy: userName(x.createdBy) })); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/forecast\/items$/, (m, b) => ({ id: saveFcItemM(inCo(m[1]!), b) })],
+  ['POST', /^\/api\/forecast\/items\/([\w-]+)$/, (m, b) => { const i = apdb.items.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); return { id: saveFcItemM(i.companyId, b, i.id) }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/forecast\/settings$/, (m, b) => { const id = inCo(m[1]!); canPostIn(id);
+    let v: bigint; try { v = toMinor(String(b?.minimumCash ?? '0') || '0'); } catch { return fail(400, 'Enter the amount.', 'err.amount'); }
+    apdb.minimum.set(id, v); return { ok: true }; }],
+);
+
+/** Sample approvals and forecast items, as in src/db/seed.ts. */
+function seedApprovals() {
+  for (const c of db.companies.filter((x) => x.firmId === firms.find((f) => f.kind === 'firm')!.id)) {
+    const partner = approverOf(c.id);
+    const poster = db.memberships.find((m) => m.companyId === c.id && (m.role === 'client_accountant' || m.role === 'staff_accountant'))?.userId;
+    if (!poster) continue;
+    const prev = session;
+    session = partner;
+    apdb.rules.push({ companyId: c.id, kind: 'bill', threshold: 500000n, active: true, updatedBy: partner, updatedAt: new Date().toISOString() },
+      { companyId: c.id, kind: 'payment', threshold: 1000000n, active: true, updatedBy: partner, updatedAt: new Date().toISOString() });
+    session = poster;
+    const supplier = sdb.contacts.find((x) => x.companyId === c.id && x.isSupplier && !x.isEmployee);
+    const expense = db.accounts.find((a) => a.companyId === c.id && a.code === '5100');
+    if (supplier && expense) {
+      const id = saveDraftM(c.id, { type: 'bill', contactId: supplier.id, issueDate: today(), dueDate: daysAgo(-21), reference: 'Q-STOCK-11',
+        lines: [{ description: 'Quarterly stock order', quantity: '1', unitPrice: '8200.00', accountId: expense.id, costCentreId: db.costCentres.find((x) => x.companyId === c.id && x.name === 'Head office')?.id ?? null, vatCode: 'standard' }] });
+      requestDocM(id, 'Stock for the next quarter, as agreed in the budget');
+    }
+    apdb.items.push({ id: uid(), companyId: c.id, description: 'New delivery van (down payment)', direction: 'out', amount: 3500000n, firstDate: daysAgo(-40), repeat: 'none', endDate: null, status: 'active', createdBy: poster },
+      { id: uid(), companyId: c.id, description: 'Office rent', direction: 'out', amount: 400000n, firstDate: daysAgo(-12), repeat: 'monthly', endDate: null, status: 'active', createdBy: poster });
+    apdb.minimum.set(c.id, 2000000n);
+    session = prev;
+  }
+}
+
 // Sample data is created once everything above is defined.
 seed();
 seedEinvoicing();
+seedApprovals();
 db.activity.push({ id: uid(), firmId: firms.find((f) => f.name === DEMO_FIRM)!.id, at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });
 
 export function handle(method: string, url: string, body: unknown, actingTenant?: string | null): { status: number; data: unknown } {

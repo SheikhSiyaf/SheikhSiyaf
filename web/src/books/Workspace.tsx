@@ -14,6 +14,8 @@ import { DOC_PAGES, NAV, hiddenFor, isModuleBuilt, moduleOf, navFor } from './na
 import { Calendar } from '../calendar/Calendar.tsx';
 import { Portal } from '../portal/Portal.tsx';
 import { EInvoicing } from '../sales/EInvoicing.tsx';
+import { Approvals as ApprovalsHub } from '../approvals/Approvals.tsx';
+import { CashForecast } from './Forecast.tsx';
 import { accessTo } from '../../../src/books/modules.ts';
 import { Overview } from '../sales/Overview.tsx';
 import { ContactList, ContactPage } from '../sales/Contacts.tsx';
@@ -55,6 +57,11 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
   // Which module's sub-menu is open in the sidebar. Opening a module shows its pages; pressing it again closes it.
   const [open, setOpen] = useState<string | null>(mod.key);
   useEffect(() => { setOpen(mod.key); }, [mod.key]);
+  // Keep the open module and its pages in view when the menu is longer than the screen.
+  useEffect(() => {
+    const el = document.querySelector('nav.side .side-items .subnav') ?? document.querySelector('nav.side .side-items button.on');
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [open, mod.key]);
   const onModule = (m: (typeof NAV)[number]) => {
     if (m.subs.length === 0) { goModule(m.key); return; }
     if (open === m.key) { setOpen(null); return; }        // second press closes it
@@ -99,7 +106,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
         {books.error && <ErrorNote error={books.error} onRetry={books.reload} />}
         {!b ? <Loading /> : (
           <>
-            {!b.canPost && !['Review', 'Portal', 'Calendar'].includes(mod.key) && <div className="notice warn">{t('viewOnly')}</div>}
+            {!b.canPost && !['Review', 'Portal', 'Calendar', 'Approvals'].includes(mod.key) && <div className="notice warn">{t('viewOnly')}</div>}
             {b.access && accessTo(b.access.permissions, mod.key) === 'none' ? (
               <div className="card"><h2>{t('access.noneTitle')}</h2><p className="mut">{t('access.noneText', { role: local(b.access.name, b.access.nameAr ?? null) })}</p>
                 <button className="b p" onClick={() => goModule('Home')}>{t('mod.Home')}</button></div>
@@ -131,6 +138,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Home': return <Home books={books} go={goModule} />;
     case 'Journal': return <Journal books={books} sub={sub} reloadBooks={reloadBooks} go={(s) => goModule('Journal', s)} />;
     case 'Reports': {
+      if (sub === 'cash-forecast') return <CashForecast books={books} />;
       const page = sub === 'owner-summary' ? <OwnerSummary books={books} /> : sub === 'balance-sheet' ? <BalanceSheet books={books} /> : sub === 'cash-flow' ? <CashFlow books={books} />
         : sub === 'vat-return' ? <VatReturnSheet books={books} />
         : sub === 'vat-summary' ? <Vat books={books} /> : sub === 'expenses-by-category' ? <ExpensesByCategory books={books} />
@@ -174,6 +182,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Review': return <Review books={books} sub={sub} item={item} />;
     case 'Portal': return <Portal books={books} sub={sub} item={item} extra={extra} />;
     case 'Calendar': return <Calendar books={books} sub={sub} />;
+    case 'Approvals': return <ApprovalsHub books={books} sub={sub} />;
     case 'CRM':
       if (sub === 'leads') return <Leads books={books} id={item} />;
       if (sub === 'activities') return <Activities books={books} />;

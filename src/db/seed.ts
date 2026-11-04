@@ -22,6 +22,8 @@ import * as Crm from '../books/crmService.js';
 import * as Review from '../books/reviewService.js';
 import * as Cal from '../books/calendarService.js';
 import * as Einv from '../books/einvoiceService.js';
+import * as Apr from '../books/approvalsService.js';
+import * as Fcast from '../books/forecastService.js';
 import * as Portal from '../books/portalService.js';
 import { addAttachment } from '../books/setupService.js';
 import { tinyPdfBase64 } from './tinyPdf.js';
@@ -375,6 +377,19 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       for (const [n, i] of overdue.slice(0, -1).entries()) await Cal.markDone(db, id, i.key, { reference: `${i.kind === 'vat_return' ? 'VAT' : 'REF'}-${2600 + n}` });
       await Cal.saveCustom(db, id, { title: c.country === 'AE' ? 'Municipality permit renewal' : 'Baladiya licence renewal', titleAr: 'تجديد رخصة البلدية', firstDue: daysAgo(-20), repeat: 'yearly' });
       await Cal.saveCustom(db, id, { title: 'Civil defence certificate', titleAr: 'شهادة الدفاع المدني', firstDue: daysAgo(-75), repeat: 'yearly' });
+
+      // Approvals: bills from 5,000 and supplier payments from 10,000 need approval; one stock order is waiting.
+      // Forecast: two items the books cannot know, and the cash the client wants to keep.
+      await asUser(partner);
+      await Apr.saveRule(db, id, { kind: 'bill', threshold: '5000.00' });
+      await Apr.saveRule(db, id, { kind: 'payment', threshold: '10000.00' });
+      await asUser(poster);
+      const stockOrder = await saveDraft(db, id, { type: 'bill', contactId: najd, issueDate: daysAgo(0), dueDate: daysAgo(-21), reference: 'Q-STOCK-11',
+        lines: [{ description: 'Quarterly stock order', quantity: '1', unitPrice: '8200.00', accountId: acct['5100'], costCentreId: cc['Head office'], vatCode: 'standard' }] });
+      await Apr.requestDocument(db, stockOrder, 'Stock for the next quarter, as agreed in the budget');
+      await Fcast.saveItem(db, id, { description: 'New delivery van (down payment)', direction: 'out', amount: '35000.00', firstDate: daysAgo(-40) });
+      await Fcast.saveItem(db, id, { description: 'Office rent', direction: 'out', amount: '4000.00', firstDate: daysAgo(-12), repeat: 'monthly' });
+      await Fcast.saveSettings(db, id, '20000.00');
 
       // Portal (clients of the accounting firm): requests, documents both ways, and last signed-off month's report.
       const client1 = DEMO_USERS.find((u) => u.kind === 'client' && u.companies.includes(c.key));

@@ -1,5 +1,6 @@
 // Quotations, invoices, credit notes, bills and supplier credits: list, editor (drafts) and view.
 import { EInvoiceStatus } from './EInvoicing.tsx';
+import { ApprovalPanel, useApprovalRules, type ApprovalRequest } from '../approvals/Approvals.tsx';
 import { useMemo, useState } from 'react';
 import { api, useApi, type CompanyBooks, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
@@ -82,7 +83,7 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
 // ------------------------------------------------------------------ editor
 interface EditLine { description: string; quantity: string; unitPrice: string; accountId: string; costCentreId: string; vatCode: VatCode }
 
-export function DocEditor({ books, type, id, presetContactId }: { books: CompanyBooks; type: DocType; id?: string; presetContactId?: string }) {
+export function DocEditor({ books, type, id, presetContactId, onChanged }: { books: CompanyBooks; type: DocType; id?: string; presetContactId?: string; onChanged?: () => void }) {
   const { t, has } = useI18n();
   const local = useLocalName();
   const go = useGo(books.company.id);
@@ -94,6 +95,10 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
   const banks = bankAccounts(books);
   const existing = useApi<DocDetail>(id ? `/api/documents/${id}` : null);
   const contacts = useApi<(Contact & { defaultCostCentreId?: string | null })[]>(`/api/companies/${books.company.id}/contacts?role=${side === 'sales' ? 'customer' : isClaim ? 'employee' : 'supplier'}`);
+  // Approvals (bills and credit notes): the rules, and this draft's request if it was sent.
+  const approvable = type === 'bill' || type === 'credit_note';
+  const approvalRules = useApprovalRules(books);
+  const request = useApi<ApprovalRequest | null>(id && approvable ? `/api/documents/${id}/approval` : null);
   const accounts = lineAccounts(books, side);
   const defaultAccount = accounts.find((a) => a.code === (side === 'sales' ? '4000' : '5400'))?.id ?? accounts[0]?.id ?? '';
   const registered = books.company.vatStatus !== 'unregistered';
@@ -170,6 +175,20 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
     ...(isExpense ? { payee: form.contactId ? null : form.payee, paidFromAccountId: form.paidFrom } : {}),
     lines: form.lines.map((l) => ({ ...l, unitPrice: normalise(l.unitPrice || '0'), costCentreId: l.costCentreId || null })),
   });
+  const openRequest = request.data && ['pending', 'approved'].includes(request.data.status);
+  const needsApproval = approvable && approvalRules.needs(type as 'bill' | 'credit_note', totals.gross);
+  const sendForApproval = async () => {
+    setTried(true);
+    if (problems.length) return;
+    setBusy(true); setError(undefined);
+    try {
+      const saved = id ? await api<{ id: string }>(`/api/documents/${id}`, { body: body() })
+        : await api<{ id: string }>(`/api/companies/${books.company.id}/documents`, { body: body() });
+      await api(`/api/documents/${saved.id}/approval`, { body: {} });
+      go(m, page, saved.id);
+      if (id === saved.id) { request.reload(); existing.reload(); }
+    } catch (e) { setError(errorText(t, has, e)); window.scrollTo(0, 0); } finally { setBusy(false); }
+  };
   const save = async (andIssue: boolean) => {
     setTried(true);
     if (andIssue && problems.length) return;
@@ -291,13 +310,18 @@ export function DocEditor({ books, type, id, presetContactId }: { books: Company
         <ul className="bad small" style={{ margin: '0 0 10px', paddingInlineStart: 18 }}>{problems.map((p) => <li key={p}>{p}</li>)}</ul>
       )}
       {confirmDelete && <ConfirmBar message={t('doc.deleteConfirm')} busy={busy} onYes={() => void remove()} onNo={() => setConfirmDelete(false)} />}
+      {id && approvable && <ApprovalPanel books={books} documentId={id} reload={() => { request.reload(); existing.reload(); onChanged?.(); }} />}
+      {openRequest ? <p className="mut small">{t('apr.lockedHint')}</p> : (
       <div className="actions">
-        <button className="b p" disabled={busy || (tried && problems.length > 0)} onClick={() => void save(true)}>{t(`doc.issue.${type}` as Key)}</button>
+        {needsApproval
+          ? <button className="b p" id="doc-send-approval" disabled={busy || (tried && problems.length > 0)} onClick={() => void sendForApproval()}>{t('apr.send')}</button>
+          : <button className="b p" disabled={busy || (tried && problems.length > 0)} onClick={() => void save(true)}>{t(`doc.issue.${type}` as Key)}</button>}
         <button className="b" disabled={busy} onClick={() => void save(false)}>{t('doc.saveDraft')}</button>
         {id && <button className="b" disabled={busy} onClick={() => setConfirmDelete(true)}>{t('doc.deleteDraft')}</button>}
         {id && <PdfButton onPrint={() => printDocument(books, id)} />}
-        <span className="mut small">{t(isClaim ? 'claim.submitHint' : willPost ? 'doc.issueHint' : 'doc.quoteHint')}</span>
-      </div>
+        <span className="mut small">{needsApproval ? t('apr.needsHint', { amount: fmt(approvalRules.threshold(type as 'bill' | 'credit_note') ?? '0'), cur: books.company.currency })
+          : t(isClaim ? 'claim.submitHint' : willPost ? 'doc.issueHint' : 'doc.quoteHint')}</span>
+      </div>)}
       {id ? <AttachmentsCard owner="documents" id={id} canAdd={books.canPost} canRemove={books.canPost} hint={sideOf(type) === 'purchases' ? t('att.billHint') : undefined} />
         : sideOf(type) === 'purchases' && <p className="mut small">{t('att.saveFirst')}</p>}
     </>
@@ -333,7 +357,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
   if (d.error) return <ErrorNote error={d.error} onRetry={d.reload} />;
   if (!d.data) return <Loading />;
   const x = d.data;
-  if (x.status === 'draft' && books.canPost) return <DocEditor books={books} type={x.type} id={x.id} />;
+  if (x.status === 'draft' && books.canPost) return <DocEditor books={books} type={x.type} id={x.id} onChanged={d.reload} />;
   const side = sideOf(x.type);
   const m = moduleForType(x.type);
   const cur = books.company.currency;
@@ -390,6 +414,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
       </div>
       {error && <div className="notice bad" role="alert">{error}</div>}
       {x.status === 'issued' && (x.type === 'invoice' || x.type === 'credit_note') && <EInvoiceStatus books={books} documentId={x.id} />}
+      {x.status === 'draft' && (x.type === 'bill' || x.type === 'credit_note') && <ApprovalPanel books={books} documentId={x.id} reload={d.reload} />}
       {isClaim && x.status === 'submitted' && mine && <div className="notice">{t('appr.yoursNotice')}</div>}
       {isClaim && x.status === 'rejected' && <div className="notice warn">{t('claim.rejectedBecause', { reason: x.rejectionReason ?? '', name: x.decidedByName ?? '' })}</div>}
       {rejecting && (

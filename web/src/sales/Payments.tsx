@@ -7,6 +7,7 @@ import { today } from '../router.ts';
 import { ConfirmBar, ErrorNote, Loading, errorText } from '../ui.tsx';
 import { isLocked, lockedUpTo } from '../books/Workspace.tsx';
 import { autoAllocate } from '../../../src/books/documents.ts';
+import { useApprovalRules } from '../approvals/Approvals.tsx';
 import { StateBadge, bankAccounts, moduleOfSide, useGo, type Contact, type Direction, type PaymentRow } from './common.tsx';
 
 const METHODS = ['bank_transfer', 'cash', 'card', 'cheque', 'other'] as const;
@@ -61,6 +62,7 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
   const m = moduleOfSide(sideOfDir(direction));
   const contacts = useApi<Contact[]>(`/api/companies/${books.company.id}/contacts?role=${direction === 'received' ? 'customer' : 'payee'}`);
   const banks = bankAccounts(books);
+  const approvalRules = useApprovalRules(books);
   const [contactId, setContactId] = useState(presetContactId ?? '');
   const open = useApi<OpenDoc[]>(contactId ? `/api/companies/${books.company.id}/open-documents?contactId=${contactId}&direction=${direction}` : null);
   const [date, setDate] = useState(today());
@@ -105,6 +107,19 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
   if (amt !== null && allocated > amt) problems.push(t('err.overAllocated'));
   const onAccount = amt !== null && allocated <= amt ? amt - allocated : 0n;
 
+  const needsApproval = direction === 'made' && amt !== null && approvalRules.needs('payment', amt);
+  const sendForApproval = async () => {
+    setTried(true);
+    if (problems.length) return;
+    setBusy(true); setError(undefined);
+    try {
+      await api(`/api/companies/${books.company.id}/approvals/payments`, { body: {
+        direction, contactId, date, amount: normalise(amount), accountId, method, reference,
+        allocations: Object.entries(alloc).filter(([, v]) => isAmount(v) && toMinor(normalise(v)) > 0n).map(([documentId, v]) => ({ documentId, amount: normalise(v) })),
+      } });
+      go('Approvals', 'waiting');
+    } catch (e) { setError(errorText(t, has, e)); } finally { setBusy(false); }
+  };
   const save = async () => {
     setTried(true);
     if (problems.length) return;
@@ -193,8 +208,10 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
 
       {tried && problems.length > 0 && <ul className="bad small" style={{ margin: '0 0 10px', paddingInlineStart: 18 }}>{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
       <div className="actions">
-        <button className="b p" disabled={busy || (tried && problems.length > 0)} onClick={() => void save()}>{t('pay.save')}</button>
-        <span className="mut small">{t('pay.saveHint')}</span>
+        {needsApproval
+          ? <button className="b p" id="pay-send-approval" disabled={busy || (tried && problems.length > 0)} onClick={() => void sendForApproval()}>{t('apr.send')}</button>
+          : <button className="b p" disabled={busy || (tried && problems.length > 0)} onClick={() => void save()}>{t('pay.save')}</button>}
+        <span className="mut small">{needsApproval ? t('apr.payNeedsHint', { amount: fmt(approvalRules.threshold('payment') ?? '0'), cur: books.company.currency }) : t('pay.saveHint')}</span>
       </div>
     </>
   );

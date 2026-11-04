@@ -30,6 +30,7 @@ export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?:
     <>
       <ReviewedBadge books={books} go={go} />
       <FromAccountant books={books} go={go} />
+      <WaitingApproval books={books} go={go} />
       <div className="grid">
         {figs.map(([label, value, note]) => (
           <div key={label} className="card fig">
@@ -102,6 +103,21 @@ function ComingUp({ books, go }: { books: CompanyBooks; go: (m: string, sub?: st
             <td className="num"><span className={`badge ${i.status === 'overdue' ? 'bad' : 'warn'}`}>{i.status === 'overdue' ? t('cal.s.overdue') : dt.day(i.due)}</span></td></tr>
         ))}</tbody></table>
       )}
+    </div>
+  );
+}
+
+/** For approvers: bills, payments and credit notes waiting for their decision. */
+function WaitingApproval({ books, go }: { books: CompanyBooks; go: (m: string, sub?: string) => void }) {
+  const { t } = useI18n();
+  const w = useApi<{ canApprove: boolean; toDecide: number; approvedToAction: number }>(`/api/companies/${books.company.id}/approvals/waiting`);
+  if (!w.data || (!w.data.toDecide && !(books.canPost && w.data.approvedToAction))) return null;
+  return (
+    <div className="notice warn actions" id="home-approvals">
+      {w.data.toDecide > 0 && <span>{t('home.toApprove', { n: w.data.toDecide })}</span>}
+      {books.canPost && w.data.approvedToAction > 0 && <span>{t('home.approvedToAction', { n: w.data.approvedToAction })}</span>}
+      <span className="spacer" />
+      <button className="b small p" onClick={() => go('Approvals', 'waiting')}>{t('home.openApprovals')}</button>
     </div>
   );
 }

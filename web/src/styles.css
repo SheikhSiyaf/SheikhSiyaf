@@ -23,12 +23,21 @@ body { background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, -app
 .app { display: flex; min-height: 100vh; }
 nav.side { width: 220px; background: var(--card); border-inline-end: 1px solid var(--line); padding: 14px 10px; flex: none;
   position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; }
-.side-items { flex: 1; min-height: 0; overflow-y: auto; }
-.side-user { border-top: 1px solid var(--line); padding: 12px 6px 2px; display: flex; flex-direction: column; gap: 10px; }
-.side-user .who { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.side-user .who b { font-size: 14px; overflow-wrap: anywhere; }
-.side-user .who span { color: var(--mut); font-size: 12px; overflow-wrap: anywhere; }
-nav.side .side-user button.signout { width: 100%; text-align: center; border: 1px solid var(--line); }
+.side-items { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; padding-bottom: 14px;
+  /* a soft fade where the menu scrolls under the footer */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); }
+/* The signed-in person: one compact row pinned to the bottom of the sidebar. */
+.side-user { position: relative; border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; flex: none; }
+.side-me { display: flex; align-items: center; gap: 4px; }
+nav.side .side-me button.me { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 6px; }
+.side-me .avatar { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--tealbg); color: var(--teal); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+.side-me .who { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.side-me .who b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-me .who span { color: var(--mut); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+nav.side .side-me button.signout { flex: none; width: 36px; height: 36px; padding: 0; display: grid; place-items: center; color: var(--mut); border-radius: 10px; }
+nav.side .side-me button.signout:hover { color: var(--bad); background: var(--badbg); }
+.side-menu { position: absolute; bottom: calc(100% + 6px); inset-inline: 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; z-index: 5; overflow-wrap: anywhere; }
 nav.side button { display: block; width: 100%; text-align: start; border: 0; background: none; color: var(--ink); padding: 9px 10px; border-radius: 10px; font: inherit; cursor: pointer; }
 nav.side button:hover { background: var(--tealbg); }
 nav.side button.on { background: var(--teal); color: var(--onteal); font-weight: 600; }
@@ -85,10 +94,11 @@ tr.total td { font-weight: 700; border-bottom: 0; }
   nav.side { width: 100%; height: auto; position: static; display: flex; flex-direction: column; gap: 6px; border-inline-end: 0; border-bottom: 1px solid var(--line); padding: 8px; }
   .side-items { display: flex; overflow-x: auto; gap: 4px; }
   nav.side .side-items button { width: auto; white-space: nowrap; }
-  .side-user { flex-direction: row; align-items: center; border-top: 0; padding: 4px 6px 0; }
-  .side-user .who { flex: 1; }
-  .side-user .who span:last-child:not(.ltr) { display: none; }
-  nav.side .side-user button.signout { width: auto; flex: none; }
+  .side-items { -webkit-mask-image: none; mask-image: none; padding-bottom: 0; }
+  .side-user { border-top: 0; padding-top: 2px; margin-top: 0; }
+  .side-menu { bottom: auto; top: calc(100% + 6px); }
+  nav.side .side-me button.me { padding: 4px; }
+  .side-me .avatar { width: 30px; height: 30px; font-size: 12px; }
   .brand { display: none; }
   main { padding-block: 12px 40px; }
   nav.side { padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
@@ -441,3 +451,20 @@ button.card.tile.wide b { display: block; font-size: 17px; margin: 2px 0; }
 table.cal td:nth-child(3) { width: 110px; }
 table.cal td:nth-child(4) { width: 280px; }
 @media (max-width: 640px) { table.cal td:nth-child(3), table.cal td:nth-child(4) { width: auto; } }
+
+/* Cash flow forecast */
+.fc-chart { position: relative; }
+.fc-bar { fill: var(--teal); opacity: .85; }
+.fc-bar.on { opacity: 1; }
+.fc-axis { stroke: var(--mut); stroke-width: 1; }
+.fc-min { stroke: var(--warn); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.fc-tick { fill: var(--mut); font-size: 11px; }
+.fc-legend { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.fc-dash { display: inline-block; width: 22px; border-top: 2px dashed var(--warn); }
+.fc-tip { position: absolute; top: 8px; transform: translateX(-50%); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12); pointer-events: none; white-space: nowrap; z-index: 2; }
+[dir="rtl"] .fc-tip { transform: translateX(50%); }
+table.fc td, table.fc th { white-space: nowrap; }
+table.fc td:first-child { position: sticky; inset-inline-start: 0; background: var(--card); }
+table.fc tr.fc-strong td { font-weight: 700; }
+table.fc tr.fc-sum td { border-top: 1px solid var(--line); font-weight: 600; }
+table.fc .fc-low { background: var(--badbg); color: var(--bad); }

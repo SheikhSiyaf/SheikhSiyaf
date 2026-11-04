@@ -312,3 +312,13 @@ Every change below is covered by a test in `test/`.
 | Debit notes: a sales document that must point to an issued invoice of the same customer, posts like an invoice, is allocated and paid like one, and goes to e-invoicing as a debit note (ZATCA type debit note, PINT AE 383) | Extra charges on an invoice already issued, as the tax authorities expect. |
 | Purchase orders: a purchases document that never posts; states draft → sent → received → billed or cancelled; a bill may point to its purchase order | Orders to suppliers before the bill arrives, and the bill made from the order. |
 | `doc_side()`, `contact_fits()`, `before_document_insert()`, `before_document_update()`, `document_amount_due()`, the e-invoice trigger and the `document_links` policy updated for the two kinds | Same rules for the new kinds. |
+
+## 0035_billing.sql
+| Change | Why |
+|---|---|
+| `billing_settings` (one row: seller name, VAT number and address, currency, VAT rate, days to pay) | What Nusuh Books prints on its own invoices. |
+| `plans` (monthly and yearly price, companies and users included, price of each extra one a month, trial days, on sale or not; never deleted), seeded with Starter, Business, Firm and Firm Plus | What customers can buy. |
+| `subscriptions` (one per customer: plan, monthly or yearly, trial, active, past due or cancelled, next bill date, discount, cancel at period end) | What each customer is on. |
+| `billing_invoices` (number NB-year-0001, the customer's name, period, lines, subtotal, discount, VAT, total; only open → paid or void, never changed or deleted; one per customer and period unless voided) | Each customer's bills. |
+| `billing_usage()`, `billing_quote()`, `billing_run()` (bills what is due, catches up missed periods, ends trials, applies cancellations, marks overdue customers past due), `billing_mark_paid()`, `billing_void()`, `billing_recipients()` | Owner or the server only; the customer's Administrator reads its own usage and quote. |
+| Row-level security: the owner writes; an Administrator reads only its own subscription and invoices; plans and seller details readable when signed in. `email_outbox.kind` gains `billing`. | Customers never see each other's billing. |

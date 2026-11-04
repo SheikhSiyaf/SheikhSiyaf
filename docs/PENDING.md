@@ -49,7 +49,7 @@ portal, calendar, approvals and forecast) plus HRM, CRM and restaurant. Grouped 
 - **CRM depth**: drag-and-drop pipeline; sending campaigns by email, SMS or WhatsApp.
 - **Fixed assets**: VAT on the sale of an asset; revaluation and impairment.
 - **Payroll depth**: monthly leave accrual provision; other pay frequencies.
-- **Owner console**: plans, billing and subscriptions, usage per customer.
+- ~~Owner console billing and subscriptions~~ done. Next: card payment of Nusuh Books invoices, and the platform's own invoices through ZATCA e-invoicing.
 
 ## D. Quality and support
 

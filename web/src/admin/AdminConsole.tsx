@@ -6,6 +6,7 @@ import { createContext, useContext, useEffect, useState, type FormEvent } from '
 import { api, setActingTenant, useApi, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { navigate } from '../router.ts';
+import { AdminBilling } from './Billing.tsx';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
 import { ArabicHint, followArabic } from '../arabic.tsx';
 
@@ -25,7 +26,7 @@ interface ClientDetail {
   staff: { id: string; name: string; role: string; status: string; assigned: boolean }[];
 }
 
-const TABS = ['Clients', 'Staff', 'Roles', 'Activity', 'Settings'] as const;
+const TABS = ['Clients', 'Staff', 'Roles', 'Activity', 'Billing', 'Settings'] as const;
 const LEGAL_FORMS = ['LLC', 'Sole establishment', 'Joint stock company', 'Partnership', 'Branch of foreign company', 'Other'] as const;
 const DERIVED = { SA: { currency: 'SAR', rate: 15 }, AE: { currency: 'AED', rate: 5 }, OM: { currency: 'OMR', rate: 5 } } as const;
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -71,7 +72,7 @@ export function AdminConsole({ me, path, onSignOut, owner }: { me: Me; path: str
           <TopControls />
         </div>
         <TenantCtx.Provider value={tenant}>
-        {tab === 'Staff' ? <Staff /> : tab === 'Roles' ? <Roles /> : tab === 'Activity' ? <Activity /> : tab === 'Settings' ? <Settings />
+        {tab === 'Staff' ? <Staff /> : tab === 'Billing' ? <AdminBilling /> : tab === 'Roles' ? <Roles /> : tab === 'Activity' ? <Activity /> : tab === 'Settings' ? <Settings />
           : adding && tenant.owner ? <AddClient /> : clientId ? <ClientPage id={clientId} /> : <Clients />}
         </TenantCtx.Provider>
       </main>

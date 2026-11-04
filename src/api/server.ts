@@ -29,6 +29,7 @@ import { registerApprovalRoutes, registerImportRoutes, registerSearchRoutes, reg
 import { registerFxRoutes, registerYearEndRoutes } from './fx.js';
 import { registerEmailRoutes } from './email.js';
 import { registerToolRoutes } from './tools.js';
+import { registerBillingRoutes } from './billing.js';
 import { configureEInvoicing } from '../books/einvoiceService.js';
 import { reviewedUpTo } from '../books/reviewService.js';
 import { registerSetupRoutes } from './setup.js';
@@ -268,6 +269,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerYearEndRoutes(app, ctx);
   registerEmailRoutes(app, ctx);
   registerToolRoutes(app, ctx);
+  registerBillingRoutes(app, ctx);
   registerSearchRoutes(app, ctx);
   registerSetupStatusRoutes(app, ctx);
   registerSetupRoutes(app, ctx);

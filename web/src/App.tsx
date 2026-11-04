@@ -1,4 +1,5 @@
 import { OwnerConsole } from './admin/OwnerConsole.tsx';
+import { BillingInvoicePage } from './admin/Billing.tsx';
 import { PublicDocument } from './pages/PublicDocument.tsx';
 import { getActingTenant } from './api.ts';
 import { useEffect } from 'react';
@@ -75,8 +76,12 @@ function Screens() {
   if (me.data.user.kind === 'owner') {
     // The owner works inside one customer's Administrator console at a time, or on the customer list.
     if (path.startsWith('/admin') && getActingTenant()) return <AdminConsole me={me.data} path={path} onSignOut={signOut} owner />;
-    return <OwnerConsole me={me.data} onSignOut={signOut} />;
+    const bi = /^\/owner\/billing\/([0-9a-f-]{36})$/.exec(path);
+    if (bi) return <BillingInvoicePage id={bi[1]!} back="/owner/billing" />;
+    return <OwnerConsole me={me.data} path={path} onSignOut={signOut} />;
   }
+  const ai = /^\/admin\/billing\/([0-9a-f-]{36})$/.exec(path);
+  if (me.data.user.kind === 'admin' && ai) return <BillingInvoicePage id={ai[1]!} back="/admin/billing" />;
   if (me.data.user.kind === 'admin') return <AdminConsole me={me.data} path={path} onSignOut={signOut} />;
 
   const m = /^\/c\/([0-9a-f-]{36})(?:\/(\w+))?/.exec(path);

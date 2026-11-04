@@ -4187,8 +4187,170 @@ routes.push(
   }],
 );
 
+// ---------------------------------------------------------------- billing and subscriptions (same rules as db/migrations/0035 and src/books/billingService.ts)
+interface MPlan { id: string; code: string; name: string; nameAr: string | null; forKind: 'firm' | 'company' | 'any'; monthlyPrice: bigint; yearlyPrice: bigint;
+  includedCompanies: number; includedUsers: number; extraCompanyPrice: bigint; extraUserPrice: bigint; trialDays: number; active: boolean }
+interface MSub { id: string; firmId: string; planId: string; cycle: 'monthly' | 'yearly'; status: 'trial' | 'active' | 'past_due' | 'cancelled'; startedOn: string;
+  trialEnds: string | null; nextBillOn: string; discountPct: string; cancelAtPeriodEnd: boolean; notes: string | null }
+interface MBillLine { key: string; name?: string; quantity: number; months?: number; unitPrice: string; amount: string }
+interface MBillInv { id: string; firmId: string; customer: string; number: string; planName: string; cycle: string; periodStart: string; periodEnd: string; issuedOn: string;
+  dueOn: string; currency: string; lines: MBillLine[]; subtotal: bigint; discount: bigint; vatRate: string; vat: bigint; total: bigint; status: 'open' | 'paid' | 'void';
+  paidOn: string | null; paidRef: string | null; voidReason: string | null }
+const bdb = { plans: [] as MPlan[], subs: [] as MSub[], invoices: [] as MBillInv[],
+  settings: { sellerName: 'Nusuh Books', sellerVat: '300000000000003', sellerAddress: 'Riyadh, Saudi Arabia', currency: 'SAR', vatRate: '15', termsDays: 14 } };
+const addDaysB = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const addMonthsB = (d: string, n: number) => { const [y, m, day] = d.split('-').map(Number) as [number, number, number]; return new Date(Date.UTC(y, m - 1 + n, day)).toISOString().slice(0, 10); };
+const planRow = (p: MPlan) => ({ ...p, monthlyPrice: s(p.monthlyPrice), yearlyPrice: s(p.yearlyPrice), extraCompanyPrice: s(p.extraCompanyPrice), extraUserPrice: s(p.extraUserPrice),
+  customers: bdb.subs.filter((x) => x.planId === p.id && x.status !== 'cancelled').length });
+const usageB = (firmId: string) => ({ companies: db.companies.filter((c) => c.firmId === firmId && c.status === 'active').length,
+  users: db.users.filter((u) => u.firmId === firmId && u.status === 'active' && (u.kind === 'firm_staff' || u.kind === 'client')).length });
+const pctOf = (amount: bigint, pct: string) => divRoundHalfUp(amount * toMinor(pct), 10000n);
+function quoteB(sub: MSub, start: string) {
+  const p = bdb.plans.find((x) => x.id === sub.planId)!; const u = usageB(sub.firmId); const months = sub.cycle === 'yearly' ? 12 : 1;
+  const base = sub.cycle === 'yearly' ? p.yearlyPrice : p.monthlyPrice;
+  const lines: (MBillLine & { v: bigint })[] = [{ key: 'plan', name: p.name, quantity: 1, unitPrice: s(base), amount: s(base), v: base }];
+  const ec = Math.max(0, u.companies - p.includedCompanies), eu = Math.max(0, u.users - p.includedUsers);
+  if (ec > 0 && p.extraCompanyPrice > 0n) { const v = BigInt(ec * months) * p.extraCompanyPrice; lines.push({ key: 'extraCompanies', quantity: ec, months, unitPrice: s(p.extraCompanyPrice), amount: s(v), v }); }
+  if (eu > 0 && p.extraUserPrice > 0n) { const v = BigInt(eu * months) * p.extraUserPrice; lines.push({ key: 'extraUsers', quantity: eu, months, unitPrice: s(p.extraUserPrice), amount: s(v), v }); }
+  const subtotal = lines.reduce((a, l) => a + l.v, 0n); const discount = pctOf(subtotal, sub.discountPct); const vat = pctOf(subtotal - discount, bdb.settings.vatRate);
+  return { planName: p.name, cycle: sub.cycle, periodStart: start, periodEnd: addDaysB(addMonthsB(start, months), -1), currency: bdb.settings.currency,
+    lines: lines.map(({ v: _v, ...l }) => l), subtotal, discount, vat, total: subtotal - discount + vat, vatRate: bdb.settings.vatRate, ...u,
+    includedCompanies: p.includedCompanies, includedUsers: p.includedUsers };
+}
+function runBillingM(day: string) {
+  let made = 0;
+  for (const sub of bdb.subs.filter((x) => x.status !== 'cancelled' && x.nextBillOn <= day)) {
+    for (let guard = 0; sub.nextBillOn <= day && guard < 24; guard++) {
+      if (sub.cancelAtPeriodEnd) { sub.status = 'cancelled'; break; }
+      const q = quoteB(sub, sub.nextBillOn);
+      const n = bdb.invoices.filter((x) => x.number.startsWith(`NB-${day.slice(0, 4)}-`)).length + 1;
+      bdb.invoices.push({ id: uid(), firmId: sub.firmId, customer: firmOf(sub.firmId).name, number: `NB-${day.slice(0, 4)}-${String(n).padStart(4, '0')}`, planName: q.planName,
+        cycle: sub.cycle, periodStart: q.periodStart, periodEnd: q.periodEnd, issuedOn: day, dueOn: addDaysB(day, bdb.settings.termsDays), currency: q.currency, lines: q.lines,
+        subtotal: q.subtotal, discount: q.discount, vatRate: q.vatRate, vat: q.vat, total: q.total, status: 'open', paidOn: null, paidRef: null, voidReason: null });
+      made++;
+      sub.nextBillOn = addDaysB(q.periodEnd, 1);
+      if (sub.status === 'trial') sub.status = 'active';
+    }
+  }
+  for (const sub of bdb.subs) if (sub.status === 'active' && bdb.invoices.some((b) => b.firmId === sub.firmId && b.status === 'open' && b.dueOn < day)) sub.status = 'past_due';
+  return made;
+}
+const backToActiveB = (firmId: string) => { const sub = bdb.subs.find((x) => x.firmId === firmId);
+  if (sub?.status === 'past_due' && !bdb.invoices.some((b) => b.firmId === firmId && b.status === 'open' && b.dueOn < today())) sub.status = 'active'; };
+const invRowB = (b: MBillInv) => ({ ...b, subtotal: s(b.subtotal), discount: s(b.discount), vat: s(b.vat), total: s(b.total),
+  status: b.status === 'open' && b.dueOn < today() ? 'overdue' : b.status });
+const quoteRowB = (q: ReturnType<typeof quoteB>) => ({ ...q, subtotal: s(q.subtotal), discount: s(q.discount), vat: s(q.vat), total: s(q.total) });
+const subRowB = (x: MSub) => { const p = bdb.plans.find((y) => y.id === x.planId)!;
+  return { ...x, planName: p.name, includedCompanies: p.includedCompanies, includedUsers: p.includedUsers, price: s(x.cycle === 'yearly' ? p.yearlyPrice : p.monthlyPrice),
+    extraCompanyPrice: s(p.extraCompanyPrice), extraUserPrice: s(p.extraUserPrice) }; };
+const MONEY_B = /^\d{1,12}(\.\d{1,2})?$/;
+function savePlanM(id: string | null, b: Body) {
+  owner();
+  const name = String(b?.name ?? '').trim(), code = String(b?.code ?? '').trim().toLowerCase();
+  if (!name) fail(400, 'Enter the plan name.', 'err.planName');
+  if (!/^[a-z0-9_-]{2,30}$/.test(code)) fail(400, 'Give the plan a short code (letters, numbers, dashes).', 'err.planCode');
+  if (!['firm', 'company', 'any'].includes(String(b?.forKind))) fail(400, 'Choose who the plan is for.', 'err.planKind');
+  const money = [b?.monthlyPrice, b?.yearlyPrice, b?.extraCompanyPrice ?? '0', b?.extraUserPrice ?? '0'].map((x) => String(x ?? '').trim());
+  if (money.some((x) => !MONEY_B.test(x))) fail(400, 'Enter the prices as amounts, for example 199 or 199.50.', 'err.planPrice');
+  const ints = [b?.includedCompanies, b?.includedUsers, b?.trialDays ?? 14].map(Number) as [number, number, number];
+  if (ints.some((x) => !Number.isInteger(x) || x < 0) || ints[2] > 90) fail(400, 'Enter whole numbers for what is included (trial up to 90 days).', 'err.planNumbers');
+  if (bdb.plans.some((p) => p.code === code && p.id !== id)) fail(400, 'Another plan has this code.', 'err.planCodeTaken');
+  const v = { code, name, nameAr: String(b?.nameAr ?? '').trim() || null, forKind: b!.forKind as MPlan['forKind'], monthlyPrice: toMinor(money[0]!), yearlyPrice: toMinor(money[1]!),
+    extraCompanyPrice: toMinor(money[2]!), extraUserPrice: toMinor(money[3]!), includedCompanies: ints[0], includedUsers: ints[1], trialDays: ints[2], active: b?.active !== false };
+  if (id) { const p = bdb.plans.find((x) => x.id === id) ?? fail(404, 'Not found.', 'err.notFound'); Object.assign(p, v); return { id }; }
+  const p = { id: uid(), ...v }; bdb.plans.push(p); return { id: p.id };
+}
+function saveSubM(firmId: string, b: Body) {
+  owner();
+  const f = firms.find((x) => x.id === firmId && x.kind !== 'platform') ?? fail(404, 'Not found.', 'err.notFound');
+  const p = bdb.plans.find((x) => x.id === b?.planId && x.active) ?? fail(400, 'Choose a plan.', 'err.pickPlan');
+  if (p.forKind !== 'any' && p.forKind !== f.kind) fail(400, 'This plan is for another kind of customer.', 'err.planWrongKind');
+  if (b?.cycle !== 'monthly' && b?.cycle !== 'yearly') fail(400, 'Choose monthly or yearly.', 'err.cycle');
+  const disc = String(b?.discountPct ?? '0').trim() || '0';
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(disc) || Number(disc) > 100) fail(400, 'The discount is 0 to 100 percent.', 'err.discount');
+  const notes = String(b?.notes ?? '').trim() || null;
+  const cur = bdb.subs.find((x) => x.firmId === firmId);
+  if (cur && cur.status !== 'cancelled') { Object.assign(cur, { planId: p.id, cycle: b!.cycle, discountPct: disc, notes }); return { id: cur.id }; }
+  const start = String(b?.startOn ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) fail(400, 'Choose the start date.', 'err.startDate');
+  if (Number(start.slice(8)) > 28) fail(400, 'Start on day 1 to 28, so the bill date is the same every month.', 'err.startDay');
+  let trialEnds = b?.trial && p.trialDays > 0 ? addDaysB(start, p.trialDays) : null;
+  if (trialEnds && Number(trialEnds.slice(8)) > 28) trialEnds = addDaysB(trialEnds.slice(0, 8) + '28', 4).slice(0, 8) + '01';
+  const v = { planId: p.id, cycle: b!.cycle as MSub['cycle'], status: (trialEnds ? 'trial' : 'active') as MSub['status'], startedOn: start, trialEnds, nextBillOn: trialEnds ?? start,
+    discountPct: disc, notes, cancelAtPeriodEnd: false };
+  if (cur) { Object.assign(cur, v); return { id: cur.id }; }
+  const x = { id: uid(), firmId, ...v }; bdb.subs.push(x); return { id: x.id };
+}
+routes.push(
+  ['GET', /^\/api\/owner\/billing$/, () => { owner();
+    const customers = firms.filter((f) => f.kind !== 'platform').sort((a, b) => a.name.localeCompare(b.name)).map((f) => {
+      const sub = bdb.subs.find((x) => x.firmId === f.id); const open = bdb.invoices.filter((b) => b.firmId === f.id && b.status === 'open');
+      return { firmId: f.id, name: f.name, kind: f.kind, tenantStatus: f.status, ...usageB(f.id), subscription: sub ? subRowB(sub) : null,
+        owed: s(open.reduce((a, b) => a + b.total, 0n)), overdue: s(open.filter((b) => b.dueOn < today()).reduce((a, b) => a + b.total, 0n)) };
+    });
+    return { customers, plans: bdb.plans.map(planRow), settings: bdb.settings };
+  }],
+  ['GET', /^\/api\/owner\/plans$/, () => { owner(); return bdb.plans.map(planRow).sort((a, b) => Number(b.active) - Number(a.active) || Number(toMinor(a.monthlyPrice) - toMinor(b.monthlyPrice))); }],
+  ['POST', /^\/api\/owner\/plans$/, (_m, b) => savePlanM(null, b)],
+  ['POST', /^\/api\/owner\/plans\/([\w-]+)$/, (m, b) => savePlanM(m[1]!, b)],
+  ['POST', /^\/api\/owner\/billing\/settings$/, (_m, b) => { owner();
+    const name = String(b?.sellerName ?? '').trim(); if (!name) fail(400, 'Enter the seller name shown on invoices.', 'err.sellerName');
+    const rate = String(b?.vatRate ?? '').trim(); if (!/^\d{1,3}(\.\d{1,2})?$/.test(rate) || Number(rate) > 100) fail(400, 'Enter the VAT rate, for example 15.', 'err.vatRate');
+    const terms = Number(b?.termsDays); if (!Number.isInteger(terms) || terms < 0 || terms > 90) fail(400, 'Payment terms are 0 to 90 days.', 'err.termsDays');
+    Object.assign(bdb.settings, { sellerName: name, sellerVat: String(b?.sellerVat ?? '').trim() || null, sellerAddress: String(b?.sellerAddress ?? '').trim() || null,
+      currency: String(b?.currency ?? 'SAR'), vatRate: rate, termsDays: terms });
+    return { ok: true };
+  }],
+  ['POST', /^\/api\/owner\/tenants\/([\w-]+)\/subscription$/, (m, b) => saveSubM(m[1]!, b)],
+  ['POST', /^\/api\/owner\/tenants\/([\w-]+)\/subscription\/cancel$/, (m, b) => { owner();
+    const sub = bdb.subs.find((x) => x.firmId === m[1]); if (!sub || sub.status === 'cancelled') fail(400, 'This customer has no subscription to change.', 'err.noSubscription');
+    const cancel = b?.cancel !== false;
+    if (cancel && sub!.status === 'trial') sub!.status = 'cancelled'; else sub!.cancelAtPeriodEnd = cancel;
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/owner\/billing\/invoices$/, (_m, _b, q) => { owner();
+    return bdb.invoices.filter((x) => !q.get('firm') || x.firmId === q.get('firm')).sort((a, b) => b.issuedOn.localeCompare(a.issuedOn) || b.number.localeCompare(a.number)).map(invRowB); }],
+  ['POST', /^\/api\/owner\/billing\/run$/, (_m, b) => { owner(); return { made: runBillingM(String(b?.day || today())) }; }],
+  ['POST', /^\/api\/owner\/billing\/invoices\/([\w-]+)\/paid$/, (m, b) => { owner();
+    const x = bdb.invoices.find((y) => y.id === m[1] && y.status === 'open') ?? fail(400, 'Only an open invoice can be marked paid.', 'err.billOpenOnly');
+    x.status = 'paid'; x.paidOn = /^\d{4}-\d{2}-\d{2}$/.test(String(b?.paidOn)) ? String(b!.paidOn) : today(); x.paidRef = String(b?.reference ?? '').trim() || null;
+    backToActiveB(x.firmId); return { ok: true };
+  }],
+  ['POST', /^\/api\/owner\/billing\/invoices\/([\w-]+)\/void$/, (m, b) => { owner();
+    const reason = String(b?.reason ?? '').trim(); if (!reason) fail(400, 'Say why the invoice is voided.', 'err.voidReason');
+    const x = bdb.invoices.find((y) => y.id === m[1] && y.status === 'open') ?? fail(400, 'Only an open invoice can be voided.', 'err.billOpenOnly');
+    x.status = 'void'; x.voidReason = reason; backToActiveB(x.firmId); return { ok: true };
+  }],
+  ['GET', /^\/api\/billing\/invoices\/([\w-]+)$/, (m) => {
+    const x = bdb.invoices.find((y) => y.id === m[1] && (isOwner() || (me().kind === 'admin' && y.firmId === currentFirm()))) ?? fail(404, 'Not found.', 'err.notFound');
+    return { ...invRowB(x), seller: bdb.settings };
+  }],
+  ['GET', /^\/api\/admin\/billing$/, () => { admin(); const firmId = currentFirm();
+    const sub = bdb.subs.find((x) => x.firmId === firmId);
+    const next = sub && sub.status !== 'cancelled' && !sub.cancelAtPeriodEnd ? quoteRowB(quoteB(sub, sub.nextBillOn)) : null;
+    return { subscription: sub ? subRowB(sub) : null, usage: usageB(firmId), next,
+      invoices: bdb.invoices.filter((x) => x.firmId === firmId).sort((a, b) => b.issuedOn.localeCompare(a.issuedOn)).map(invRowB), seller: bdb.settings };
+  }],
+);
+/** Sample billing: the four plans, the demo firm on Firm (monthly, paid up), the company on Business with an unpaid invoice. */
+function seedBilling() {
+  const P = (code: string, name: string, nameAr: string, forKind: MPlan['forKind'], m: string, y: string, ic: number, iu: number, ec: string, eu: string): MPlan =>
+    ({ id: uid(), code, name, nameAr, forKind, monthlyPrice: toMinor(m), yearlyPrice: toMinor(y), includedCompanies: ic, includedUsers: iu, extraCompanyPrice: toMinor(ec), extraUserPrice: toMinor(eu), trialDays: 14, active: true });
+  bdb.plans.push(P('starter', 'Starter', 'البداية', 'company', '149', '1490', 1, 3, '0', '39'), P('business', 'Business', 'الأعمال', 'company', '399', '3990', 3, 10, '99', '29'),
+    P('firm', 'Firm', 'مكتب محاسبة', 'firm', '799', '7990', 10, 5, '59', '39'), P('firm_plus', 'Firm Plus', 'مكتب محاسبة بلس', 'firm', '2499', '24990', 50, 20, '39', '29'));
+  const t0 = today(); const day = Number(t0.slice(8)) > 28 ? '28' : t0.slice(8);
+  const start = addMonthsB(`${t0.slice(0, 8)}${day}`, -3);
+  const firm = firms.find((f) => f.kind === 'firm')!, self = firms.find((f) => f.kind === 'company')!;
+  bdb.subs.push({ id: uid(), firmId: firm.id, planId: bdb.plans[2]!.id, cycle: 'monthly', status: 'active', startedOn: start, trialEnds: null, nextBillOn: start, discountPct: '0', cancelAtPeriodEnd: false, notes: null },
+    { id: uid(), firmId: self.id, planId: bdb.plans[1]!.id, cycle: 'monthly', status: 'active', startedOn: start, trialEnds: null, nextBillOn: start, discountPct: '10', cancelAtPeriodEnd: false, notes: 'Launch discount' });
+  runBillingM(t0);
+  for (const b of bdb.invoices) if (b.firmId === firm.id || b.issuedOn < addDaysB(t0, -20)) { b.status = 'paid'; b.paidOn = addDaysB(b.issuedOn, 5) > t0 ? t0 : addDaysB(b.issuedOn, 5); b.paidRef = 'Bank transfer'; }
+  for (const sub of bdb.subs) backToActiveB(sub.firmId);
+}
+
 // Sample data is created once everything above is defined.
 seed();
+seedBilling();
 seedEinvoicing();
 seedApprovals();
 db.activity.push({ id: uid(), firmId: firms.find((f) => f.name === DEMO_FIRM)!.id, at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });

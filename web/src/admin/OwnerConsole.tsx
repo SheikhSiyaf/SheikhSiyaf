@@ -5,6 +5,7 @@ import { useState, type FormEvent } from 'react';
 import { api, setActingTenant, useApi, type Me } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
 import { navigate } from '../router.ts';
+import { OwnerBilling, OwnerPlans } from './Billing.tsx';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
 
 interface Tenant { id: string; name: string; kind: 'firm' | 'company'; status: 'active' | 'suspended'; createdAt: string; companies: number; users: number; admins: string | null }
@@ -16,7 +17,26 @@ export function openTenant(t: { id: string; name: string; kind: string }) {
   navigate('/admin/clients');
 }
 
-export function OwnerConsole({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
+const OWNER_TABS = [['customers', '/owner'], ['billing', '/owner/billing'], ['plans', '/owner/plans']] as const;
+
+export function OwnerConsole({ me, path, onSignOut }: { me: Me; path: string; onSignOut: () => void }) {
+  const { t } = useI18n();
+  const tab = path.startsWith('/owner/billing') ? 'billing' : path.startsWith('/owner/plans') ? 'plans' : 'customers';
+  const title = t(`own.tab.${tab}`);
+  return (
+    <div className="app">
+      <Sidebar subtitle={t('own.console')} user={me.user} roleLabel={t('own.role')} onSignOut={onSignOut}>
+        {OWNER_TABS.map(([k, to]) => <button key={k} id={`own-tab-${k}`} className={k === tab ? 'on' : ''} aria-current={k === tab ? 'page' : undefined} onClick={() => navigate(to)}>{t(`own.tab.${k}`)}</button>)}
+      </Sidebar>
+      <main>
+        <div className="top"><h1>{title}</h1><TopControls /></div>
+        {tab === 'billing' ? <OwnerBilling /> : tab === 'plans' ? <OwnerPlans /> : <Customers />}
+      </main>
+    </div>
+  );
+}
+
+function Customers() {
   const { t, has } = useI18n();
   const list = useApi<Tenant[]>('/api/owner/tenants');
   const [form, setForm] = useState<{ name: string; kind: 'firm' | 'company'; adminName: string; adminEmail: string }>();
@@ -35,12 +55,7 @@ export function OwnerConsole({ me, onSignOut }: { me: Me; onSignOut: () => void 
   };
   const rows = list.data ?? [];
   return (
-    <div className="app">
-      <Sidebar subtitle={t('own.console')} user={me.user} roleLabel={t('own.role')} onSignOut={onSignOut}>
-        <button className="on">{t('own.customers')}</button>
-      </Sidebar>
-      <main>
-        <div className="top"><h1>{t('own.customers')}</h1><TopControls /></div>
+    <>
         <div className="grid">
           <div className="card fig"><small>{t('own.firms')}</small><b>{rows.filter((x) => x.kind === 'firm').length}</b><small>{t('own.firmsSub')}</small></div>
           <div className="card fig"><small>{t('own.companies')}</small><b>{rows.filter((x) => x.kind === 'company').length}</b><small>{t('own.companiesSub')}</small></div>
@@ -102,7 +117,6 @@ export function OwnerConsole({ me, onSignOut }: { me: Me; onSignOut: () => void 
             </table></div>
           )}
         </div>
-      </main>
-    </div>
+    </>
   );
 }

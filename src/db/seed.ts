@@ -460,6 +460,21 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
            AND end_date < date_trunc('month', current_date) - interval '1 month'`, [id]);
       await client.query('COMMIT');
     }
+
+    // Billing: the firm on the Firm plan, paid up; the company on Business with its latest invoice unpaid. Billed by the
+    // server (nobody signed in), as the daily job does.
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('app.user_id', '', true)`);
+    const start = `(date_trunc('month', current_date) - interval '3 months')::date`;
+    await client.query(`INSERT INTO subscriptions (firm_id, plan_id, cycle, status, started_on, next_bill_on)
+      SELECT $1, id, 'monthly', 'active', ${start}, ${start} FROM plans WHERE code = 'firm'`, [firmId]);
+    await client.query(`INSERT INTO subscriptions (firm_id, plan_id, cycle, status, started_on, next_bill_on, discount_pct, notes)
+      SELECT $1, id, 'monthly', 'active', ${start}, ${start}, 10, 'Launch discount' FROM plans WHERE code = 'business'`, [selfId]);
+    await client.query('SELECT * FROM billing_run(current_date)');
+    for (const b of (await client.query(`SELECT id, period_start FROM billing_invoices WHERE firm_id = $1 OR period_start < date_trunc('month', current_date)`, [firmId])).rows) {
+      await client.query(`SELECT billing_mark_paid($1, $2::date + 5, 'Bank transfer')`, [b.id, b.period_start]);
+    }
+    await client.query('COMMIT');
     return 'seeded';
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);

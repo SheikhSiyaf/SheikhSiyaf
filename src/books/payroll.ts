@@ -23,6 +23,35 @@ export function overlapDays(periodEnd: string, from: string, to: string | null):
   return a > b ? 0 : daysBetween(a, b);
 }
 
+// ------------------------------------------------------------------ service in calendar years
+const ymd = (d: string) => [+d.slice(0, 4), +d.slice(5, 7), +d.slice(8, 10)] as const;
+const dayNo = (d: string) => { const [y, m, dd] = ymd(d); return Date.UTC(y, m - 1, dd) / 86400000; };
+const iso = (t: number) => new Date(t * 86400000).toISOString().slice(0, 10);
+/** The date k months after the join date, on the same day of the month or the month's last day when it has fewer
+ *  (a join date of 29 February has its anniversary on 28 February in other years). Always counted from the join date. */
+export function monthsAfter(join: string, k: number): string {
+  const [y, m, d] = ymd(join);
+  const t = m - 1 + k, ny = y + Math.floor(t / 12), nm = ((t % 12) + 12) % 12;
+  const last = new Date(Date.UTC(ny, nm + 1, 0)).getUTCDate();
+  return iso(Date.UTC(ny, nm, Math.min(d, last)) / 86400000);
+}
+/** Service from the join date to the end date: whole calendar months since the join date, then the days since the
+ *  last monthly anniversary over the days of that month. Years = (months + days / monthDays) / 12, exactly. */
+export interface Service { months: number; days: number; monthDays: number }
+export function serviceBetween(join: string, end: string): Service {
+  if (end <= join) return { months: 0, days: 0, monthDays: 1 };
+  const [jy, jm] = ymd(join), [ey, em] = ymd(end);
+  let months = (ey - jy) * 12 + (em - jm);
+  while (months > 0 && monthsAfter(join, months) > end) months--;
+  const anchor = monthsAfter(join, months), next = monthsAfter(join, months + 1);
+  return { months, days: dayNo(end) - dayNo(anchor), monthDays: dayNo(next) - dayNo(anchor) };
+}
+/** Service as an exact fraction of years: num / den. */
+const yearsFraction = (sv: Service) => ({ num: BigInt(sv.months * sv.monthDays + sv.days), den: BigInt(12 * sv.monthDays) });
+/** Whole years completed (a person is "2 years" from the second anniversary of the join date). */
+export const wholeYears = (sv: Service) => Math.floor(sv.months / 12);
+const nextDay = (d: string) => iso(dayNo(d) + 1);
+
 // ------------------------------------------------------------------ social insurance
 export type Scheme = 'gosi' | 'gpssa' | 'none';
 export interface InsuranceInput { country: Country; national: boolean; registeredOn: string | null; pay: PayStructure; asOf: string }
@@ -100,16 +129,22 @@ export function sickUnpaidHundredths(country: Country, priorDays: number, days: 
 }
 
 // ------------------------------------------------------------------ annual leave
-/** Annual leave a year: Saudi Arabia 21 days, 30 from the 5th year of service (art. 109); UAE 30 days (art. 29). */
-export const annualLeaveDays = (country: Country, serviceDays: number) => (country === 'SA' ? (serviceDays > 5 * 365 ? 30 : 21) : 30);
+/** Annual leave a year: Saudi Arabia 21 days, 30 once 5 years of service are completed (art. 109); UAE 30 days
+ *  (art. 29). Years are calendar years of service through the end of asOf. */
+export const annualLeaveDays = (country: Country, joinDate: string, asOf: string) =>
+  (country === 'SA' ? (wholeYears(serviceBetween(joinDate, nextDay(asOf))) >= 5 ? 30 : 21) : 30);
 
-/** Leave earned from the join date to asOf, in hundredths of a day (pro rata by day; SA moves to 30 a year after 5 years). */
+/** Leave earned from the join date through the end of asOf, in hundredths of a day: the yearly entitlement times the
+ *  service in calendar years (SA moves to 30 a year after the 5th anniversary). Exact, rounded once at the end. */
 export function leaveEarnedHundredths(country: Country, joinDate: string, asOf: string, perYear?: number | null): number {
   if (asOf < joinDate) return 0;
-  const d = daysBetween(joinDate, asOf);
-  if (perYear) return Math.round((d * perYear * 100) / 365);
-  if (country === 'SA') return Math.round(((Math.min(d, 1825) * 21 + Math.max(d - 1825, 0) * 30) * 100) / 365);
-  return Math.round((d * 30 * 100) / 365);
+  const { num, den } = yearsFraction(serviceBetween(joinDate, nextDay(asOf)));
+  if (perYear) return Number(divRoundHalfUp(num * BigInt(perYear) * 100n, den));
+  if (country === 'SA') {
+    const five = 5n * den, first = num < five ? num : five, after = num > five ? num - five : 0n;
+    return Number(divRoundHalfUp((first * 21n + after * 30n) * 100n, den));
+  }
+  return Number(divRoundHalfUp(num * 30n * 100n, den));
 }
 
 /** Pay for a number of leave days (hundredths): Saudi Arabia on the full wage, UAE on the basic wage, a day = 1/30 of a month. */
@@ -120,7 +155,7 @@ export const leaveDaysPay = (country: Country, pay: PayStructure, hundredths: nu
 export type LeavingReason = 'resignation' | 'termination' | 'contract_end' | 'retirement' | 'death' | 'other';
 export const LEAVING_REASONS: LeavingReason[] = ['resignation', 'termination', 'contract_end', 'retirement', 'death', 'other'];
 export interface EosInput { country: Country; joinDate: string; endDate: string; pay: PayStructure; reason: LeavingReason }
-export interface Eos { serviceDays: number; basis: Minor; full: Minor; share: '1' | '2/3' | '1/3' | '0'; amount: Minor }
+export interface Eos { serviceDays: number; service: { years: number; months: number; days: number }; basis: Minor; full: Minor; share: '1' | '2/3' | '1/3' | '0'; amount: Minor }
 
 /**
  * End of service benefit.
@@ -131,25 +166,35 @@ export interface Eos { serviceDays: number; basis: Minor; full: Minor; share: '1
  * of the monthly basic wage; nothing under 1 year of service; at most 2 years' basic wage.
  * With accrual, the amount owed as if the person left today for a reason giving the full benefit, from day one:
  * this is what the end of service provision holds.
+ * Service is measured in calendar years, months and days from the join date to the end date (serviceBetween), so a
+ * leap day adds nothing; the thresholds use completed years (2 years from the second anniversary). The amount is
+ * worked out exactly and rounded once, half away from zero.
  */
 export function endOfService(i: EosInput, accrual = false): Eos {
   const d = Math.max(daysBetween(i.joinDate, i.endDate), 0);
-  const first = BigInt(Math.min(d, 1825)), after = BigInt(Math.max(d - 1825, 0));
+  const sv = serviceBetween(i.joinDate, i.endDate);
+  const service = { years: wholeYears(sv), months: sv.months % 12, days: sv.days };
+  const { num, den } = yearsFraction(sv);
+  const five = 5n * den, first = num < five ? num : five, after = num > five ? num - five : 0n;
+  const years = service.years;
   if (i.country === 'SA') {
     const basis = monthlyWage(i.pay);
-    const full = divRoundHalfUp(basis * (first + 2n * after), 730n);
+    // Half a month for each of the first 5 years, a month for each year after: basis x (first / 2 + after) / den.
+    const exact = basis * (first + 2n * after), per = 2n * den;
+    const full = divRoundHalfUp(exact, per);
     let share: Eos['share'] = '1';
-    if (!accrual && i.reason === 'resignation') share = d < 730 ? '0' : d < 1825 ? '1/3' : d < 3650 ? '2/3' : '1';
-    const amount = share === '1' ? full : share === '0' ? 0n : divRoundHalfUp(full * (share === '2/3' ? 2n : 1n), 3n);
-    return { serviceDays: d, basis, full, share, amount };
+    if (!accrual && i.reason === 'resignation') share = years < 2 ? '0' : years < 5 ? '1/3' : years < 10 ? '2/3' : '1';
+    const amount = share === '1' ? full : share === '0' ? 0n : divRoundHalfUp(exact * (share === '2/3' ? 2n : 1n), per * 3n);
+    return { serviceDays: d, service, basis, full, share, amount };
   }
   if (i.country === 'AE') {
     const basis = i.pay.basic;
-    const full = min(divRoundHalfUp(basis * (21n * first + 30n * after), 30n * 365n), basis * 24n);
-    const share: Eos['share'] = !accrual && d < 365 ? '0' : '1';
-    return { serviceDays: d, basis, full, share, amount: share === '1' ? full : 0n };
+    // 21 days (of 30) of basic for each of the first 5 years, 30 days for each year after; at most 24 months of basic.
+    const full = min(divRoundHalfUp(basis * (21n * first + 30n * after), 30n * den), basis * 24n);
+    const share: Eos['share'] = !accrual && years < 1 ? '0' : '1';
+    return { serviceDays: d, service, basis, full, share, amount: share === '1' ? full : 0n };
   }
-  return { serviceDays: d, basis: 0n, full: 0n, share: '0', amount: 0n };   // Oman: comes with PASI
+  return { serviceDays: d, service, basis: 0n, full: 0n, share: '0', amount: 0n };   // Oman: comes with PASI
 }
 
 // ------------------------------------------------------------------ one employee's month

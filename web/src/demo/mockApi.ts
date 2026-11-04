@@ -2630,7 +2630,7 @@ routes.push(
   ['POST', /^\/api\/companies\/([\w-]+)\/hr\/leave$/, (m, b) => ({ id: saveLeaveM(inCo(m[1]!), b) })],
   ['GET', /^\/api\/companies\/([\w-]+)\/hr\/leave-balances$/, (m, _b, q) => { const asOf = q.get('asOf') || today();
     return empsOf(inCo(m[1]!)).filter((e) => e.hasProfile && !e.settled).map((e) => ({ contactId: e.id, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo,
-      perYear: e.annualLeaveDays ?? Pay.annualLeaveDays(e.country, Pay.daysBetween(e.joinDate!, asOf)), ...leaveBalanceM(e, asOf) })); }],
+      perYear: e.annualLeaveDays ?? Pay.annualLeaveDays(e.country, e.joinDate!, asOf), ...leaveBalanceM(e, asOf) })); }],
   ['POST', /^\/api\/leave\/([\w-]+)\/status$/, (m, b) => { decideLeaveM(m[1]!, String(b?.status)); return { ok: true }; }],
   ['GET', /^\/api\/companies\/([\w-]+)\/hr\/loans$/, (m) => { const id = inCo(m[1]!);
     return hdb.loans.filter((l) => l.companyId === id).sort((a, b) => b.issueDate.localeCompare(a.issueDate)).map((l) => { const c = sdb.contacts.find((x) => x.id === l.contactId)!;

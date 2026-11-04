@@ -160,7 +160,7 @@ export async function leaveBalance(db: Db, e: Emp, asOf: string): Promise<{ earn
 export async function leaveBalances(db: Db, companyId: string, asOf = today()) {
   const out = [];
   for (const e of (await employees(db, companyId)).filter((x) => x.hasProfile && !x.settled)) {
-    out.push({ contactId: e.id, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo, perYear: e.annualLeaveDays ?? P.annualLeaveDays(e.country, P.daysBetween(e.joinDate!, asOf)), ...(await leaveBalance(db, e, asOf)) });
+    out.push({ contactId: e.id, name: e.name, nameAr: e.nameAr, employeeNo: e.employeeNo, perYear: e.annualLeaveDays ?? P.annualLeaveDays(e.country, e.joinDate!, asOf), ...(await leaveBalance(db, e, asOf)) });
   }
   return out;
 }

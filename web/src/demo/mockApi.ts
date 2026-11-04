@@ -680,7 +680,7 @@ function seedSales(companyId: string, poster: string, c: { country: string; city
   const cc = (name: string) => db.costCentres.find((x) => x.companyId === companyId && x.name === name)!.id;
   const vatNo = (n: number) => (c.country === 'SA' ? `3${String(n).padStart(13, '0')}3` : String(100000000000000 + n));
   const contact = (cust: boolean, name: string, nameAr: string, vatN?: number, terms = 30) =>
-    saveContactM(companyId, { isCustomer: cust, isSupplier: !cust, name, nameAr, country: c.country, vatNumber: vatN ? vatNo(vatN) : '', paymentTermsDays: terms, city: c.city,
+    saveContactM(companyId, { isCustomer: cust, isSupplier: !cust, name, nameAr, email: cust ? `accounts@${name.toLowerCase().replace(/[^a-z]+/g, '')}.example` : undefined, country: c.country, vatNumber: vatN ? vatNo(vatN) : '', paymentTermsDays: terms, city: c.city,
       ...(cust && c.country === 'SA' && vatN ? { address: 'King Fahd Road', buildingNumber: String(1000 + (vatN % 9000)), district: 'Al Olaya', postalCode: '12211' } : {}) });
   const gulf = contact(true, 'Gulf Steel Trading', 'الخليج للحديد', 1234567);
   const faisal = contact(true, 'Al Faisal Contracting', 'الفيصل للمقاولات', 7654321);
@@ -2645,6 +2645,127 @@ routes.push(
   ['POST', /^\/api\/emails\/([\w-]+)\/retry$/, () => ({ ok: true })],
   ['GET', /^\/api\/public\/documents\/([\w-]+)$/, (m) => publicDocM(m[1]!)],
   ['POST', /^\/api\/password-reset$/, () => ({ ok: true })],
+);
+
+// ---------------------------------------------------------------- accountant tools (same rules as src/books/toolsService.ts)
+interface MRecInv { id: string; companyId: string; name: string; contactId: string; frequency: string; nextDate: string; anchorDay: number; endDate: string | null; termsDays: number;
+  active: boolean; mode: string; lines: Record<string, unknown>[]; reference: string | null; notes: string | null; lastProblem: string | null; createdBy: string }
+const tdb = { recs: [] as MRecInv[], recDocs: new Map<string, string>(), reminders: [] as { documentId: string; level: number; at: string }[],
+  remSettings: new Map<string, { auto: boolean; days: number[]; message: string | null; enabledBy: string | null }>(),
+  budgets: [] as { id: string; companyId: string; name: string; startDate: string; status: string; lines: { accountId: string; costCentreId: string | null; months: bigint[] }[] }[],
+  reads: new Set<string>() };
+const recInvRow = (r: MRecInv) => { const c = sdb.contacts.find((x) => x.id === r.contactId)!; const rate = company(r.companyId).vatRate;
+  let gross = 0n; for (const l of r.lines) { try { const p = priceLine(l as never, rate); gross += p.net + p.vat; } catch { /* checked */ } }
+  return { ...r, customer: c.name, customerAr: c.nameAr, customerEmail: c.email, grossAmount: s(gross), due: r.active && r.nextDate <= today() && (!r.endDate || r.nextDate <= r.endDate),
+    made: [...tdb.recDocs.values()].filter((x) => x === r.id).length }; };
+function saveRecInvM(companyId: string, b: Body, id?: string) {
+  canPostIn(companyId);
+  const name = String(b?.name ?? '').trim() || fail(400, 'Give it a name.', 'err.recurringName');
+  if (!b?.contactId) fail(400, 'Choose the customer.', 'err.contact');
+  if (!['weekly', 'monthly', 'quarterly', 'yearly'].includes(String(b?.frequency))) fail(400, 'Choose how often it repeats.', 'err.frequency');
+  const nextDate = dt(b?.nextDate) ?? fail(400, 'Enter the next date.', 'err.date');
+  const lines = (b?.lines as Record<string, unknown>[]) ?? []; if (!lines.length) fail(400, 'Add at least one line.', 'err.noLines');
+  const v = { name, contactId: String(b!.contactId), frequency: String(b!.frequency), nextDate, anchorDay: Number(nextDate.slice(8, 10)), endDate: dt(b?.endDate), termsDays: Number(b?.termsDays ?? 30),
+    active: b?.active !== false, mode: ['draft', 'issue', 'issue_and_email'].includes(String(b?.mode)) ? String(b!.mode) : 'draft', lines, reference: str(b?.reference), notes: str(b?.notes), lastProblem: null };
+  if (id) { Object.assign(tdb.recs.find((r) => r.id === id) ?? fail(404, 'Not found.', 'err.notFound'), v); return id; }
+  const nid = uid(); tdb.recs.push({ id: nid, companyId, createdBy: session!, ...v }); return nid;
+}
+function makeRecInvM(id: string) {
+  const r = tdb.recs.find((x) => x.id === id && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+  const out = { created: [] as string[], issued: [] as string[], emailed: [] as string[] };
+  const doc = saveDraftM(r.companyId, { type: 'invoice', contactId: r.contactId, issueDate: r.nextDate, dueDate: addD(r.nextDate, r.termsDays), reference: r.reference, notes: r.notes ?? r.name, lines: r.lines });
+  tdb.recDocs.set(doc, r.id); out.created.push(doc);
+  if (r.mode !== 'draft') { issueM(doc); out.issued.push(doc); if (r.mode === 'issue_and_email' && sdb.contacts.find((c) => c.id === r.contactId)?.email) { emailDocM(doc, {}); out.emailed.push(doc); } }
+  r.nextDate = nextOccurrence(r.nextDate, r.frequency as Frequency, r.anchorDay);
+  if (r.endDate && r.nextDate > r.endDate) r.active = false;
+  return out;
+}
+function openInvoicesM(companyId: string, contactId: string | null, asOf = today()) {
+  return sdb.docs.filter((d) => d.companyId === companyId && d.type === 'invoice' && d.status === 'issued' && (!contactId || d.contactId === contactId) && amountDue(d) > 0n)
+    .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? '')).map((d) => {
+      const c = sdb.contacts.find((x) => x.id === d.contactId)!; const od = d.dueDate && d.dueDate < asOf ? Math.round((Date.parse(asOf) - Date.parse(d.dueDate)) / 86400000) : 0;
+      const sent = tdb.reminders.filter((x) => x.documentId === d.id);
+      return { id: d.id, number: d.number, contactId: d.contactId, customer: c.name, customerAr: c.nameAr, email: c.email, issueDate: d.issueDate, dueDate: d.dueDate, grossTotal: s(docTotals(d).gross),
+        amountDue: s(amountDue(d)), daysOverdue: od, bucket: od === 0 ? 'current' : od <= 30 ? '1-30' : od <= 60 ? '31-60' : od <= 90 ? '61-90' : '90+',
+        lastReminder: sent.map((x) => x.at).sort().at(-1) ?? null, lastLevel: Math.max(0, ...sent.map((x) => x.level)) }; });
+}
+function sendReminderM(id: string) {
+  const d = sdb.docs.find((x) => x.id === id && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+  const c = sdb.contacts.find((x) => x.id === d.contactId)!;
+  if (!c.email) fail(400, "The customer has no email address.", 'err.emailMissing');
+  mailDb.emails.unshift({ id: uid(), companyId: d.companyId, kind: 'reminder', to: c.email!, toName: c.name, subject: `Reminder: invoice ${d.number} is due · تذكير بالفاتورة ${d.number}`, status: 'queued',
+    attempts: 0, lastError: 'No email provider is set up yet (EMAIL_PROVIDER).', documentId: d.id, attachments: 0, createdBy: userName(session), createdAt: new Date().toISOString(), sentAt: null });
+  tdb.reminders.push({ documentId: d.id, level: 0, at: new Date().toISOString() });
+}
+function bvaM(id: string) {
+  const b = tdb.budgets.find((x) => x.id === id && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+  const end = new Date(Date.UTC(+b.startDate.slice(0, 4), +b.startDate.slice(5, 7) + 11, 0)).toISOString().slice(0, 10);
+  const lines = b.lines.map((l) => {
+    const a = db.accounts.find((x) => x.id === l.accountId)!; const actual = Array(12).fill(0n) as bigint[];
+    for (const e of db.entries) if (e.companyId === b.companyId && e.date >= b.startDate && e.date <= end && e.sourceType !== 'year_end_close') for (const x of e.lines)
+      if (x.accountId === l.accountId && (!l.costCentreId || x.costCentreId === l.costCentreId)) {
+        const mi = (+e.date.slice(0, 4) - +b.startDate.slice(0, 4)) * 12 + (+e.date.slice(5, 7) - +b.startDate.slice(5, 7));
+        actual[mi] = actual[mi]! + (a.type === 'income' ? x.credit - x.debit : x.debit - x.credit);
+      }
+    const tb = l.months.reduce((t, v) => t + v, 0n), ta = actual.reduce((t, v) => t + v, 0n);
+    return { accountId: a.id, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type, costCentreId: l.costCentreId, costCentre: db.costCentres.find((x) => x.id === l.costCentreId)?.name ?? null,
+      budget: l.months.map(s), actual: actual.map(s), totalBudget: s(tb), totalActual: s(ta), variance: s(a.type === 'income' ? ta - tb : tb - ta), usedPct: tb === 0n ? null : Number((ta * 1000n) / tb) / 10 };
+  });
+  return { id: b.id, name: b.name, startDate: b.startDate, endDate: end, status: b.status, lines };
+}
+function saveBudgetM(companyId: string, b: Body, id?: string) {
+  canPostIn(companyId);
+  const name = String(b?.name ?? '').trim() || fail(400, 'Give the budget a name.', 'err.budgetName');
+  const startDate = /^\d{4}-\d{2}-01$/.test(String(b?.startDate)) ? String(b!.startDate) : fail(400, 'The budget starts on the first day of a month.', 'err.budgetStart');
+  const lines = ((b?.lines as { accountId: string; costCentreId?: string | null; months: string[] }[]) ?? []).map((l) => ({ accountId: l.accountId, costCentreId: l.costCentreId || null,
+    months: Array.from({ length: 12 }, (_, i) => (l.months?.[i] ? toMinor(String(l.months[i])) : 0n)) }));
+  if (id) { Object.assign(tdb.budgets.find((x) => x.id === id) ?? fail(404, 'Not found.', 'err.notFound'), { name, startDate, lines }); return id; }
+  const nid = uid(); tdb.budgets.push({ id: nid, companyId, name, startDate, status: 'active', lines }); return nid;
+}
+function notificationsM(companyId: string) {
+  const out: { key: string; kind: string; count: number; params: Record<string, string | number>; module: string; sub?: string; at: string | null; read?: boolean }[] = [];
+  const add = (kind: string, n: number, module: string, sub: string, extra: Record<string, string | number> = {}) => { if (n) out.push({ key: `${kind}:${today()}:${n}`, kind, count: n, params: { n, ...extra }, module, sub, at: null }); };
+  if (canApproveM(companyId)) {
+    add('approvals', apdb.requests.filter((r) => r.companyId === companyId && r.status === 'pending' && r.requestedBy !== session).length, 'Approvals', 'waiting');
+    add('corrections', hdb.corrections.filter((k) => k.companyId === companyId && k.status === 'requested' && k.createdBy !== session).length, 'HRM', 'attendance');
+    add('claims', sdb.docs.filter((d) => d.companyId === companyId && d.type === 'claim' && d.status === 'submitted' && d.submittedBy !== session).length, 'Expenses', 'approvals');
+  }
+  const od = openInvoicesM(companyId, null).filter((o) => o.daysOverdue > 0);
+  add('overdue', od.length, 'Sales', 'reminders', { amount: s(od.reduce((t, o) => t + toMinor(o.amountDue), 0n)) });
+  add('lowStock', odb.items.filter((i) => i.companyId === companyId && i.status === 'active' && i.reorderLevel !== null && i.q <= toQ(i.reorderLevel)).length, 'Inventory', 'items');
+  return out.map((n) => ({ ...n, read: tdb.reads.has(`${session}:${companyId}:${n.key}`) }));
+}
+routes.push(
+  ['GET', /^\/api\/companies\/([\w-]+)\/recurring-invoices$/, (m) => { const id = inCo(m[1]!); return tdb.recs.filter((r) => r.companyId === id).map(recInvRow); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/recurring-invoices$/, (m, b) => ({ id: saveRecInvM(inCo(m[1]!), b) })],
+  ['GET', /^\/api\/recurring-invoices\/([\w-]+)$/, (m) => { const r = tdb.recs.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+    return { ...recInvRow(r), invoices: [...tdb.recDocs.entries()].filter(([, v]) => v === r.id).map(([k]) => sdb.docs.find((d) => d.id === k)!).map((d) => ({ id: d.id, number: d.number, status: d.status, issueDate: d.issueDate, grossTotal: s(docTotals(d).gross) })) }; }],
+  ['POST', /^\/api\/recurring-invoices\/([\w-]+)$/, (m, b) => { const r = tdb.recs.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); return { id: saveRecInvM(r.companyId, b, r.id) }; }],
+  ['POST', /^\/api\/recurring-invoices\/([\w-]+)\/make$/, (m) => makeRecInvM(m[1]!)],
+  ['GET', /^\/api\/companies\/([\w-]+)\/statement$/, (m, _b, q) => { const id = inCo(m[1]!); const cid = String(q.get('contact')); const from = q.get('from') ?? `${today().slice(0, 4)}-01-01`, to = q.get('to') ?? today();
+    const open = openInvoicesM(id, cid, to); const c = sdb.contacts.find((x) => x.id === cid)!; const co = company(id);
+    return { company: { name: co.name, nameAr: co.nameAr, currency: co.currency }, customer: { name: c.name, nameAr: c.nameAr, email: c.email }, from, to, ledger: contactLedgerM(id, cid, from, to), open,
+      aging: Object.fromEntries(['current', '1-30', '31-60', '61-90', '90+'].map((k) => [k, s(open.filter((o) => o.bucket === k).reduce((t, o) => t + toMinor(o.amountDue), 0n))])) }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/statement\/email$/, (m, b) => { const id = inCo(m[1]!); const c = sdb.contacts.find((x) => x.id === b?.contactId)!;
+    const to = String(b?.email ?? '').trim() || c.email || fail(400, "Enter the customer's email address.", 'err.emailMissing');
+    mailDb.emails.unshift({ id: uid(), companyId: id, kind: 'statement', to, toName: c.name, subject: `Statement of account ${b?.from} – ${b?.to} · كشف حساب`, status: 'queued', attempts: 0,
+      lastError: 'No email provider is set up yet (EMAIL_PROVIDER).', documentId: null, attachments: 1, createdBy: userName(session), createdAt: new Date().toISOString(), sentAt: null });
+    return { id: uid() }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/reminders$/, (m) => { const id = inCo(m[1]!); const st = tdb.remSettings.get(id) ?? { auto: false, days: [7, 14, 30], message: null, enabledBy: null };
+    return { settings: { ...st, enabledBy: userName(st.enabledBy) }, open: openInvoicesM(id, null) }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/reminders\/settings$/, (m, b) => { const id = inCo(m[1]!); canPostIn(id); const auto = Boolean(b?.auto);
+    tdb.remSettings.set(id, { auto, days: ((b?.days as number[]) ?? [7, 14, 30]).filter((d) => d > 0).slice(0, 6), message: str(b?.message), enabledBy: auto ? session : null }); return { ok: true }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/reminders\/send$/, (m, b) => { inCo(m[1]!); return { results: ((b?.ids as string[]) ?? []).map((id) => { try { sendReminderM(id); return { id, ok: true }; } catch (e) { return { id, ok: false, error: (e as Error).message }; } }) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/budgets$/, (m) => { const id = inCo(m[1]!); return tdb.budgets.filter((x) => x.companyId === id).map((x) => ({ id: x.id, name: x.name, startDate: x.startDate, status: x.status,
+    total: s(x.lines.reduce((t, l) => t + l.months.reduce((u, v) => u + v, 0n), 0n)) })); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/budgets$/, (m, b) => ({ id: saveBudgetM(inCo(m[1]!), b) })],
+  ['GET', /^\/api\/budgets\/([\w-]+)$/, (m) => bvaM(m[1]!)],
+  ['POST', /^\/api\/budgets\/([\w-]+)$/, (m, b) => { const x = tdb.budgets.find((y) => y.id === m[1] && roleOf(session, y.companyId)) ?? fail(404, 'Not found.', 'err.notFound'); return { id: saveBudgetM(x.companyId, b, x.id) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/notifications$/, (m) => notificationsM(inCo(m[1]!))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/notifications\/read$/, (m, b) => { const id = inCo(m[1]!); for (const k of (b?.keys as string[]) ?? []) tdb.reads.add(`${session}:${id}:${k}`); return { ok: true }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/bulk\/issue$/, (m, b) => { inCo(m[1]!); return { results: ((b?.ids as string[]) ?? []).map((id) => { try { issueM(id); return { id, ok: true }; } catch (e) { return { id, ok: false, error: (e as Error).message }; } }) }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/bulk\/email$/, (m, b) => { inCo(m[1]!); return { results: ((b?.ids as string[]) ?? []).map((id) => { try { emailDocM(id, {}); return { id, ok: true }; } catch (e) { return { id, ok: false, error: (e as Error).message }; } }) }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/bulk\/approve$/, (m, b) => { inCo(m[1]!); return { results: ((b?.ids as string[]) ?? []).map((id) => { try { aprDecideM(id, b?.decision === 'rejected' ? 'rejected' : 'approved', b?.reason); return { id, ok: true }; } catch (e) { return { id, ok: false, error: (e as Error).message }; } }) }; }],
 );
 
 // ---------------------------------------------------------------- year-end closing (same rules as src/books/yearEndService.ts and db/migrations/0030)

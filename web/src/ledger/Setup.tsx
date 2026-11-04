@@ -7,8 +7,8 @@ import { fmt, toMinor } from '../money.ts';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
 import { useGo } from '../sales/common.tsx';
 import { ArabicHint, followArabic } from '../arabic.tsx';
-import { ExportBar } from '../print/Print.tsx';
-import { today } from '../router.ts';
+import { ExportBar, download } from '../print/Print.tsx';
+import { DEMO, today } from '../router.ts';
 import { CURRENCIES } from '../../../src/books/fx.ts';
 
 type AccountType = 'asset' | 'liability' | 'equity' | 'income' | 'expense';
@@ -103,7 +103,10 @@ export function ChartOfAccounts({ books, onChanged }: { books: CompanyBooks; onC
       {msg.bad && <div className="notice bad" role="alert">{msg.bad}</div>}
       {books.canPost && <div className="actions no-print" style={{ marginBottom: 8 }}><span className="spacer" />
         <button className="b" onClick={() => go('Ledger', 'import-data', 'accounts')}>{t('imp.fromExcel')}</button>
-        <button className="b" onClick={() => go('Ledger', 'import-data', 'opening')}>{t('imp.openingButton')}</button></div>}
+        <button className="b" onClick={() => go('Ledger', 'import-data', 'opening')}>{t('imp.openingButton')}</button>
+        {!DEMO && <button className="b" id="export-all" onClick={() => void fetch(`/api/companies/${books.company.id}/export`, { credentials: 'same-origin' })
+          .then(async (r) => { if (!r.ok) throw new Error(String(r.status)); const name = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') ?? '')?.[1] ?? 'export.zip';
+            await download(new Uint8Array(await r.arrayBuffer()), name, 'application/zip'); }).catch(() => setMsg({ bad: t('err.server') }))}>{t('exp.all')}</button>}</div>}
       <div ref={ref}>
         {TYPES.map((type) => {
           const rows = list.data!.filter((a) => a.type === type);

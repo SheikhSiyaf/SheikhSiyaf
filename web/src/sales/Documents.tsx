@@ -38,6 +38,23 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
   const canCreate = books.canPost && (type === 'invoice' || type === 'quotation' || type === 'bill' || type === 'expense' || type === 'claim');
   const hasDueCol = type === 'invoice' || type === 'bill';
   const hasAmountDue = hasDueCol || type === 'claim';
+  // Bulk: issue many drafts at once (invoices, credit notes, bills), or email many issued sales documents.
+  const [picked, setPicked] = useState<string[]>([]);
+  const [bulkMsg, setBulkMsg] = useState<{ ok?: string; bad?: string }>({});
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const canBulk = books.canPost && ['invoice', 'credit_note', 'quotation', 'bill'].includes(type);
+  const rows = list.data ?? [];
+  const drafts = rows.filter((d) => picked.includes(d.id) && d.status === 'draft' && type !== 'quotation');
+  const sendable = rows.filter((d) => picked.includes(d.id) && d.status !== 'draft' && side === 'sales');
+  const bulk = async (what: 'issue' | 'email', ids: string[]) => {
+    setBulkBusy(true); setBulkMsg({});
+    try {
+      const r = await api<{ results: { ok: boolean; error?: string }[] }>(`/api/companies/${books.company.id}/bulk/${what}`, { body: { ids } });
+      const ok = r.results.filter((x) => x.ok).length, bad = r.results.filter((x) => !x.ok);
+      setBulkMsg(bad.length ? { bad: t('bulk.partly', { ok, bad: bad.length, why: bad[0]!.error ?? '' }) } : { ok: t(what === 'issue' ? 'bulk.issued' : 'bulk.emailed', { n: ok }) });
+      setPicked([]); list.reload();
+    } catch (e) { setBulkMsg({ bad: String((e as Error).message) }); } finally { setBulkBusy(false); }
+  };
   return (
     <>
       <div className="top" style={{ marginBottom: 10 }}>
@@ -51,18 +68,29 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
           </button>
         ))}
       </div>
+      {bulkMsg.ok && <div className="notice" role="status" id="bulk-msg">{bulkMsg.ok}</div>}
+      {bulkMsg.bad && <div className="notice warn" role="alert" id="bulk-msg">{bulkMsg.bad}</div>}
+      {canBulk && picked.length > 0 && <div className="actions bulk-bar" id="bulk-bar">
+        <b>{t('bulk.selected', { n: picked.length })}</b>
+        {drafts.length > 0 && <button className="b p" id="bulk-issue" disabled={bulkBusy} onClick={() => void bulk('issue', drafts.map((d) => d.id))}>{t('bulk.issue', { n: drafts.length })}</button>}
+        {sendable.length > 0 && <button className="b" id="bulk-email" disabled={bulkBusy} onClick={() => void bulk('email', sendable.map((d) => d.id))}>{t('bulk.email', { n: sendable.length })}</button>}
+        <button className="link small" onClick={() => setPicked([])}>{t('bulk.clear')}</button>
+      </div>}
       {(type === 'credit_note' || type === 'supplier_credit') && <p className="mut small">{t(type === 'credit_note' ? 'doc.creditHowTo' : 'doc.supplierCreditHowTo')}</p>}
       <div className="card">
         {list.error && <ErrorNote error={list.error} onRetry={list.reload} />}
         {!list.data ? <Loading /> : list.data.length === 0 ? <div className="mut">{t('doc.noneYet')}</div> : (
           <div className="wrap">
             <table className="stack">
-              <thead><tr><th>{t('doc.number')}</th><th>{t(side === 'sales' ? 'contact.customer' : type === 'expense' ? 'exp.paidTo' : type === 'claim' ? 'claim.employee' : 'contact.supplier')}</th><th>{t('doc.date')}</th>
+              <thead><tr>{canBulk && <th className="pick"><input type="checkbox" aria-label={t('bulk.all')} checked={rows.length > 0 && picked.length === rows.length}
+                onChange={(e) => setPicked(e.target.checked ? rows.map((d) => d.id) : [])} /></th>}<th>{t('doc.number')}</th><th>{t(side === 'sales' ? 'contact.customer' : type === 'expense' ? 'exp.paidTo' : type === 'claim' ? 'claim.employee' : 'contact.supplier')}</th><th>{t('doc.date')}</th>
                 {hasDueCol && <th>{t('doc.dueDate')}</th>}<th className="num">{t('doc.total')}</th>
                 {hasAmountDue && <th className="num">{t(type === 'claim' ? 'claim.toReimburse' : 'doc.amountDue')}</th>}<th>{t('journal.status')}</th></tr></thead>
               <tbody>
                 {list.data.map((d) => (
                   <tr key={d.id}>
+                    {canBulk && <td className="pick"><input type="checkbox" aria-label={`${t('bulk.pick')} ${d.number ?? ''}`} checked={picked.includes(d.id)}
+                      onChange={(e) => setPicked(e.target.checked ? [...picked, d.id] : picked.filter((x) => x !== d.id))} /></td>}
                     <td><button className="link" onClick={() => go(m, page, d.id)}>{d.number ?? t('doc.draftNo')}</button>{d.reference && <div className="mut small ltr">{d.reference}</div>}</td>
                     <td>{local(d.contactName, d.contactNameAr)}</td>
                     <td data-label={t('doc.date')}>{d.issueDate}</td>

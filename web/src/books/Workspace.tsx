@@ -43,6 +43,8 @@ import { AssetPage, AssetRegister, Depreciation } from '../assets/Assets.tsx';
 import { FoodSale, FoodSales, MenuList, RecipePage } from '../restaurant/Restaurant.tsx';
 import { WarehouseDesk } from '../inventory/Warehouse.tsx';
 import { EmailsSent } from '../sales/DocEmail.tsx';
+import { Budgets, RecurringInvoices, Reminders, Statements } from '../sales/Tools.tsx';
+import { Bell } from './Notifications.tsx';
 import { Counter } from '../inventory/Counter.tsx';
 import { CurrencyRates, CurrencyRevaluation } from '../ledger/Currencies.tsx';
 
@@ -111,6 +113,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
           <h1>{title}</h1>
           <TopControls>
             {me.user.kind === 'firm_staff' && <button className="b" onClick={() => navigate('/')}>{t('clients.back')}</button>}
+            {b && <Bell books={b} />}
             {b && <span className="badge">{local(b.company.name, b.company.nameAr)} · {b.company.currency}</span>}
           </TopControls>
         </div>
@@ -151,6 +154,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Journal': return <Journal books={books} sub={sub} reloadBooks={reloadBooks} go={(s) => goModule('Journal', s)} />;
     case 'Reports': {
       if (sub === 'cash-forecast') return <CashForecast books={books} />;
+      if (sub === 'budgets') return <Budgets key={item ?? ''} books={books} id={item} />;
       const page = sub === 'owner-summary' ? <OwnerSummary books={books} /> : sub === 'balance-sheet' ? <BalanceSheet books={books} /> : sub === 'cash-flow' ? <CashFlow books={books} />
         : sub === 'vat-return' ? <VatReturnSheet books={books} />
         : sub === 'vat-summary' ? <Vat books={books} /> : sub === 'expenses-by-category' ? <ExpensesByCategory books={books} />
@@ -236,6 +240,9 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
       if (sub === 'overview') return <Overview books={books} side={side} />;
       if (sub === 'e-invoicing') return <EInvoicing books={books} />;
       if (sub === 'emails') return <EmailsSent books={books} />;
+      if (sub === 'recurring-invoices') return <RecurringInvoices books={books} id={item} />;
+      if (sub === 'reminders') return <Reminders books={books} />;
+      if (sub === 'statements') return <Statements books={books} />;
       if ((sub === 'customers' || sub === 'suppliers') && item === 'import') return <ImportData key={sub} books={books} initial={sub} only />;
       if (sub === 'customers' || sub === 'suppliers') {
         return item ? <ContactPage key={item} books={books} side={side} id={item} /> : <ContactList books={books} side={side} />;

@@ -292,3 +292,11 @@ Every change below is covered by a test in `test/`.
 | `start_password_reset()` | Forgot password: a one-hour link by email for an active person with a password; the same answer either way. |
 | `company_approvers()` | Telling approvers something waits, without opening the users table. |
 | `document_links` (hash of a random token per link, expiry 180 days, revocable, last opened), `document_link_open()`, `document_public()` | A customer opens an emailed invoice, credit note or quotation without signing in (and, next, pays it). |
+
+## 0032_accountant_tools.sql
+| Change | Why |
+|---|---|
+| `recurring_invoices` (customer, lines, how often, next and end date, payment terms, draft / issue / issue and email; runs as the person who saved it) and `documents.recurring_invoice_id`; `recurring_invoices_due()`, `recurring_invoice_note()` for the hourly job | Rent, retainers and subscriptions invoiced on their dates. |
+| `reminder_settings` (automatic or not, days after the due date, message, who turned it on) and `reminder_log` (each level once per invoice); `reminders_auto()` | Polite payment reminders by email. |
+| `budgets` and `budget_lines` (per income or expense account, optional cost centre, month 1 to 12) | Budget against actual. |
+| `notification_reads` (per person, own rows only) | The bell remembers what each person has seen; the notifications themselves are worked out live. |

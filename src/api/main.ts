@@ -5,6 +5,7 @@ import { createPool } from '../db/session.js';
 import { buildServer, WEB_DIST } from './server.js';
 import { startFxJobs } from '../books/fxJobs.js';
 import { startMailer } from '../email/mailer.js';
+import { startToolJobs } from '../books/toolsJobs.js';
 
 if (!process.env.ENCRYPTION_KEY) {
   console.warn('ENCRYPTION_KEY is not set: two-factor secrets are encrypted with SESSION_SECRET. Set ENCRYPTION_KEY before real use.');
@@ -31,6 +32,8 @@ await app.listen({ port: config.port, host: config.host });
 startFxJobs(pool, (m) => app.log.info(m));
 // Sending queued emails every minute (EMAIL_PROVIDER chooses the provider; EMAIL_JOBS=off turns it off).
 startMailer(pool, (m) => app.log.info(m));
+// Recurring sales invoices and automatic payment reminders, hourly (TOOL_JOBS=off turns them off).
+startToolJobs(pool, (m) => app.log.info(m));
 console.log(serveWeb
   ? `\n  Nusuh Books is running: open http://localhost:${config.port}\n`
   : apiOnly

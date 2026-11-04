@@ -70,7 +70,7 @@ export function writeXlsx(x: SheetInput): Uint8Array {
 const CRC = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
 const crc32 = (b: Uint8Array) => { let c = 0xffffffff; for (const x of b) c = CRC[(c ^ x) & 0xff]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
 
-function zipStored(files: [string, Uint8Array][]): Uint8Array {
+export function zipStored(files: [string, Uint8Array][]): Uint8Array {
   const out: number[] = [], central: number[] = [];
   const u16 = (v: number) => [v & 0xff, (v >>> 8) & 0xff];
   const u32 = (v: number) => [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff];

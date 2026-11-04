@@ -11,7 +11,7 @@ export const NAV: Module[] = [
   { key: 'Portal', subs: [s('overview'), s('requests'), s('documents'), s('monthly-reports')] },
   { key: 'Calendar', subs: [s('upcoming'), s('calendar-settings')] },
   { key: 'Approvals', subs: [s('waiting'), s('approval-history'), s('approval-rules')] },
-  { key: 'Sales', subs: [s('overview'), s('customers'), s('quotations'), s('invoices'), s('credit-notes'), s('payments-received'), s('e-invoicing'), s('emails')] },
+  { key: 'Sales', subs: [s('overview'), s('customers'), s('quotations'), s('invoices'), s('recurring-invoices'), s('credit-notes'), s('payments-received'), s('statements'), s('reminders'), s('e-invoicing'), s('emails')] },
   { key: 'Purchases', subs: [s('overview'), s('suppliers'), s('bills'), s('supplier-credits'), s('payments-made')] },
   { key: 'Expenses', subs: [s('overview'), s('expenses'), s('recurring'), s('categories'), s('claims'), s('approvals')] },
   { key: 'Bank', subs: [s('accounts'), s('import'), s('reconcile'), s('rules')] },
@@ -23,7 +23,7 @@ export const NAV: Module[] = [
   { key: 'CRM', subs: [s('pipeline'), s('leads'), s('activities'), s('campaigns')] },
   { key: 'Journal', subs: [s('entries'), s('new'), s('periods'), s('year-end')] },
   { key: 'Ledger', subs: [s('chart-of-accounts'), s('cost-centres-setup'), s('general-ledger'), s('cost-centre-ledger'), s('customer-ledger'), s('supplier-ledger'), s('employee-ledger'), s('currencies'), s('fx-revaluation'), s('import-data')] },
-  { key: 'Reports', subs: [s('owner-summary'), s('profit-and-loss'), s('balance-sheet'), s('cash-flow'), s('cash-forecast'), s('trial-balance'), s('cost-centres'), s('expenses-by-category'),
+  { key: 'Reports', subs: [s('owner-summary'), s('profit-and-loss'), s('balance-sheet'), s('cash-flow'), s('cash-forecast'), s('budgets'), s('trial-balance'), s('cost-centres'), s('expenses-by-category'),
     s('expenses-by-payee'), s('aged-receivables'), s('aged-payables'), s('vat-summary'), s('vat-return')] },
   { key: 'Review', subs: [s('overview'), s('checks'), s('queries'), s('checklist'), s('sign-off')] },
 ];

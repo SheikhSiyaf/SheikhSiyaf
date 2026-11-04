@@ -143,7 +143,7 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       const sa = c.country === 'SA';
       const vatNo = (n: number) => (sa ? `3${String(n).padStart(13, '0')}3` : String(100000000000000 + n));
       const cust = async (name: string, nameAr: string, vatN?: number, terms = 30) =>
-        saveContact(db, id, { isCustomer: true, name, nameAr, country: c.country, vatNumber: vatN ? vatNo(vatN) : undefined, paymentTermsDays: terms, city: c.city,
+        saveContact(db, id, { isCustomer: true, name, nameAr, email: `accounts@${name.toLowerCase().replace(/[^a-z]+/g, '')}.example`, country: c.country, vatNumber: vatN ? vatNo(vatN) : undefined, paymentTermsDays: terms, city: c.city,
           // Saudi business customers have their national address (needed on e-invoices).
           ...(sa && vatN ? { address: 'King Fahd Road', buildingNumber: String(1000 + (vatN % 9000)), district: 'Al Olaya', postalCode: '12211' } : {}) });
       const supp = async (name: string, nameAr: string, vatN?: number, terms = 15) =>

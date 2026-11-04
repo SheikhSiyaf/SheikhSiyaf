@@ -583,3 +583,21 @@ button.att-c:hover, button.att-c:focus-visible { outline: 2px solid var(--teal);
 .public-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .public-page { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow-x: auto; }
 @media print { .public-page { border: 0; padding: 0; } .public-doc { padding: 0; max-width: none; } }
+.bulk-bar { position: sticky; top: 0; z-index: 2; background: var(--card); border: 1px solid var(--teal); border-radius: 12px; padding: 8px 12px; margin-bottom: 10px; }
+td.pick, th.pick { width: 28px; }
+/* Notifications bell */
+.bell { position: relative; }
+.bell-btn { position: relative; display: inline-grid; place-items: center; width: 40px; height: 38px; padding: 0; }
+.bell-n { position: absolute; top: -4px; inset-inline-end: -4px; background: var(--bad); color: #fff; border-radius: 10px; font-size: 11px; font-weight: 700; padding: 0 5px; min-width: 18px; line-height: 18px; text-align: center; }
+.bell-menu { position: absolute; top: 44px; inset-inline-end: 0; width: min(340px, calc(100vw - 32px)); background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.14); padding: 10px; z-index: 20; display: flex; flex-direction: column; gap: 2px; }
+.bell-item { display: flex; gap: 8px; align-items: flex-start; text-align: start; background: none; border: 0; border-radius: 8px; padding: 8px; color: var(--ink); font: inherit; cursor: pointer; }
+.bell-item:hover, .bell-item:focus-visible { background: var(--tealbg); }
+.bell-item.read { color: var(--mut); }
+.bell-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--teal); margin-top: 6px; flex: none; }
+/* Budgets */
+.bd-grid select { display: block; min-width: 180px; margin-bottom: 4px; }
+.bd-cell { width: 84px; padding: 5px 6px; }
+.bd-bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 4px; }
+.bd-bar i { display: block; height: 4px; border-radius: 2px; background: var(--teal); }
+.bd-bar i.over { background: var(--bad); }

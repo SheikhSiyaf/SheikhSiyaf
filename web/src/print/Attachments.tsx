@@ -25,6 +25,7 @@ export function AttachmentsCard({ owner, id, canAdd, canRemove, hint }: { owner:
   const { t, has } = useI18n();
   const list = useApi<Attachment[]>(`/api/${owner}/${id}/attachments`);
   const input = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>();
   const add = async (files: FileList | null) => {
@@ -37,6 +38,7 @@ export function AttachmentsCard({ owner, id, canAdd, canRemove, hint }: { owner:
       catch (e) { setErr(errorText(t, has, e)); } finally { setBusy(false); }
     }
     if (input.current) input.current.value = '';
+    if (camera.current) camera.current.value = '';
     list.reload();
   };
   const remove = async (a: Attachment) => {
@@ -50,6 +52,9 @@ export function AttachmentsCard({ owner, id, canAdd, canRemove, hint }: { owner:
         {canAdd && <>
           <input ref={input} id="att-file" type="file" accept={ACCEPT} multiple hidden onChange={(e) => void add(e.target.files)} />
           <button className="b small" disabled={busy} onClick={() => input.current?.click()}>{busy ? t('loading') : t('att.add')}</button>
+          {/* On a phone this opens the camera, to photograph a receipt straight onto the document. */}
+          <input ref={camera} id="att-camera" type="file" accept="image/*" capture="environment" hidden onChange={(e) => void add(e.target.files)} />
+          <button className="b small" disabled={busy} onClick={() => camera.current?.click()}>{t('att.photo')}</button>
         </>}
       </div>
       {err && <div className="notice bad small" role="alert">{err}</div>}

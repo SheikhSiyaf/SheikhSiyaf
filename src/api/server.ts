@@ -26,6 +26,7 @@ import { registerReportRoutes } from './reports.js';
 import { registerPortalRoutes } from './portal.js';
 import { registerEInvoiceRoutes } from './einvoice.js';
 import { registerApprovalRoutes, registerImportRoutes, registerSearchRoutes, registerSetupStatusRoutes } from './approvals.js';
+import { registerFxRoutes } from './fx.js';
 import { configureEInvoicing } from '../books/einvoiceService.js';
 import { reviewedUpTo } from '../books/reviewService.js';
 import { registerSetupRoutes } from './setup.js';
@@ -92,7 +93,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
               payment_terms_days AS "paymentTermsDays", industry, modules
        FROM companies WHERE id = $1`, [id]);
     const accounts = await db.query(
-      `SELECT id, code, name, name_ar AS "nameAr", type, cost_centre_required AS "costCentreRequired", is_bank AS "isBank"
+      `SELECT id, code, name, name_ar AS "nameAr", type, cost_centre_required AS "costCentreRequired", is_bank AS "isBank", currency
        FROM accounts WHERE company_id = $1 ORDER BY code`, [id]);
     const costCentres = await db.query(
       `SELECT id, name, name_ar AS "nameAr", kind FROM cost_centres WHERE company_id = $1 ORDER BY name`, [id]);
@@ -157,7 +158,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
               (SELECT json_agg(json_build_object(
                   'id', l.id, 'accountCode', a.code, 'accountName', a.name, 'accountNameAr', a.name_ar,
                   'costCentre', cc.name, 'costCentreAr', cc.name_ar,
-                  'debit', l.debit::text, 'credit', l.credit::text) ORDER BY l.debit DESC, a.code)
+                  'debit', l.debit::text, 'credit', l.credit::text, 'currency', a.currency, 'fxAmount', l.fx_amount::text, 'fxRate', l.fx_rate::text) ORDER BY l.debit DESC, a.code)
                FROM journal_lines l JOIN accounts a ON a.id = l.account_id
                LEFT JOIN cost_centres cc ON cc.id = l.cost_centre_id
                WHERE l.entry_id = e.id) AS lines
@@ -185,6 +186,8 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
         costCentreId: l.costCentreId ? uuidParam(String(l.costCentreId)) : null,
         debit: l.debit ? String(l.debit) : undefined,
         credit: l.credit ? String(l.credit) : undefined,
+        fxAmount: l.fxAmount ? String(l.fxAmount) : null,
+        fxRate: l.fxRate ? String(l.fxRate) : null,
       })) : [],
     };
     if (!input.entryDate) throw new HttpError(400, 'Fill in all required fields.', 'err.required');
@@ -259,6 +262,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerEInvoiceRoutes(app, ctx);
   registerApprovalRoutes(app, ctx);
   registerImportRoutes(app, ctx);
+  registerFxRoutes(app, ctx);
   registerSearchRoutes(app, ctx);
   registerSetupStatusRoutes(app, ctx);
   registerSetupRoutes(app, ctx);

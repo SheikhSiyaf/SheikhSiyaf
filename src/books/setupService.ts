@@ -15,6 +15,7 @@ export const CODE_START: Record<AccountType, string[]> = { asset: ['1'], liabili
 export async function chart(db: Db, companyId: string) {
   const { rows } = await db.query(
     `SELECT a.id, a.code, a.name, a.name_ar AS "nameAr", a.type, a.cost_centre_required AS "costCentreRequired", a.is_bank AS "isBank", a.pnl_group AS "pnlGroup",
+            a.currency, a.revalue, coalesce(sum(CASE WHEN l.debit > 0 THEN l.fx_amount ELSE -l.fx_amount END), 0)::numeric(18,2)::text AS "fxBalance",
             coalesce(sum(l.debit - l.credit), 0)::numeric(18,2)::text AS balance, count(l.id)::int AS postings
      FROM accounts a LEFT JOIN journal_lines l ON l.account_id = a.id
      WHERE a.company_id = $1 GROUP BY a.id ORDER BY a.code`, [companyId]);
@@ -33,7 +34,7 @@ export async function nextCode(db: Db, companyId: string, type: AccountType): Pr
   return bad('There is no free code left for this type of account.', 'err.noCode');
 }
 
-export interface AccountInput { code?: string; name?: string; nameAr?: string; type?: string; costCentreRequired?: boolean; pnlGroup?: string | null }
+export interface AccountInput { code?: string; name?: string; nameAr?: string; type?: string; costCentreRequired?: boolean; pnlGroup?: string | null; currency?: string | null; revalue?: boolean }
 
 export async function saveAccount(db: Db, companyId: string, a: AccountInput, id?: string): Promise<string> {
   const name = String(a.name ?? '').trim();
@@ -47,15 +48,21 @@ export async function saveAccount(db: Db, companyId: string, a: AccountInput, id
   if (taken.rows[0]) bad('Another account already has this code.', 'err.accountCodeTaken');
   // The P&L line; the database picks the usual one when none (or one that does not fit the type) is given.
   const group = ['revenue', 'other_income', 'cost_of_sales', 'indirect_expense'].includes(String(a.pnlGroup)) ? a.pnlGroup : null;
+  // Currency: empty for the company's own; another currency only for asset and liability accounts (the database checks).
+  const currency = a.currency === undefined ? undefined : a.currency && /^[A-Z]{3}$/.test(a.currency) ? a.currency : null;
+  if (a.currency && currency === null) bad('Choose the currency.', 'err.currency');
   const v = [code, name, a.nameAr?.trim() || null, type, Boolean(a.costCentreRequired), group];
   if (id) {
     const { rowCount } = await db.query(
-      `UPDATE accounts SET code = $2, name = $3, name_ar = $4, type = $5, cost_centre_required = $6, pnl_group = $7 WHERE id = $1 AND company_id = $8`, [id, ...v, companyId]);
+      `UPDATE accounts SET code = $2, name = $3, name_ar = $4, type = $5, cost_centre_required = $6, pnl_group = $7,
+         currency = CASE WHEN $10::boolean THEN $9::char(3) ELSE currency END, revalue = coalesce($11::boolean, revalue)
+       WHERE id = $1 AND company_id = $8`, [id, ...v, companyId, currency ?? null, currency !== undefined, a.revalue ?? null]);
     if (!rowCount) notFound();
     return id;
   }
   return (await db.query(
-    `INSERT INTO accounts (company_id, code, name, name_ar, type, cost_centre_required, pnl_group) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`, [companyId, ...v])).rows[0].id;
+    `INSERT INTO accounts (company_id, code, name, name_ar, type, cost_centre_required, pnl_group, currency, revalue) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9::boolean, true)) RETURNING id`,
+    [companyId, ...v, currency ?? null, a.revalue ?? null])).rows[0].id;
 }
 
 // ------------------------------------------------------------------ cost centres (branches and departments; projects are in Projects)

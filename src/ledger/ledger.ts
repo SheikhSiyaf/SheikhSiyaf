@@ -2,12 +2,16 @@
 // that also check the obvious cases up front so the UI can prevent errors before posting.
 import type { Db } from '../db/session.js';
 import { toMinor, fromMinor } from '../money.js';
+import { parseRate, toBase } from '../books/fx.js';
 
 export interface LineInput {
   accountId: string;
   costCentreId?: string | null;
   debit?: string;   // decimal string, e.g. "100.00"
   credit?: string;
+  /** On an account kept in another currency: the foreign amount and the rate (debit or credit = amount x rate). */
+  fxAmount?: string | null;
+  fxRate?: string | null;
 }
 
 export interface EntryInput {
@@ -31,6 +35,11 @@ export function checkEntry(input: EntryInput): string[] {
     if (ld < 0n || lc < 0n) problems.push(`Line ${i + 1}: amounts cannot be negative.`);
     if (ld !== 0n && lc !== 0n) problems.push(`Line ${i + 1}: use either debit or credit, not both.`);
     if (ld === 0n && lc === 0n) problems.push(`Line ${i + 1}: enter an amount.`);
+    if (l.fxAmount || l.fxRate) {
+      try {
+        if (toBase(toMinor(String(l.fxAmount)), parseRate(String(l.fxRate))) !== ld + lc) problems.push(`Line ${i + 1}: the amount must be the foreign amount times the rate.`);
+      } catch { problems.push(`Line ${i + 1}: give the foreign amount and the rate.`); }
+    }
     d += ld;
     c += lc;
   }
@@ -48,8 +57,8 @@ export async function postEntry(db: Db, input: EntryInput): Promise<string> {
   const id = rows[0]!.id;
   for (const l of input.lines) {
     await db.query(
-      `INSERT INTO journal_lines (entry_id, account_id, cost_centre_id, debit, credit) VALUES ($1, $2, $3, $4, $5)`,
-      [id, l.accountId, l.costCentreId ?? null, l.debit ?? '0', l.credit ?? '0'],
+      `INSERT INTO journal_lines (entry_id, account_id, cost_centre_id, debit, credit, fx_amount, fx_rate) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, l.accountId, l.costCentreId ?? null, l.debit ?? '0', l.credit ?? '0', l.fxAmount || null, l.fxRate || null],
     );
   }
   return id;

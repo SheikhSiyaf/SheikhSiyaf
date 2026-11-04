@@ -57,6 +57,8 @@ export const CHART_TEMPLATE: TemplateAccount[] = [
   { code: '3000', name: "Owner's equity", nameAr: 'حقوق الملكية', type: 'equity' },
   { code: '4000', name: 'Sales', nameAr: 'المبيعات', type: 'income' },
   { code: '4900', name: 'Gain or loss on sale of assets', nameAr: 'أرباح أو خسائر بيع الأصول', type: 'income' },
+  { code: '4950', name: 'Unrealised exchange gains and losses', nameAr: 'أرباح وخسائر فروقات العملة غير المحققة', type: 'income' },
+  { code: '4951', name: 'Realised exchange gains and losses', nameAr: 'أرباح وخسائر فروقات العملة المحققة', type: 'income' },
   { code: '5000', name: 'Cost of sales', nameAr: 'تكلفة المبيعات', type: 'expense' },
   { code: '5050', name: 'Depreciation', nameAr: 'مصروف الإهلاك', type: 'expense' },
   { code: '5100', name: 'Rent', nameAr: 'الإيجار', type: 'expense', costCentreRequired: true },

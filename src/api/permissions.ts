@@ -95,6 +95,9 @@ const RULES: Rule[] = [
     const n = await companyOf(db, 'hr_attendance_corrections', m[1]!, ['HRM']);
     return n && { ...n, approve: body(req).status === 'approved' || body(req).status === 'rejected' };
   }],
+  ['GET', new RegExp(`^/api/companies/${UUID}/fx/(rate|rates)$`), c([])],   // rates are open to everyone in the company
+  ['*', new RegExp(`^/api/companies/${UUID}/fx(/.*)?$`), c(['Ledger'])],
+  ['*', new RegExp(`^/api/fx-revaluations/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'fx_revaluations', m[1]!, ['Ledger'])],
   ['*', new RegExp(`^/api/payroll/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'payroll_runs', m[1]!, ['HRM'])],
   ['*', new RegExp(`^/api/payroll-lines/${UUID}$`), (db, m) => companyOf(db, 'payroll_lines', m[1]!, ['HRM'])],
   ['*', new RegExp(`^/api/hr-documents/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'employee_documents', m[1]!, ['HRM'])],

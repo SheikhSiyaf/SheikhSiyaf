@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { config } from '../config.js';
 import { createPool } from '../db/session.js';
 import { buildServer, WEB_DIST } from './server.js';
+import { startFxJobs } from '../books/fxJobs.js';
 
 if (!process.env.ENCRYPTION_KEY) {
   console.warn('ENCRYPTION_KEY is not set: two-factor secrets are encrypted with SESSION_SECRET. Set ENCRYPTION_KEY before real use.');
@@ -12,8 +13,9 @@ if (!config.sessionSecretFromEnv) {
 }
 const apiOnly = process.argv.includes('--api-only') || process.env.SERVE_WEB === 'false';
 const serveWeb = !apiOnly && existsSync(WEB_DIST);
+const pool = createPool(config.databaseUrl);
 const app = buildServer({
-  pool: createPool(config.databaseUrl),
+  pool,
   sessionSecret: config.sessionSecret,
   encryptionKey: config.encryptionKey || config.sessionSecret,
   publicUrl: config.publicUrl,
@@ -24,6 +26,8 @@ const app = buildServer({
 });
 
 await app.listen({ port: config.port, host: config.host });
+// Daily exchange rates and the automatic month-end revaluation (FX_JOBS=off turns them off; FX_RATES_URL sets the provider).
+startFxJobs(pool, (m) => app.log.info(m));
 console.log(serveWeb
   ? `\n  Nusuh Books is running: open http://localhost:${config.port}\n`
   : apiOnly

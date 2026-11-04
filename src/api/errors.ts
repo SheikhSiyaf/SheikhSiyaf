@@ -121,6 +121,7 @@ const CONSTRAINTS: Record<string, [string, string]> = {
   accounts_company_id_code_key: ['Another account already has this code.', 'err.accountCodeTaken'],
   client_roles_firm_name_key: ['Another role already has this title.', 'err.roleTaken'],
   items_company_id_sku_key: ['Another item already has this code.', 'err.skuTaken'],
+  items_company_barcode_key: ['Another item already has this barcode.', 'err.barcodeTaken'],
   items_qty_on_hand_check: ['Not enough stock.', 'err.notEnoughStock'],
   contact_building_number: ['The building number has 4 digits.', 'err.buildingNumber'],
   contact_postal_code: ['The postal code has 5 digits.', 'err.postalCode'],

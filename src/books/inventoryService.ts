@@ -7,6 +7,7 @@ import { HttpError } from '../api/errors.js';
 import { SYSTEM_ACCOUNTS } from './chartTemplate.js';
 import { averageCost, issueCost, milliToString, notePrefix, quantityToMilli, receivedValue, type NoteType } from './inventory.js';
 import { nextNumber } from './documentsService.js';
+import { cleanBarcode, validBarcode } from './barcode.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
 const notFound = (): never => { throw new HttpError(404, 'Not found.', 'err.notFound'); };
@@ -18,7 +19,7 @@ async function accountByCode(db: Db, companyId: string, code: string): Promise<s
 }
 
 // ------------------------------------------------------------------ items
-const ITEM_COLS = `i.id, i.company_id AS "companyId", i.sku, i.name, i.name_ar AS "nameAr", i.unit, i.sale_price::text AS "salePrice",
+const ITEM_COLS = `i.id, i.company_id AS "companyId", i.sku, i.barcode, i.name, i.name_ar AS "nameAr", i.unit, i.sale_price::text AS "salePrice",
   i.reorder_level::text AS "reorderLevel", i.qty_on_hand::text AS "qtyOnHand", i.value_on_hand::text AS "valueOnHand", i.status`;
 const withAverage = <T extends { qtyOnHand: string; valueOnHand: string; reorderLevel: string | null }>(r: T) => {
   const q = toMilli(r.qtyOnHand);
@@ -30,7 +31,7 @@ const toMilli = (q: string) => { const [w, f = ''] = q.split('.'); return BigInt
 export async function listItems(db: Db, companyId: string, q = '') {
   const { rows } = await db.query(
     `SELECT ${ITEM_COLS} FROM items i WHERE i.company_id = $1
-       AND ($2 = '' OR i.name ILIKE '%' || $2 || '%' OR i.sku ILIKE '%' || $2 || '%' OR coalesce(i.name_ar, '') ILIKE '%' || $2 || '%')
+       AND ($2 = '' OR i.name ILIKE '%' || $2 || '%' OR i.sku ILIKE '%' || $2 || '%' OR i.barcode = $2 OR coalesce(i.name_ar, '') ILIKE '%' || $2 || '%')
      ORDER BY i.status, i.name`, [companyId, q.trim()]);
   return rows.map(withAverage);
 }
@@ -51,7 +52,7 @@ export async function getItem(db: Db, id: string) {
   return { ...withAverage(item), movements };
 }
 
-export interface ItemInput { sku?: string; name?: string; nameAr?: string; unit?: string; salePrice?: string | null; reorderLevel?: string | null; status?: 'active' | 'archived' }
+export interface ItemInput { sku?: string; barcode?: string | null; name?: string; nameAr?: string; unit?: string; salePrice?: string | null; reorderLevel?: string | null; status?: 'active' | 'archived' }
 
 export async function saveItem(db: Db, companyId: string, i: ItemInput, id?: string): Promise<string> {
   const sku = String(i.sku ?? '').trim(), name = String(i.name ?? '').trim();
@@ -62,16 +63,20 @@ export async function saveItem(db: Db, companyId: string, i: ItemInput, id?: str
     if (i.salePrice !== undefined && i.salePrice !== null && String(i.salePrice).trim() !== '') price = fromMinor(toMinor(String(i.salePrice).replace(/,/g, '').trim()));
     if (i.reorderLevel !== undefined && i.reorderLevel !== null && String(i.reorderLevel).trim() !== '') reorder = milliToString(toMilli(String(i.reorderLevel).trim()));
   } catch { bad('Prices have at most 2 decimals; quantities at most 3.', 'err.amountFormat'); }
+  // Barcode: the supplier's code, or empty for one made by Nusuh. When editing, leaving it out keeps the code.
+  const barcode = i.barcode === undefined && id ? undefined : cleanBarcode(i.barcode);
+  if (barcode && !validBarcode(barcode)) bad('Check the barcode: its last digit does not match, or it has characters a label cannot print.', 'err.barcode');
   const v = [sku, name, i.nameAr?.trim() || null, i.unit?.trim() || 'pcs', price, reorder, i.status === 'archived' ? 'archived' : 'active'];
   if (id) {
     const { rowCount } = await db.query(
-      `UPDATE items SET sku=$2, name=$3, name_ar=$4, unit=$5, sale_price=$6, reorder_level=$7, status=$8 WHERE id = $1`, [id, ...v]);
+      `UPDATE items SET sku=$2, name=$3, name_ar=$4, unit=$5, sale_price=$6, reorder_level=$7, status=$8${barcode === undefined ? '' : ', barcode=$9'} WHERE id = $1`,
+      barcode === undefined ? [id, ...v] : [id, ...v, barcode]);
     if (!rowCount) notFound();
     return id;
   }
   return (await db.query(
-    `INSERT INTO items (company_id, sku, name, name_ar, unit, sale_price, reorder_level, status, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8, app_user_id()) RETURNING id`,
-    [companyId, ...v])).rows[0].id;
+    `INSERT INTO items (company_id, sku, name, name_ar, unit, sale_price, reorder_level, status, barcode, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, app_user_id()) RETURNING id`,
+    [companyId, ...v, barcode ?? ''])).rows[0].id;
 }
 
 // ------------------------------------------------------------------ goods notes
@@ -200,6 +205,24 @@ export async function postNote(db: Db, id: string): Promise<void> {
     });
   }
   await db.query(`UPDATE stock_notes SET status = 'posted', number = $2, total_value = $3, journal_entry_id = $4 WHERE id = $1`, [id, number, fromMinor(total), entryId]);
+}
+
+/** The item a scanned or typed code stands for: its barcode first, then its item code. Archived items are not offered. */
+export async function findByCode(db: Db, companyId: string, code: string) {
+  const c = cleanBarcode(code);
+  if (!c) return null;
+  const { rows } = await db.query(
+    `SELECT ${ITEM_COLS} FROM items i WHERE i.company_id = $1 AND i.status = 'active' AND (i.barcode = $2 OR lower(i.sku) = lower($2))
+     ORDER BY (i.barcode = $2) DESC LIMIT 1`, [companyId, c]);
+  return rows[0] ? withAverage(rows[0]) : null;
+}
+
+/** The warehouse counter: goods in or out recorded and posted in one step (one transaction: all or nothing). */
+export async function quickNote(db: Db, companyId: string, n: NoteInput): Promise<{ id: string; number: string; totalValue: string }> {
+  const id = await saveNoteDraft(db, companyId, n);
+  await postNote(db, id);
+  const r = (await db.query('SELECT number, total_value::text AS "totalValue" FROM stock_notes WHERE id = $1', [id])).rows[0];
+  return { id, number: r.number, totalValue: r.totalValue };
 }
 
 // ------------------------------------------------------------------ stock value

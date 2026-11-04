@@ -252,3 +252,9 @@ Every change below is covered by a test in `test/`.
 | Triggers: a draft waiting for approval (or approved, not yet issued) is locked; issuing a bill or credit note at or above the rule's amount needs an approved request; issuing marks the request done | Approval cannot be skipped or changed after the fact, even outside the screens. |
 | `payments.approval_request_id`; supplier payments at or above the rule's amount need an approved request for the same supplier and amount; recording it marks the request done | The same for money going out. |
 | `forecast_items` (money in or out the books cannot know, once or repeating; archived, never deleted) and `forecast_settings` (minimum cash to keep) | The cash flow forecast. |
+
+## 0027_warehouse_pos.sql
+| Change | Why |
+|---|---|
+| `items.barcode` (unique per company; printable characters, no spaces; when empty a trigger makes one: 2 + 11 digits from `item_barcode_seq` + EAN-13 check digit; existing items were given one) and `ean13_check()` | Goods are scanned at the warehouse counter. Supplier codes (EAN-13, UPC or any code) are kept; goods without a code get one the client can print on labels. A mistyped retail code (wrong check digit) is refused by the service. |
+| `client_roles.pos_mode`, returned by `app_client_role()` | Counter roles (store keeper, cashier): people with this role see only the counter screens. What they can do is still the role's modules, checked in the API and the database as before. |

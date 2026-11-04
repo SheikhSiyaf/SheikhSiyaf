@@ -656,7 +656,7 @@ function Staff() {
 // ------------------------------------------------------------------ Roles and permissions (client users)
 interface ClientRole {
   id: string; name: string; nameAr: string | null; description: string | null;
-  permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; status: 'active' | 'archived'; users: number;
+  permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; posMode: boolean; status: 'active' | 'archived'; users: number;
 }
 /** The role offered first when adding a person: the active role that enters in the most modules (usually Client accountant). */
 const firstRoleId = (roles?: ClientRole[]) => {
@@ -680,8 +680,8 @@ function AccessSummary({ permissions }: { permissions: Record<string, AccessLeve
   );
 }
 
-type RoleDraft = { id?: string; name: string; nameAr: string; description: string; permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; status: 'active' | 'archived' };
-const emptyRole = (): RoleDraft => ({ name: '', nameAr: '', description: '', permissions: {}, canApprove: false, canReview: false, canSignOff: false, status: 'active' });
+type RoleDraft = { id?: string; name: string; nameAr: string; description: string; permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; posMode: boolean; status: 'active' | 'archived' };
+const emptyRole = (): RoleDraft => ({ name: '', nameAr: '', description: '', permissions: {}, canApprove: false, canReview: false, canSignOff: false, posMode: false, status: 'active' });
 
 function Roles() {
   const { t, has } = useI18n();
@@ -697,7 +697,7 @@ function Roles() {
     if (!draft.name.trim()) { setMsg({ bad: t('err.roleName') }); return; }
     setBusy(true); setMsg({});
     try {
-      const body = { name: draft.name, nameAr: draft.nameAr, description: draft.description, permissions: draft.permissions, canApprove: draft.canApprove, canReview: draft.canReview, canSignOff: draft.canSignOff, status: draft.status };
+      const body = { name: draft.name, nameAr: draft.nameAr, description: draft.description, permissions: draft.permissions, canApprove: draft.canApprove, canReview: draft.canReview, canSignOff: draft.canSignOff, posMode: draft.posMode, status: draft.status };
       await api(draft.id ? `/api/admin/roles/${draft.id}` : '/api/admin/roles', { body });
       setEdit(undefined); setMsg({ ok }); list.reload();
     } catch (e) { setMsg({ bad: errorText(t, has, e) }); } finally { setBusy(false); }
@@ -753,6 +753,10 @@ function Roles() {
         <input type="checkbox" id="role-signoff" checked={edit.canSignOff} disabled={!edit.canReview} onChange={(e) => setEdit({ ...edit, canSignOff: e.target.checked })} />
         {t('roles.canSignOff')}
       </label>
+      <label className="check-one" style={{ marginTop: 6 }}>
+        <input type="checkbox" id="role-pos" checked={edit.posMode} onChange={(e) => setEdit({ ...edit, posMode: e.target.checked })} />
+        <span>{t('roles.posMode')}<span className="small mut" style={{ display: 'block' }}>{t('roles.posModeHint')}</span></span>
+      </label>
       <div className="small mut" style={{ margin: '4px 0 10px' }}>{t('roles.levelsHint')}</div>
       <div className="actions">
         <button className="b p" type="submit" id="role-save" disabled={busy}>{t('roles.save')}</button>
@@ -781,11 +785,11 @@ function Roles() {
                   <td data-label={t('roles.title')}><b>{local(r.name, r.nameAr)}</b>{r.status === 'archived' && <> <span className="badge">{t('roles.archived')}</span></>}
                     {r.description && <div className="small mut">{r.description}</div>}</td>
                   <td data-label={t('roles.access')}><AccessSummary permissions={r.permissions} /></td>
-                  <td data-label={t('roles.approves')}>{r.canApprove ? t('yes') : t('no')}{r.canSignOff ? <div className="small"><span className="badge good">{t('roles.signsOff')}</span></div> : r.canReview ? <div className="small"><span className="badge">{t('roles.reviews')}</span></div> : null}</td>
+                  <td data-label={t('roles.approves')}>{r.canApprove ? t('yes') : t('no')}{r.canSignOff ? <div className="small"><span className="badge good">{t('roles.signsOff')}</span></div> : r.canReview ? <div className="small"><span className="badge">{t('roles.reviews')}</span></div> : null}{r.posMode && <div className="small"><span className="badge">{t('roles.counter')}</span></div>}</td>
                   <td className="num" data-label={t('roles.people')}>{r.users}</td>
                   <td className="num">
                     <span className="actions" style={{ justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
-                      <button className="b small" disabled={busy} onClick={() => { setMsg({}); setEdit({ id: r.id, name: r.name, nameAr: r.nameAr ?? '', description: r.description ?? '', permissions: { ...r.permissions }, canApprove: r.canApprove, canReview: r.canReview, canSignOff: r.canSignOff, status: r.status }); }}>{t('roles.edit')}</button>
+                      <button className="b small" disabled={busy} onClick={() => { setMsg({}); setEdit({ id: r.id, name: r.name, nameAr: r.nameAr ?? '', description: r.description ?? '', permissions: { ...r.permissions }, canApprove: r.canApprove, canReview: r.canReview, canSignOff: r.canSignOff, posMode: Boolean(r.posMode), status: r.status }); }}>{t('roles.edit')}</button>
                       {r.status === 'active'
                         ? <button className="b small" disabled={busy || r.users > 0} title={r.users > 0 ? t('err.roleInUse') : undefined}
                             onClick={() => void save({ ...r, nameAr: r.nameAr ?? '', description: r.description ?? '', status: 'archived' }, t('roles.archivedDone', { role: r.name }))}>{t('roles.archive')}</button>

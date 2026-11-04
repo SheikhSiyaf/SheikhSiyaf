@@ -42,7 +42,9 @@ export const DEMO_USERS: DemoUser[] = [
   { name: 'Rami Saleh', email: 'rami@firm.example', kind: 'firm_staff', role: 'staff_accountant', companies: ['riyadh'] },
   { name: 'Sara Nasser', email: 'sara@alnoor.example', kind: 'client', role: 'client_accountant', companies: ['alnoor'], company: 'Al Noor Trading' },
   { name: 'Faisal Al Qahtani', email: 'faisal@alnoor.example', kind: 'client', role: 'client_viewer', companies: ['alnoor'], company: 'Al Noor Trading' },
+  { name: 'Yousef Al Dossari', email: 'yousef@alnoor.example', kind: 'client', role: 'client_accountant', companies: ['alnoor'], company: 'Al Noor Trading', clientRole: 'Store keeper' },
   { name: 'Hana Rahman', email: 'hana@marinacafe.example', kind: 'client', role: 'client_accountant', companies: ['marina'], company: 'Marina Café LLC' },
+  { name: 'Maya Fernandes', email: 'maya@marinacafe.example', kind: 'client', role: 'client_accountant', companies: ['marina'], company: 'Marina Café LLC', clientRole: 'Counter cashier' },
   { name: 'Khalid Al Otaibi', email: 'khalid@riyadhsupplies.example', kind: 'client', role: 'client_viewer', companies: ['riyadh'], company: 'Riyadh Supplies Co' },
   { name: 'Nusuh Books (owner)', email: 'owner@nusuhbooks.example', kind: 'owner', role: 'owner', companies: [], tenant: 'platform' },
   { name: 'Hamad Al Zahrani', email: 'admin@desertrose.example', kind: 'admin', role: 'admin', companies: [], tenant: 'self', company: 'Desert Rose Trading' },
@@ -83,9 +85,10 @@ export const DEMO_RESTAURANT = {
 };
 
 /** Sample job titles for client users (Administrator > Roles and permissions). */
-export const DEMO_ROLES: { name: string; nameAr: string; description: string; permissions: Record<string, 'view' | 'edit'>; canApprove: boolean }[] = [
+export const DEMO_ROLES: { name: string; nameAr: string; description: string; permissions: Record<string, 'view' | 'edit'>; canApprove: boolean; posMode?: boolean }[] = [
   { name: 'Cashier', nameAr: 'أمين الصندوق', description: 'Raises invoices and records receipts', permissions: { Sales: 'edit', Bank: 'view', Reports: 'view' }, canApprove: false },
-  { name: 'Store keeper', nameAr: 'أمين المخزن', description: 'Goods received and delivered', permissions: { Inventory: 'edit', Restaurant: 'edit', Purchases: 'view' }, canApprove: false },
+  { name: 'Store keeper', nameAr: 'أمين المخزن', description: 'Goods in and out at the warehouse counter (counter only)', permissions: { Inventory: 'edit', Restaurant: 'edit' }, canApprove: false, posMode: true },
+  { name: 'Counter cashier', nameAr: 'كاشير المنصة', description: 'Takes orders at the restaurant counter (counter only)', permissions: { Restaurant: 'edit' }, canApprove: false, posMode: true },
   { name: 'Finance manager', nameAr: 'المدير المالي', description: 'Sees everything, approves claims',
     permissions: { Sales: 'view', Purchases: 'view', Expenses: 'view', Bank: 'view', Inventory: 'view', Restaurant: 'view', Assets: 'view', Projects: 'view', HRM: 'view', CRM: 'view', Journal: 'view', Ledger: 'view', Reports: 'view' }, canApprove: true },
 ];

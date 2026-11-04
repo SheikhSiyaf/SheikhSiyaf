@@ -61,9 +61,10 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
     }
     const admin = userIds['admin@firm.example']!;
     await asUser(admin);
+    const firmRoles: Record<string, string> = {};
     for (const r of DEMO_ROLES) {
-      await client.query('INSERT INTO client_roles (firm_id, name, name_ar, description, permissions, can_approve) VALUES ($1,$2,$3,$4,$5,$6)',
-        [firmId, r.name, r.nameAr, r.description, JSON.stringify(r.permissions), r.canApprove]);
+      firmRoles[r.name] = (await client.query('INSERT INTO client_roles (firm_id, name, name_ar, description, permissions, can_approve, pos_mode) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+        [firmId, r.name, r.nameAr, r.description, JSON.stringify(r.permissions), r.canApprove, Boolean(r.posMode)])).rows[0].id;
     }
     await asUser(userIds['admin@desertrose.example']!);
     const selfRoles: Record<string, string> = {};
@@ -83,7 +84,7 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
          c.industry, DEFAULT_MODULES[c.industry]])).rows[0].id;
       companyIds[c.key] = id;
       for (const u of DEMO_USERS.filter((x) => x.companies.includes(c.key))) {
-        await client.query('INSERT INTO memberships (user_id, company_id, role, client_role_id) VALUES ($1,$2,$3,$4)', [userIds[u.email], id, u.role, u.clientRole ? selfRoles[u.clientRole] ?? null : null]);
+        await client.query('INSERT INTO memberships (user_id, company_id, role, client_role_id) VALUES ($1,$2,$3,$4)', [userIds[u.email], id, u.role, u.clientRole ? (u.tenant === 'self' ? selfRoles : firmRoles)[u.clientRole] ?? null : null]);
       }
       await asUser(c.tenant === 'self' ? userIds['admin@desertrose.example']! : admin);
       await client.query('SELECT setup_company_books($1, $2, $3)', [id, JSON.stringify(CHART_TEMPLATE), new Date().getUTCFullYear()]);

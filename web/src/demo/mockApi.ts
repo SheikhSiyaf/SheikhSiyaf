@@ -22,6 +22,7 @@ import { FIRST_PIH, invoiceXml, kindFor } from '../../../src/einvoice/zatca/ubl.
 import { pintAeInScope, pintAeXml } from '../../../src/einvoice/pintAe.ts';
 import * as Fc from '../../../src/books/forecast.ts';
 import * as Im from '../../../src/books/importRules.ts';
+import { cleanBarcode, internalEan, validBarcode } from '../../../src/books/barcode.ts';
 import type { EInvoiceData, EParty } from '../../../src/einvoice/invoiceData.ts';
 import { tinyPdf } from '../../../src/db/tinyPdf.ts';
 import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, previousMonthEnd, targetDepreciation, type AssetTerms } from '../../../src/books/assets.ts';
@@ -45,7 +46,7 @@ interface Period { companyId: string; startDate: string; endDate: string; locked
 interface Line { id: string; accountId: string; costCentreId: string | null; debit: bigint; credit: bigint }
 interface Entry { id: string; companyId: string; date: string; memo: string | null; createdBy: string; createdAt: string; reversesEntryId: string | null; lines: Line[]; manual?: boolean }
 interface Membership { userId: string; companyId: string; role: Role; clientRoleId?: string | null }
-interface ClientRole { id: string; firmId: string; name: string; nameAr: string | null; description: string | null; permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; status: 'active' | 'archived' }
+interface ClientRole { id: string; firmId: string; name: string; nameAr: string | null; description: string | null; permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; posMode?: boolean; status: 'active' | 'archived' }
 /** Customers (db/migrations/0023): the platform, accounting firms, and companies that run their own books. */
 interface Firm { id: string; name: string; kind: 'platform' | 'firm' | 'company'; status: 'active' | 'suspended'; createdAt: string }
 const firms: Firm[] = [];
@@ -167,7 +168,7 @@ function seed() {
     { id: uid(), name: DEMO_SELF, kind: 'company', status: 'active', createdAt: now });
   const tenantOf = (t?: string) => firms.find((f) => f.kind === (t === 'self' ? 'company' : t === 'platform' ? 'platform' : 'firm'))!.id;
   for (const f of firms.filter((x) => x.kind !== 'platform')) addDefaultRoles(f.id);
-  for (const r of DEMO_ROLES) rolesDb.push({ id: uid(), firmId: tenantOf('firm'), ...r, canReview: false, canSignOff: false, status: 'active' });
+  for (const r of DEMO_ROLES) rolesDb.push({ id: uid(), firmId: tenantOf('firm'), ...r, canReview: false, canSignOff: false, posMode: Boolean(r.posMode), status: 'active' });
   for (const r of DEMO_SELF_ROLES) rolesDb.push({ id: uid(), firmId: tenantOf('self'), ...r, status: 'active' });
   for (const u of DEMO_USERS) {
     db.users.push({ id: uid(), firmId: tenantOf(u.tenant), name: u.name, email: u.email, kind: u.kind, staffRole: u.kind === 'firm_staff' ? (u.role as Role) : null,
@@ -743,7 +744,7 @@ interface MLine { id: string; companyId: string; bankId: string; importId: strin
 interface MImport { id: string; companyId: string; bankId: string; fileName: string; lineCount: number; skipped: number; dateFrom: string; dateTo: string; importedBy: string; importedAt: string }
 interface MRule { id: string; companyId: string; matchText: string; direction: 'in' | 'out'; accountId: string; costCentreId: string | null; vatCode: string; label: string | null;
   bankAccountId: string | null; active: boolean }
-interface MItem { id: string; companyId: string; sku: string; name: string; nameAr: string | null; unit: string; salePrice: string | null; reorderLevel: string | null;
+interface MItem { id: string; companyId: string; sku: string; barcode: string; name: string; nameAr: string | null; unit: string; salePrice: string | null; reorderLevel: string | null;
   q: bigint; v: bigint; status: 'active' | 'archived' }
 interface MNoteLine { id: string; itemId: string; q: bigint; unitCost: bigint | null; value: bigint; costCentreId: string | null }
 interface MNote { id: string; companyId: string; type: NoteType; status: 'draft' | 'posted'; number: string | null; date: string; contactId: string | null; reference: string | null;
@@ -950,7 +951,7 @@ function saveRuleM(companyId: string, b: Record<string, unknown>, id?: string) {
 }
 
 // ---- inventory
-const itemRow = (i: MItem) => ({ id: i.id, companyId: i.companyId, sku: i.sku, name: i.name, nameAr: i.nameAr, unit: i.unit, salePrice: i.salePrice, reorderLevel: i.reorderLevel,
+const itemRow = (i: MItem) => ({ id: i.id, companyId: i.companyId, sku: i.sku, barcode: i.barcode, name: i.name, nameAr: i.nameAr, unit: i.unit, salePrice: i.salePrice, reorderLevel: i.reorderLevel,
   qtyOnHand: qtyStr(i.q), valueOnHand: s(i.v), status: i.status, averageCost: s(averageCost(i.q, i.v)), low: i.reorderLevel !== null && i.q <= toQ(i.reorderLevel) });
 const itemOf = (id: string) => odb.items.find((i) => i.id === id && roleOf(session, i.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
 function saveItemM(companyId: string, b: Record<string, unknown>, id?: string) {
@@ -959,10 +960,23 @@ function saveItemM(companyId: string, b: Record<string, unknown>, id?: string) {
   if (!sku) fail(400, 'Enter the item code.', 'err.itemSku');
   if (!name) fail(400, 'Enter the item name.', 'err.itemName');
   if (odb.items.some((i) => i.companyId === companyId && i.id !== id && i.sku === sku)) fail(400, 'Another item already has this code.', 'err.skuTaken');
-  const v = { sku, name, nameAr: (b.nameAr as string)?.trim() || null, unit: (b.unit as string) || 'pcs', salePrice: b.salePrice ? s(toMinor(String(b.salePrice))) : null,
+  // Barcode as in 0027: the supplier's code, or one made here (2 + 11 digits + check digit); left out when editing keeps it.
+  let barcode = b.barcode === undefined && id ? itemOf(id).barcode : cleanBarcode(b.barcode as string);
+  if (barcode && !validBarcode(barcode)) fail(400, 'Check the barcode.', 'err.barcode');
+  if (!barcode) barcode = internalEan(++barcodeSeq);
+  if (odb.items.some((i) => i.companyId === companyId && i.id !== id && i.barcode === barcode)) fail(400, 'Another item already has this barcode.', 'err.barcodeTaken');
+  const v = { sku, barcode, name, nameAr: (b.nameAr as string)?.trim() || null, unit: (b.unit as string) || 'pcs', salePrice: b.salePrice ? s(toMinor(String(b.salePrice))) : null,
     reorderLevel: b.reorderLevel ? qtyStr(toQ(String(b.reorderLevel))) : null, status: b.status === 'archived' ? 'archived' as const : 'active' as const };
   if (id) { Object.assign(itemOf(id), v); return id; }
   const nid = uid(); odb.items.push({ id: nid, companyId, q: 0n, v: 0n, ...v }); return nid;
+}
+let barcodeSeq = 0;
+/** The warehouse counter: save and post in one step; nothing is left behind when posting fails. */
+function quickNoteM(companyId: string, b: Record<string, unknown>) {
+  const id = saveNoteM(companyId, b);
+  try { postNoteM(id); } catch (e) { odb.notes = odb.notes.filter((n) => n.id !== id); throw e; }
+  const n = noteOf(id);
+  return { id, number: n.number, totalValue: s(n.total) };
 }
 function noteRow(n: MNote) {
   const c = sdb.contacts.find((x) => x.id === n.contactId); const a = db.accounts.find((x) => x.id === n.otherAccountId)!;
@@ -1407,7 +1421,7 @@ function applyCompany(co: Company, c: Record<string, string | undefined>) {
 type Body = Record<string, unknown> | undefined;
 type Handler = (m: RegExpMatchArray, body: Body, query: URLSearchParams) => unknown;
 const routes: [string, RegExp, Handler][] = [
-  ['GET', /^\/api\/demo-users$/, () => DEMO_USERS.map(({ name, email, kind, role, company }) => ({ name, email, kind, role, company }))],
+  ['GET', /^\/api\/demo-users$/, () => DEMO_USERS.map(({ name, email, kind, role, company, clientRole }) => ({ name, email, kind, role, company, clientRole }))],
   ['POST', /^\/api\/login$/, (_m, b) => {
     const u = db.users.find((x) => x.email.toLowerCase() === String(b?.email ?? '').trim().toLowerCase());
     if (!u || !u.password || b?.password !== u.password) return fail(401, 'The email or password is not right.', 'err.login');
@@ -1433,7 +1447,7 @@ const routes: [string, RegExp, Handler][] = [
       company: { ...companyView(c), vatStatus: c.vatStatus, vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: c.paymentTermsDays,
         industry: c.industry, modules: c.modules },
       role, canPost: POSTING.includes(role), canLock: role === 'partner', reviewedUpTo: reviewedUpToM(c.id),
-      access: (() => { const r = clientRoleIn(c.id); return r && { name: r.name, nameAr: r.nameAr, permissions: r.permissions, canApprove: r.canApprove, canReview: r.canReview, canSignOff: r.canSignOff }; })(),
+      access: (() => { const r = clientRoleIn(c.id); return r && { name: r.name, nameAr: r.nameAr, permissions: r.permissions, canApprove: r.canApprove, canReview: r.canReview, canSignOff: r.canSignOff, posMode: Boolean(r.posMode) }; })(),
       review: { canReview: rvCan(c.id), canSignOff: rvSign(c.id) },
       portal: { firm: ptFirm(c.id), calendarEdit: calEdit(c.id), tenantKind: firmOf(c.firmId).kind },
       accounts: db.accounts.filter((a) => a.companyId === c.id).sort((a, b) => a.code.localeCompare(b.code)),
@@ -1682,7 +1696,11 @@ const routes: [string, RegExp, Handler][] = [
     odb.rules = odb.rules.filter((x) => x.id !== r.id); return { ok: true }; }],
   // ---------------------------------------------------------------- inventory
   ['GET', /^\/api\/companies\/([\w-]+)\/items$/, (m, _b, q) => { const id = inCo(m[1]!); const n = (q.get('q') ?? '').trim().toLowerCase();
-    return odb.items.filter((i) => i.companyId === id && (!n || [i.name, i.nameAr, i.sku].join(' ').toLowerCase().includes(n))).sort((a, b) => a.status.localeCompare(b.status) || a.name.localeCompare(b.name)).map(itemRow); }],
+    return odb.items.filter((i) => i.companyId === id && (!n || [i.name, i.nameAr, i.sku].join(' ').toLowerCase().includes(n) || i.barcode === n)).sort((a, b) => a.status.localeCompare(b.status) || a.name.localeCompare(b.name)).map(itemRow); }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/items\/by-code$/, (m, _b, q) => { const id = inCo(m[1]!); const c = cleanBarcode(q.get('code'));
+    const i = c ? odb.items.find((x) => x.companyId === id && x.status === 'active' && x.barcode === c) ?? odb.items.find((x) => x.companyId === id && x.status === 'active' && x.sku.toLowerCase() === c.toLowerCase()) : undefined;
+    return { item: i ? itemRow(i) : null }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/stock-notes\/quick$/, (m, b) => quickNoteM(inCo(m[1]!), b ?? {})],
   ['POST', /^\/api\/companies\/([\w-]+)\/items$/, (m, b) => ({ id: saveItemM(inCo(m[1]!), b ?? {}) })],
   ['GET', /^\/api\/items\/([\w-]+)$/, (m) => { const i = itemOf(m[1]!); let q = 0n, v = 0n;
     const movements = odb.notes.filter((n) => n.status === 'posted').sort((a, b) => a.postedAt!.localeCompare(b.postedAt!)).flatMap((n) => n.lines.filter((l) => l.itemId === i.id).map((l) => {
@@ -1962,7 +1980,7 @@ function roleValues(b: Body, id?: string): Omit<ClientRole, 'id' | 'firmId'> {
   const permissions: Record<string, AccessLevel> = {};
   for (const m of ROLE_MODULES) { const v = (b?.permissions as Record<string, unknown> | undefined)?.[m]; if (v === 'view' || v === 'edit') permissions[m] = v; }
   return { name, nameAr: String(b?.nameAr ?? '').trim() || null, description: String(b?.description ?? '').trim() || null, permissions,
-    canApprove: Boolean(b?.canApprove), canReview: Boolean(b?.canReview) || Boolean(b?.canSignOff), canSignOff: Boolean(b?.canSignOff), status: b?.status === 'archived' ? 'archived' : 'active' };
+    canApprove: Boolean(b?.canApprove), canReview: Boolean(b?.canReview) || Boolean(b?.canSignOff), canSignOff: Boolean(b?.canSignOff), posMode: Boolean(b?.posMode), status: b?.status === 'archived' ? 'archived' : 'active' };
 }
 
 // Access by client role, for requests about a company (same idea as src/api/permissions.ts, simplified).

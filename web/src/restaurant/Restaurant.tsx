@@ -91,7 +91,8 @@ export function FoodSales({ books }: { books: CompanyBooks }) {
 }
 
 /** The order pad: tap menu items, choose how the customer paid, sell. One click issues the invoice. */
-export function FoodSale({ books }: { books: CompanyBooks }) {
+/** The order pad. `counter`: on a POS user's counter screen, where there is no menu to go back to. */
+export function FoodSale({ books, counter }: { books: CompanyBooks; counter?: boolean }) {
   const { t, has } = useI18n();
   const local = useLocalName();
   const go = useGo(books.company.id);
@@ -146,13 +147,13 @@ export function FoodSale({ books }: { books: CompanyBooks }) {
   const categories = [...new Set(active.map((r) => r.category ?? ''))];
   return (
     <>
-      <div className="actions" style={{ marginBottom: 10 }}>
+      {!counter && <div className="actions" style={{ marginBottom: 10 }}>
         <button className="b" onClick={() => go('Restaurant', 'food-sales')}>{t('rest.backSales')}</button>
-      </div>
+      </div>}
       {msg.ok && (
         <div className="notice actions">
           <span style={{ flex: 1 }}>{t('rest.sold', { number: msg.ok.number, total: fmt(msg.ok.total) })}</span>
-          <button className="b small" onClick={() => go('Restaurant', 'food-sales', msg.ok!.id)}>{t('rest.openInvoice')}</button>
+          {!counter && <button className="b small" onClick={() => go('Restaurant', 'food-sales', msg.ok!.id)}>{t('rest.openInvoice')}</button>}
         </div>
       )}
       {msg.bad && <div className="notice bad" role="alert">{msg.bad}</div>}
@@ -201,7 +202,7 @@ export function FoodSale({ books }: { books: CompanyBooks }) {
             {short.length > 0 && (
               <div className="notice warn small" role="alert">
                 {t('rest.short')} {short.map((x) => `${local(x.item!.name, x.item!.nameAr)} (${t('rest.inStock', { n: showQty(x.item!.qtyOnHand), unit: x.item!.unit })})`).join(', ')}.{' '}
-                <button className="link small" onClick={() => go('Restaurant', 'materials-in', 'new')}>{t('rest.receiveMaterials')}</button>
+                {!counter && <button className="link small" onClick={() => go('Restaurant', 'materials-in', 'new')}>{t('rest.receiveMaterials')}</button>}
               </div>
             )}
             <div className="chips" role="radiogroup" aria-label={t('rest.paidBy')} style={{ margin: '10px 0' }}>

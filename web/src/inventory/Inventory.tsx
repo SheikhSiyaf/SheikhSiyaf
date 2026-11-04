@@ -11,9 +11,11 @@ import { ArabicHint, followArabic } from '../arabic.tsx';
 import { isLocked } from '../books/Workspace.tsx';
 import { AttachmentsCard, PdfButton, printNote } from '../print/Attachments.tsx';
 import { issueCost, quantityToMilli, receivedValue } from '../../../src/books/inventory.ts';
+import { badCheckDigit, cleanBarcode, validBarcode } from '../../../src/books/barcode.ts';
+import { BarcodeSvg, usePrintLabels } from './Barcode.tsx';
 
 export interface Item {
-  id: string; sku: string; name: string; nameAr: string | null; unit: string; salePrice: string | null; reorderLevel: string | null;
+  id: string; sku: string; barcode: string; name: string; nameAr: string | null; unit: string; salePrice: string | null; reorderLevel: string | null;
   qtyOnHand: string; valueOnHand: string; averageCost: string; low: boolean; status: string;
 }
 type NoteType = 'grn' | 'gdn';
@@ -54,6 +56,7 @@ export function ItemList({ books, mod = 'Inventory' }: { books: CompanyBooks; mo
     <>
       <div className="top" style={{ marginBottom: 10 }}>
         <input type="search" placeholder={w('inv.search')} value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: '1 1 220px' }} aria-label={t('search')} />
+        {books.canPost && <button className="b" id="open-desk" onClick={() => go(mod, mod === 'Restaurant' ? 'stock-desk' : 'warehouse-desk')}>{t('wh.openDesk')}</button>}
         {books.canPost && <button className="b" onClick={() => go(mod, subOf('grn', mod), 'new')}>{w('inv.newGrn')}</button>}
         {books.canPost && <button className="b" onClick={() => go(mod, itemsOf(mod), 'import')}>{t('imp.fromExcel')}</button>}
         {books.canPost && <button className="b p" onClick={() => go(mod, itemsOf(mod), 'new')}>{w('inv.newItemPlus')}</button>}
@@ -65,7 +68,7 @@ export function ItemList({ books, mod = 'Inventory' }: { books: CompanyBooks; mo
             <thead><tr><th>{w('inv.sku')}</th><th>{w('inv.item')}</th><th className="num">{w('inv.onHand')}</th><th className="num">{w('inv.avgCost')}</th><th className="num">{w('inv.value')}</th></tr></thead>
             <tbody>{list.data.map((i) => (
               <tr key={i.id} className={i.status !== 'active' ? 'mut' : ''}>
-                <td className="ltr small">{i.sku}</td>
+                <td className="ltr small">{i.sku}<div className="mut">{i.barcode}</div></td>
                 <td><button className="link" onClick={() => go(mod, itemsOf(mod), i.id)}>{local(i.name, i.nameAr)}</button>{i.low && <span className="badge warn" style={{ marginInlineStart: 6 }}>{w('inv.low')}</span>}</td>
                 <td className="num ltr" data-label={w('inv.onHand')}>{qty(i.qtyOnHand)} <span className="small mut">{i.unit}</span></td>
                 <td className="num ltr" data-label={w('inv.avgCost')}>{fmt(i.averageCost)}</td>
@@ -90,22 +93,26 @@ export function ItemPage({ books, id, mod = 'Inventory' }: { books: CompanyBooks
   const [f, setF] = useState<Record<string, string>>();
   const [msg, setMsg] = useState<{ ok?: string; bad?: string }>({});
   const [busy, setBusy] = useState(false);
+  const [copies, setCopies] = useState('1');
+  const printLabels = usePrintLabels(books);
   if (!f && (isNew || item.data)) {
     const x = item.data;
-    setF({ sku: x?.sku ?? '', name: x?.name ?? '', nameAr: x?.nameAr ?? '', unit: x?.unit ?? 'pcs', salePrice: x?.salePrice ?? '', reorderLevel: x?.reorderLevel ? qty(x.reorderLevel) : '', status: x?.status ?? 'active' });
+    setF({ barcode: x?.barcode ?? '', sku: x?.sku ?? '', name: x?.name ?? '', nameAr: x?.nameAr ?? '', unit: x?.unit ?? 'pcs', salePrice: x?.salePrice ?? '', reorderLevel: x?.reorderLevel ? qty(x.reorderLevel) : '', status: x?.status ?? 'active' });
   }
   if (item.error) return <ErrorNote error={item.error} onRetry={item.reload} />;
   if (!f) return <Loading />;
   const set = (k: string, v: string) => setF({ ...f, [k]: v });
   const priceOk = !f.salePrice!.trim() || isAmount(f.salePrice!);
-  const canSave = books.canPost && f.sku!.trim() !== '' && f.name!.trim() !== '' && priceOk && (!f.reorderLevel!.trim() || milli(f.reorderLevel!) !== null);
+  const code = cleanBarcode(f.barcode);
+  const codeOk = !code || validBarcode(code);
+  const canSave = books.canPost && f.sku!.trim() !== '' && f.name!.trim() !== '' && priceOk && codeOk && (!f.reorderLevel!.trim() || milli(f.reorderLevel!) !== null);
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!canSave) return;
     setBusy(true); setMsg({});
     try {
       const r = await api<{ id: string }>(isNew ? `/api/companies/${books.company.id}/items` : `/api/items/${id}`,
-        { body: { ...f, salePrice: f.salePrice!.trim() ? normalise(f.salePrice!) : null, reorderLevel: f.reorderLevel!.trim() || null } });
+        { body: { ...f, barcode: code, salePrice: f.salePrice!.trim() ? normalise(f.salePrice!) : null, reorderLevel: f.reorderLevel!.trim() || null } });
       if (isNew) { go(mod, itemsOf(mod), r.id); return; }
       setMsg({ ok: t('admin.saved') }); item.reload();
     } catch (err) { setMsg({ bad: errorText(t, has, err) }); } finally { setBusy(false); }
@@ -146,11 +153,26 @@ export function ItemPage({ books, id, mod = 'Inventory' }: { books: CompanyBooks
               {!priceOk && <span className="small bad">{t('err.amountFormat')}</span>}</label>
             <label className="f">{w('inv.reorder')}<input inputMode="decimal" className="num ltr amount" value={f.reorderLevel} onChange={(e) => set('reorderLevel', e.target.value)} /></label>
           </div>
+          <div className="row">
+            <label className="f">{t('wh.barcode')}<input id="it-barcode" dir="ltr" className="ltr" value={f.barcode} placeholder={t('wh.barcodeAuto')} onChange={(e) => set('barcode', e.target.value)} />
+              {!codeOk && <span className="small bad">{badCheckDigit(code) ? t('wh.barcodeCheck') : t('err.barcode')}</span>}
+              <span className="small mut">{t('wh.barcodeHint')}</span></label>
+          </div>
           {!isNew && <label className="actions" style={{ marginBottom: 10 }}><input type="checkbox" checked={f.status === 'archived'} onChange={(e) => set('status', e.target.checked ? 'archived' : 'active')} /><span>{w('inv.archive')}</span></label>}
           <p className="small mut">{isNew ? w('inv.newItemNote') : w('inv.stockNote')}</p>
           {books.canPost && <button className="b p" type="submit" disabled={busy || !canSave}>{isNew ? w('inv.createItem') : t('admin.saveDetails')}</button>}
         </fieldset>
       </form>
+      {x && (
+        <div className="card wh-label-card">
+          <h3>{t('wh.barcode')}</h3>
+          <div className="wh-label-preview"><BarcodeSvg code={x.barcode} height={46} /><div className="ltr small" id="it-code">{x.barcode}</div></div>
+          <div className="actions">
+            <label className="f" style={{ marginBottom: 0 }}>{t('wh.copies')}<input inputMode="numeric" className="num ltr" style={{ width: 90 }} value={copies} onChange={(e) => setCopies(e.target.value.replace(/\D/g, '').slice(0, 3))} /></label>
+            <button className="b" id="it-labels" style={{ alignSelf: 'end' }} disabled={!Number(copies)} onClick={() => printLabels([{ item: x, copies: Number(copies) }])}>{t('wh.printLabels')}</button>
+          </div>
+        </div>
+      )}
       {x && (
         <div className="card">
           <h3>{w('inv.movements')}</h3>

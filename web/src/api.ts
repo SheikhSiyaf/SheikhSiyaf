@@ -73,7 +73,7 @@ export interface CompanyBooks {
   company: { id: string; name: string; nameAr: string | null; city?: string; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; vatStatus: string; invoicePrefix?: string; paymentTermsDays?: number; industry?: string; modules?: string[]; vatNumber?: string | null };
   role: Role; canPost: boolean; canLock: boolean;
   /** The person's client role, when they have one: access per module. Null = full access for their role. */
-  access?: { name: string; nameAr?: string | null; permissions: Record<string, string>; canApprove: boolean; canReview?: boolean; canSignOff?: boolean } | null;
+  access?: { name: string; nameAr?: string | null; permissions: Record<string, string>; canApprove: boolean; canReview?: boolean; canSignOff?: boolean; posMode?: boolean } | null;
   /** Review rights here: firm staff by their role, client users by their role's review and sign-off rights. */
   review?: { canReview: boolean; canSignOff: boolean };
   /** Firm staff on this client (the portal's firm side), whether this person keeps the calendar, and the customer's kind. */

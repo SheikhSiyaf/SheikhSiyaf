@@ -4,7 +4,7 @@ import { useI18n } from '../i18n.tsx';
 import { ErrorNote } from '../ui.tsx';
 import { toggleTheme } from '../theme.ts';
 
-interface DemoUser { name: string; email: string; kind: string; role: string; company?: string }
+interface DemoUser { name: string; email: string; kind: string; role: string; company?: string; clientRole?: string }
 
 export function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const { t, lang, setLang } = useI18n();
@@ -99,7 +99,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
                 <b className="small">{t(label as 'role.admin')}</b>
                 {demo.data!.filter((u) => u.kind === kind).map((u) => (
                   <button key={u.email} className="b" disabled={busy} onClick={() => void signIn(u.email, cfg.data!.demoPassword!)}>
-                    {u.name} <span className="mut">· {t(`role.${u.role}` as 'role.admin')}{u.company ? ` · ${u.company}` : ''}</span>
+                    {u.name} <span className="mut">· {u.clientRole ?? t(`role.${u.role}` as 'role.admin')}{u.company ? ` · ${u.company}` : ''}</span>
                   </button>
                 ))}
               </div>

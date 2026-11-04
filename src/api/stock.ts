@@ -43,6 +43,9 @@ export function registerStockRoutes(app: FastifyInstance, { as }: Ctx) {
   app.get<{ Params: P }>('/api/stock-notes/:id', async (req) => as(req, (db) => I.getNote(db, uuidParam(req.params.id))));
   app.post<{ Params: P; Body: I.NoteInput }>('/api/stock-notes/:id', async (req) =>
     as(req, async (db) => ({ id: await I.saveNoteDraft(db, await companyOf(db, 'stock_notes', req.params.id), req.body ?? {}, req.params.id) })));
+  // warehouse counter: find an item by scanned code; record and post goods in or out in one step
+  app.get<{ Params: P; Querystring: { code?: string } }>('/api/companies/:id/items/by-code', async (req) => inCompany(req, req.params.id, async (db, c) => ({ item: await I.findByCode(db, c, req.query.code ?? '') })));
+  app.post<{ Params: P; Body: I.NoteInput }>('/api/companies/:id/stock-notes/quick', async (req) => inCompany(req, req.params.id, (db, c) => I.quickNote(db, c, req.body ?? {})));
   app.post<{ Params: P }>('/api/stock-notes/:id/post', async (req) => as(req, async (db) => { await I.postNote(db, uuidParam(req.params.id)); return ok; }));
   app.post<{ Params: P }>('/api/stock-notes/:id/delete', async (req) => as(req, async (db) => { await I.deleteNoteDraft(db, uuidParam(req.params.id)); return ok; }));
 

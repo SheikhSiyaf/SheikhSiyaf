@@ -513,3 +513,36 @@ button.qs-hit.on { background: var(--tealbg); }
 /* Long badges (like "Reviewed by your accountant up to …") wrap on small screens instead of widening the page. */
 .badge { max-width: 100%; }
 @media (max-width: 760px) { .badge { white-space: normal; } }
+
+/* Warehouse counter and counter-only layout (POS users) */
+.wh-way { margin-bottom: 12px; }
+.wh-way button { min-width: 140px; font-size: 16px; padding: 10px 16px; }
+.wh-scan { display: flex; gap: 8px; }
+.wh-scan input { flex: 1; min-width: 0; font-size: 18px; padding: 12px 14px; }
+.wh-qty { width: 64px; text-align: center; padding: 6px; }
+.wh-cost { display: flex; align-items: center; gap: 6px; }
+.wh-cost input { width: 100px; padding: 4px 6px; }
+.wh-line { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.wh-line-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.wh-line-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 6px; }
+.wh-line-row .qty-step { justify-content: flex-start; }
+.wh-value { margin-inline-start: auto; }
+input[aria-invalid="true"] { border-color: var(--bad); }
+.cam { margin-top: 10px; }
+.cam video { width: 100%; max-height: 50vh; border-radius: 10px; background: #000; object-fit: cover; }
+.wh-label-preview { background: #fff; color: #000; display: inline-flex; flex-direction: column; align-items: center; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); margin-bottom: 10px; }
+.wh-label-preview .barcode { width: 220px; height: 64px; }
+.counter { min-height: 100vh; display: flex; flex-direction: column; }
+.counter-top { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));
+  background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 3; }
+.counter-who { display: flex; flex-direction: column; min-width: 0; }
+.counter-top .chips button { display: inline-flex; align-items: center; gap: 6px; }
+.counter-main { flex: 1; padding: 14px max(16px, env(safe-area-inset-right, 0px)) 40px max(16px, env(safe-area-inset-left, 0px)); }
+/* Label sheet: 3 across on A4 */
+.label-sheet { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4mm; }
+.label { border: 0.2mm dashed #999; padding: 2.5mm 3mm; break-inside: avoid; display: flex; flex-direction: column; align-items: center; gap: 0.6mm; color: #000; background: #fff; }
+.label-co { font-size: 7pt; color: #555; }
+.label-name { font-size: 9pt; font-weight: 600; text-align: center; max-height: 2.4em; overflow: hidden; }
+.label .barcode { width: 46mm; height: 13mm; }
+.label-code { font-size: 9pt; letter-spacing: 0.5mm; font-family: ui-monospace, monospace; }
+.label-foot { display: flex; justify-content: space-between; width: 100%; font-size: 8pt; }

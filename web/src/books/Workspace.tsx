@@ -41,6 +41,8 @@ import { BankAccountForm, BankAccountList, BankAccountPage, ImportStatement, Rec
 import { ItemList, ItemPage, NoteEditor, NoteList, StockValue } from '../inventory/Inventory.tsx';
 import { AssetPage, AssetRegister, Depreciation } from '../assets/Assets.tsx';
 import { FoodSale, FoodSales, MenuList, RecipePage } from '../restaurant/Restaurant.tsx';
+import { WarehouseDesk } from '../inventory/Warehouse.tsx';
+import { Counter } from '../inventory/Counter.tsx';
 
 export const MODULES = NAV.map((m) => m.key);
 
@@ -83,6 +85,9 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
       ))}
     </div>
   );
+
+  // Counter roles (POS users) see only their counters: no books menu.
+  if (b?.access?.posMode) return <Counter me={me} books={b} path={path} onSignOut={onSignOut} />;
 
   return (
     <div className="app">
@@ -169,6 +174,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Inventory':
     case 'Restaurant': {
       const mod = module as 'Inventory' | 'Restaurant';
+      if (sub === 'warehouse-desk' || sub === 'stock-desk') return <WarehouseDesk key={sub} books={books} mod={mod} />;
       if ((sub === 'items' || sub === 'materials') && item === 'import') return <ImportData key="items" books={books} initial="items" only />;
       if (sub === 'food-sales') {
         if (item === 'new') return <FoodSale books={books} />;

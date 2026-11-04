@@ -46,7 +46,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/demo-users', async () => {
     if (!opts.demoLogins) throw new HttpError(404, 'Not found.', 'err.notFound');
-    return DEMO_USERS.map(({ name, email, kind, role, company }) => ({ name, email, kind, role, company }));
+    return DEMO_USERS.map(({ name, email, kind, role, company, clientRole }) => ({ name, email, kind, role, company, clientRole }));
   });
 
   app.post<{ Body: { email?: string; password?: string } }>('/api/login', async (req, reply) => {

@@ -99,7 +99,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     const periods = await db.query(
       `SELECT start_date::text AS "startDate", end_date::text AS "endDate", locked_at AS "lockedAt"
        FROM periods WHERE company_id = $1 ORDER BY start_date`, [id]);
-    const access = (await db.query('SELECT permissions, can_approve AS "canApprove", name, name_ar AS "nameAr", can_review AS "canReview", can_sign_off AS "canSignOff" FROM app_client_role($1)', [id])).rows[0] ?? null;
+    const access = (await db.query('SELECT permissions, can_approve AS "canApprove", name, name_ar AS "nameAr", can_review AS "canReview", can_sign_off AS "canSignOff", pos_mode AS "posMode" FROM app_client_role($1)', [id])).rows[0] ?? null;
     return {
       company: rows[0], role, access, reviewedUpTo: await reviewedUpTo(db, id),
       review: (await db.query('SELECT app_can_review($1) AS "canReview", app_can_sign($1) AS "canSignOff"', [id])).rows[0],

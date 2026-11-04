@@ -1,5 +1,6 @@
 // Quotations, invoices, credit notes, bills and supplier credits: list, editor (drafts) and view.
 import { EInvoiceStatus } from './EInvoicing.tsx';
+import { DocEmail } from './DocEmail.tsx';
 import { ApprovalPanel, useApprovalRules, type ApprovalRequest } from '../approvals/Approvals.tsx';
 import { useMemo, useState } from 'react';
 import { api, useApi, type CompanyBooks, type Me } from '../api.ts';
@@ -414,6 +415,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
       </div>
       {error && <div className="notice bad" role="alert">{error}</div>}
       {x.status === 'issued' && (x.type === 'invoice' || x.type === 'credit_note') && <EInvoiceStatus books={books} documentId={x.id} />}
+      {x.status !== 'draft' && ['invoice', 'credit_note', 'quotation'].includes(x.type) && <DocEmail books={books} documentId={x.id} />}
       {x.status === 'draft' && (x.type === 'bill' || x.type === 'credit_note') && <ApprovalPanel books={books} documentId={x.id} reload={d.reload} />}
       {isClaim && x.status === 'submitted' && mine && <div className="notice">{t('appr.yoursNotice')}</div>}
       {isClaim && x.status === 'rejected' && <div className="notice warn">{t('claim.rejectedBecause', { reason: x.rejectionReason ?? '', name: x.decidedByName ?? '' })}</div>}

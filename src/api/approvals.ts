@@ -2,7 +2,8 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
-import { today, uuidParam, type Ctx } from './context.js';
+import { baseUrl, today, uuidParam, type Ctx } from './context.js';
+import { notifyApprovers } from '../books/emailService.js';
 import * as A from '../books/approvalsService.js';
 import * as F from '../books/forecastService.js';
 import type { PaymentInput } from '../books/documentsService.js';
@@ -14,7 +15,7 @@ async function member(db: Db, companyId: string) {
   if (!(await db.query('SELECT 1 FROM companies WHERE id = $1 AND id = ANY (app_company_ids())', [companyId])).rows[0]) throw new HttpError(404, 'Not found.', 'err.notFound');
 }
 
-export function registerApprovalRoutes(app: FastifyInstance, { as }: Ctx) {
+export function registerApprovalRoutes(app: FastifyInstance, { as, opts }: Ctx) {
   const inCompany = <T>(req: Parameters<Ctx['as']>[0], id: string, fn: (db: Db, companyId: string) => Promise<T>) => {
     const companyId = uuidParam(id);
     return as(req, async (db) => { await member(db, companyId); return fn(db, companyId); });
@@ -31,9 +32,18 @@ export function registerApprovalRoutes(app: FastifyInstance, { as }: Ctx) {
   app.post<{ Params: Id; Body: { kind?: string; threshold?: string; active?: boolean } }>('/api/companies/:id/approvals/rules', async (req) => inCompany(req, req.params.id, async (db, c) => { await A.saveRule(db, c, req.body ?? {}); return ok; }));
   app.get<{ Params: Id; Querystring: Q }>('/api/companies/:id/approvals/needed', async (req) => inCompany(req, req.params.id, async (db, c) =>
     ({ needed: /^\d+(\.\d{1,2})?$/.test(String(req.query.amount)) ? await A.needed(db, c, String(req.query.kind), String(req.query.amount)) : false })));
-  app.post<{ Params: Id; Body: PaymentInput & { note?: string } }>('/api/companies/:id/approvals/payments', async (req) => inCompany(req, req.params.id, async (db, c) => ({ id: await A.requestPayment(db, c, req.body ?? {}) })));
+  app.post<{ Params: Id; Body: PaymentInput & { note?: string } }>('/api/companies/:id/approvals/payments', async (req) => inCompany(req, req.params.id, async (db, c) => {
+    const id = await A.requestPayment(db, c, req.body ?? {});
+    await notifyApprovers(db, c, 'a supplier payment', baseUrl(req, opts));
+    return { id };
+  }));
   app.get<{ Params: Id }>('/api/documents/:id/approval', async (req) => byId(req, req.params.id, (db, id) => A.forDocument(db, id)));
-  app.post<{ Params: Id; Body: { note?: string } }>('/api/documents/:id/approval', async (req) => byId(req, req.params.id, async (db, id) => ({ id: await A.requestDocument(db, id, req.body?.note) })));
+  app.post<{ Params: Id; Body: { note?: string } }>('/api/documents/:id/approval', async (req) => byId(req, req.params.id, async (db, id) => {
+    const rid = await A.requestDocument(db, id, req.body?.note);
+    const d = (await db.query(`SELECT company_id, type FROM documents WHERE id = $1`, [id])).rows[0];
+    await notifyApprovers(db, d.company_id, d.type === 'bill' ? 'a supplier bill' : 'a credit note', baseUrl(req, opts));
+    return { id: rid };
+  }));
   app.post<{ Params: Id; Body: { decision?: string; reason?: string } }>('/api/approvals/:id/decide', async (req) => byId(req, req.params.id, async (db, id) => { await A.decide(db, id, String(req.body?.decision), req.body?.reason); return ok; }));
   app.post<{ Params: Id }>('/api/approvals/:id/withdraw', async (req) => byId(req, req.params.id, async (db, id) => { await A.withdraw(db, id); return ok; }));
   app.post<{ Params: Id; Body: { date?: string } }>('/api/approvals/:id/pay', async (req) => byId(req, req.params.id, async (db, id) => ({ id: await A.payApproved(db, id, req.body?.date) })));

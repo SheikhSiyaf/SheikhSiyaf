@@ -40,3 +40,9 @@ export function dateParam(v: unknown, fallback: string): string {
 }
 
 export const today = () => new Date().toISOString().slice(0, 10);
+
+/** The address links in emails start with: PUBLIC_URL, or the address the browser is using. */
+export function baseUrl(req: FastifyRequest, opts: ServerOptions): string {
+  const fromReq = `${req.headers['x-forwarded-proto'] ?? req.protocol}://${req.headers['x-forwarded-host'] ?? req.headers.host}`;
+  return (opts.publicUrl || fromReq).replace(/\/+$/, '');
+}

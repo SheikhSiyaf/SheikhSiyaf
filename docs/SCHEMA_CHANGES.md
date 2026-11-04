@@ -283,3 +283,12 @@ Every change below is covered by a test in `test/`.
 | `fiscal_years` (closed or reopened; the closing entry, the result, who and when, the reason for reopening; never deleted) | Year-end closing: income and expenses of the year to 3100 Retained earnings (per cost centre), every month locked. Partner only; years close in order and reopen latest first. |
 | `year_is_closed()`; no posting into a closed year; no unlocking a month of a closed year | A closed year stays closed until it is reopened. |
 | `profit_and_loss()` and `profit_and_loss_by_cost_centre()` leave out closing entries (`source_type = 'year_end_close'`) | The year's P&L still shows its result after the year is closed. |
+
+## 0031_email.sql
+| Change | Why |
+|---|---|
+| `email_outbox` (every email: who, to whom, subject, two-language body, attachments, status queued / sending / sent / failed, tries, provider id; never deleted; not mirrored into the audit log because bodies can hold one-time links, which are scrubbed once sent) | Sending email: invitations, password resets, documents to customers, approvals waiting. |
+| `queue_email()` (company emails by people in the company; firm emails by its Administrator or the owner; the server for resets), `email_take()` / `email_done()` (the sender job, nobody signed in; retries at 1, 5, 30 minutes, then 2 hours, 6 tries), `email_retry()` | People queue; only the server sends. |
+| `start_password_reset()` | Forgot password: a one-hour link by email for an active person with a password; the same answer either way. |
+| `company_approvers()` | Telling approvers something waits, without opening the users table. |
+| `document_links` (hash of a random token per link, expiry 180 days, revocable, last opened), `document_link_open()`, `document_public()` | A customer opens an emailed invoice, credit note or quotation without signing in (and, next, pays it). |

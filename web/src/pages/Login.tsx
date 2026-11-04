@@ -6,6 +6,25 @@ import { toggleTheme } from '../theme.ts';
 
 interface DemoUser { name: string; email: string; kind: string; role: string; company?: string; clientRole?: string }
 
+/** Forgotten password: a one-hour link by email. The answer is the same whether or not the address has an account. */
+function ForgotPassword({ initial }: { initial: string }) {
+  const { t } = useI18n();
+  const [email, setEmail] = useState(initial);
+  const [state, setState] = useState<'idle' | 'busy' | 'sent' | 'bad'>('idle');
+  return (
+    <form className="card inset" id="forgot" style={{ marginTop: 12 }} onSubmit={(e) => { e.preventDefault(); setState('busy');
+      void api('/api/password-reset', { body: { email } }).then(() => setState('sent'), () => setState('bad')); }}>
+      <p className="small" style={{ marginTop: 0 }}>{t('login.forgotHint')}</p>
+      <div className="actions">
+        <input type="email" dir="ltr" required value={email} aria-label={t('login.email')} onChange={(e) => setEmail(e.target.value)} style={{ flex: 1 }} />
+        <button className="b" id="forgot-send" disabled={state === 'busy' || !email}>{t('login.forgotSend')}</button>
+      </div>
+      {state === 'sent' && <p className="small good" role="status">{t('login.forgotSent')}</p>}
+      {state === 'bad' && <p className="small bad" role="alert">{t('login.forgotBad')}</p>}
+    </form>
+  );
+}
+
 export function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const { t, lang, setLang } = useI18n();
   const cfg = useApi<{ demoLogins: boolean; demoPassword?: string }>('/api/config');
@@ -13,6 +32,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<unknown>();
+  const [forgot, setForgot] = useState<string>();
   const [busy, setBusy] = useState(false);
 
   const [ticket, setTicket] = useState<string>();
@@ -86,9 +106,13 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
                   <input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} dir="ltr" />
                 </label>
               </div>
-              <button className="b p" type="submit" disabled={busy || !email || !password}>{t('login.submit')}</button>
+              <div className="actions">
+                <button className="b p" type="submit" disabled={busy || !email || !password}>{t('login.submit')}</button>
+                <button className="link small" type="button" id="forgot-open" onClick={() => setForgot(forgot === undefined ? email : undefined)}>{t('login.forgot')}</button>
+              </div>
             </form>
           )}
+          {forgot !== undefined && !ticket && <ForgotPassword initial={forgot} />}
         </div>
         {!ticket && demo.data && cfg.data?.demoPassword && (
           <div className="card demo">

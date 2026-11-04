@@ -108,7 +108,7 @@ export function InviteBox({ invite, onClose }: { invite: Invite; onClose: () => 
   return (
     <div className="notice invite" role="status">
       <b>{t('invite.title', { name: invite.name })}</b>
-      <div className="small" style={{ margin: '4px 0 8px' }}>{t('invite.howTo', { email: invite.email })}</div>
+      <div className="small" style={{ margin: '4px 0 8px' }}>{t('invite.howTo', { email: invite.email })} {t('admin.inviteEmailed')}</div>
       <input readOnly value={link} className="ltr" style={{ width: '100%' }} onFocus={(e) => e.target.select()} aria-label={t('invite.copy')} />
       <div className="actions" style={{ marginTop: 8 }}>
         <button className="b p" onClick={copy}>{t('invite.copy')}</button>

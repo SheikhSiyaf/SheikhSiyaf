@@ -25,6 +25,7 @@ import * as Im from '../../../src/books/importRules.ts';
 import { cleanBarcode, internalEan, validBarcode } from '../../../src/books/barcode.ts';
 import * as AtR from '../../../src/books/attendanceRules.ts';
 import * as Fx from '../../../src/books/fx.ts';
+import { documentMail } from '../../../src/email/templates.ts';
 import type { EInvoiceData, EParty } from '../../../src/einvoice/invoiceData.ts';
 import { tinyPdf } from '../../../src/db/tinyPdf.ts';
 import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, previousMonthEnd, targetDepreciation, type AssetTerms } from '../../../src/books/assets.ts';
@@ -2598,6 +2599,53 @@ function seedHrm(companyId: string, poster: string) {
   }
   session = prev;
 }
+
+// ---------------------------------------------------------------- email (same rules as src/books/emailService.ts; the demo has no email provider)
+interface MMail { id: string; companyId: string; kind: string; to: string; toName: string | null; subject: string; status: string; attempts: number; lastError: string | null;
+  documentId: string | null; attachments: number; createdBy: string | null; createdAt: string; sentAt: string | null }
+const mailDb = { emails: [] as MMail[], links: [] as { token: string; companyId: string; documentId: string; createdAt: string; lastSeenAt: string | null; revokedAt: string | null }[] };
+function docLinkM(id: string) {
+  const d = sdb.docs.find((x) => x.id === id && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+  if (d.status === 'draft') fail(400, 'Issue the document first.', 'err.docDraft');
+  if (!['invoice', 'credit_note', 'quotation'].includes(d.type)) fail(400, 'Only sales documents are sent to customers.', 'err.docKind');
+  const token = uid().replace(/-/g, '');
+  mailDb.links.push({ token, companyId: d.companyId, documentId: d.id, createdAt: new Date().toISOString(), lastSeenAt: null, revokedAt: null });
+  return { d, token };
+}
+const demoBase = () => (typeof window !== 'undefined' ? window.location.origin : '');
+function emailDocM(id: string, b: Body) {
+  const { d, token } = docLinkM(id); canPostIn(d.companyId);
+  const c = sdb.contacts.find((x) => x.id === d.contactId)!; const co = company(d.companyId);
+  const to = String(b?.to ?? '').trim() || c.email || fail(400, "Enter the customer's email address.", 'err.emailMissing');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) fail(400, 'Enter a valid email address.', 'err.email');
+  const t = docTotals(d);
+  const m = documentMail({ kind: d.type as 'invoice', number: d.number!, customer: c.name, company: co.name, total: s(t.gross), currency: co.currency, dueDate: d.dueDate, amountDue: s(amountDue(d)),
+    link: `${demoBase()}/i/${token}`, message: String(b?.message ?? '').trim() || null });
+  const id2 = uid();
+  mailDb.emails.unshift({ id: id2, companyId: d.companyId, kind: 'document', to, toName: c.name, subject: m.subject, status: 'queued', attempts: 0,
+    lastError: 'No email provider is set up yet (EMAIL_PROVIDER).', documentId: d.id, attachments: 0, createdBy: userName(session), createdAt: new Date().toISOString(), sentAt: null });
+  return { id: id2, to };
+}
+function publicDocM(token: string) {
+  const l = mailDb.links.find((x) => x.token === token && !x.revokedAt) ?? fail(404, 'This link has expired or was withdrawn.', 'err.linkInvalid');
+  l.lastSeenAt = new Date().toISOString();
+  const d = sdb.docs.find((x) => x.id === l.documentId)!; const c = sdb.contacts.find((x) => x.id === d.contactId)!; const co = company(d.companyId); const t = docTotals(d);
+  return { id: d.id, type: d.type, status: d.status, issuedAt: d.createdAt, number: d.number, issueDate: d.issueDate, dueDate: d.dueDate, reference: d.reference, notes: d.notes,
+    netTotal: s(t.net), vatTotal: s(t.vat), grossTotal: s(t.gross), amountDue: s(amountDue(d)), qr: null, seller: sellerOf(co),
+    buyer: { name: c.name, nameAr: c.nameAr, vatNumber: c.vatNumber, address: c.address, city: c.city },
+    lines: d.lines.map((x) => ({ description: x.description, quantity: x.quantity, unitPrice: x.unitPrice, vatRate: x.vatRate, netAmount: s(x.net), vatAmount: s(x.vat) })) };
+}
+routes.push(
+  ['POST', /^\/api\/documents\/([\w-]+)\/email$/, (m, b) => emailDocM(m[1]!, b)],
+  ['POST', /^\/api\/documents\/([\w-]+)\/link$/, (m) => ({ link: `${demoBase()}/i/${docLinkM(m[1]!).token}` })],
+  ['GET', /^\/api\/documents\/([\w-]+)\/emails$/, (m) => ({ emails: mailDb.emails.filter((e) => e.documentId === m[1] && roleOf(session, e.companyId)),
+    links: mailDb.links.filter((x) => x.documentId === m[1] && roleOf(session, x.companyId)).map((x) => ({ id: x.token.slice(0, 8), createdAt: x.createdAt, lastSeenAt: x.lastSeenAt, revokedAt: x.revokedAt })) })],
+  ['POST', /^\/api\/documents\/([\w-]+)\/links\/revoke$/, (m) => { for (const x of mailDb.links.filter((y) => y.documentId === m[1] && roleOf(session, y.companyId))) x.revokedAt ??= new Date().toISOString(); return { ok: true }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/emails$/, (m) => { const id = inCo(m[1]!); return { provider: 'none', emails: mailDb.emails.filter((e) => e.companyId === id) }; }],
+  ['POST', /^\/api\/emails\/([\w-]+)\/retry$/, () => ({ ok: true })],
+  ['GET', /^\/api\/public\/documents\/([\w-]+)$/, (m) => publicDocM(m[1]!)],
+  ['POST', /^\/api\/password-reset$/, () => ({ ok: true })],
+);
 
 // ---------------------------------------------------------------- year-end closing (same rules as src/books/yearEndService.ts and db/migrations/0030)
 interface MYear { id: string; companyId: string; startDate: string; endDate: string; status: 'closed' | 'reopened'; profit: bigint; entryId: string | null; closedBy: string; closedAt: string;

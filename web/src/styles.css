@@ -577,3 +577,9 @@ button.att-c:hover, button.att-c:focus-visible { outline: 2px solid var(--teal);
 .fx-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 2px 0 8px; }
 .fx-line label { display: inline-flex; align-items: center; gap: 6px; }
 .fx-rate { width: 120px; padding: 5px 8px; }
+
+/* Document opened from an emailed link */
+.public-doc { max-width: 900px; margin: 0 auto; padding: 16px; }
+.public-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.public-page { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow-x: auto; }
+@media print { .public-page { border: 0; padding: 0; } .public-doc { padding: 0; max-width: none; } }

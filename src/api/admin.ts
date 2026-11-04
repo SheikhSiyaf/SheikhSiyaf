@@ -6,8 +6,10 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
 import { CHART_TEMPLATE } from '../books/chartTemplate.js';
 import { HttpError } from './errors.js';
-import { uuidParam, type Ctx } from './context.js';
+import { baseUrl, uuidParam, type Ctx } from './context.js';
 import { hashInviteToken } from './auth.js';
+import { queue as queueEmail } from '../books/emailService.js';
+import { invitation } from '../email/templates.js';
 
 const STAFF_ROLES = ['partner', 'reviewer', 'staff_accountant'];
 const CLIENT_ROLES = ['client_accountant', 'client_viewer'];
@@ -22,12 +24,17 @@ async function requireAdmin(db: Db) {
 }
 
 /** Creates a one-time invitation for the user. Returns the token: it is shown once and never stored. */
-export async function newInvite(db: Db, userId: string): Promise<string> {
+export async function newInvite(db: Db, userId: string, base?: string): Promise<string> {
   const token = randomBytes(32).toString('base64url');
   const { rowCount } = await db.query(
     `UPDATE users SET invite_token_hash = $2, invite_expires_at = now() + make_interval(days => $3)
      WHERE id = $1 AND firm_id = app_firm_id()`, [userId, hashInviteToken(token), INVITE_DAYS]);
   if (!rowCount) throw new HttpError(404, 'Not found.', 'err.notFound');
+  // The invitation is also emailed (it waits in the outbox when no email provider is set); the link stays on screen too.
+  if (base) {
+    const u = (await db.query('SELECT u.full_name, u.email, u.firm_id, f.name AS firm FROM users u JOIN firms f ON f.id = u.firm_id WHERE u.id = $1', [userId])).rows[0];
+    if (u) await queueEmail(db, { firmId: u.firm_id, kind: 'invitation', to: u.email, toName: u.full_name, mail: invitation(u.full_name, `${base}/invite/${token}`, u.firm) });
+  }
   return token;
 }
 
@@ -70,7 +77,7 @@ function person(b: Record<string, unknown> | undefined) {
   return { name, email };
 }
 
-export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
+export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
   const admin = <T>(req: Parameters<Ctx['as']>[0], fn: (db: Db) => Promise<T>) =>
     as(req, async (db) => { await requireAdmin(db); return fn(db); });
 
@@ -140,7 +147,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
            SELECT id, $2, staff_role FROM users WHERE id = $1 AND kind = 'firm_staff' AND firm_id = app_firm_id()`, [staffId, companyId]);
       }
       await db.query('SELECT setup_company_books($1, $2, $3)', [companyId, JSON.stringify(CHART_TEMPLATE), new Date().getFullYear()]);
-      const token = await newInvite(db, u.rows[0].id);
+      const token = await newInvite(db, u.rows[0].id, baseUrl(req, opts));
       return { id: companyId, invite: { userId: u.rows[0].id, name: first.name, email: first.email, token } };
     });
   });
@@ -182,7 +189,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
       const u = await db.query(
         `INSERT INTO users (firm_id, kind, full_name, email) VALUES (app_firm_id(), 'client', $1, $2) RETURNING id`, [p.name, p.email]);
       await db.query('INSERT INTO memberships (user_id, company_id, role, client_role_id) VALUES ($1, $2, $3, $4)', [u.rows[0].id, id, role, clientRoleId]);
-      return { invite: { userId: u.rows[0].id, name: p.name, email: p.email, token: await newInvite(db, u.rows[0].id) } };
+      return { invite: { userId: u.rows[0].id, name: p.name, email: p.email, token: await newInvite(db, u.rows[0].id, baseUrl(req, opts)) } };
     });
   });
 
@@ -262,7 +269,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
         `INSERT INTO users (firm_id, kind, full_name, email, staff_role) VALUES (app_firm_id(), 'firm_staff', $1, $2, $3) RETURNING id`,
         [p.name, p.email, role]);
       for (const cid of clientIds) await setAssignment(db, u.rows[0].id, cid, true);
-      return { invite: { userId: u.rows[0].id, name: p.name, email: p.email, token: await newInvite(db, u.rows[0].id) } };
+      return { invite: { userId: u.rows[0].id, name: p.name, email: p.email, token: await newInvite(db, u.rows[0].id, baseUrl(req, opts)) } };
     });
   });
 
@@ -285,7 +292,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as }: Ctx) {
       const { rows } = await db.query(`SELECT full_name AS name, email, status FROM users WHERE id = $1 AND firm_id = app_firm_id()`, [id]);
       if (!rows[0]) throw new HttpError(404, 'Not found.', 'err.notFound');
       if (rows[0].status !== 'active') throw new HttpError(400, 'Reactivate this person first.', 'err.inviteSuspended');
-      return { invite: { userId: id, name: rows[0].name, email: rows[0].email, token: await newInvite(db, id) } };
+      return { invite: { userId: id, name: rows[0].name, email: rows[0].email, token: await newInvite(db, id, baseUrl(req, opts)) } };
     });
   });
 

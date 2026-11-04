@@ -11,7 +11,7 @@ portal, calendar, approvals and forecast) plus HRM, CRM and restaurant. Grouped 
 2. **Hosting and security.** Production server in a Saudi or UAE region, HTTPS, daily backups with a tested restore,
    monitoring and alerts, the encryption key kept outside the database, an independent security review (penetration
    test), and legal advice on the Saudi and UAE personal data laws (PDPL).
-3. **Sending email.** Today sign-in links are copied by hand. Needed: invitations and password reset, invoices and
+3. **Sending email.** Done: the outbox, providers, invitations, password reset, documents, approvals. Still to choose: the provider account and a sending domain (SPF, DKIM). Old text: Today sign-in links are copied by hand. Needed: invitations and password reset, invoices and
    credit notes to customers (PDF and XML attached), portal requests, approvals waiting, deadline reminders, monthly
    reports. Needs an email provider (and SMS or WhatsApp later).
 4. **Confirm with the authorities.** GOSI and GPSSA rates and caps; the UAE WPS SIF and Saudi Mudad file layouts with a

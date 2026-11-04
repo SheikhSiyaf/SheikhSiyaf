@@ -42,6 +42,7 @@ import { ItemList, ItemPage, NoteEditor, NoteList, StockValue } from '../invento
 import { AssetPage, AssetRegister, Depreciation } from '../assets/Assets.tsx';
 import { FoodSale, FoodSales, MenuList, RecipePage } from '../restaurant/Restaurant.tsx';
 import { WarehouseDesk } from '../inventory/Warehouse.tsx';
+import { EmailsSent } from '../sales/DocEmail.tsx';
 import { Counter } from '../inventory/Counter.tsx';
 import { CurrencyRates, CurrencyRevaluation } from '../ledger/Currencies.tsx';
 
@@ -234,6 +235,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Purchases': {
       if (sub === 'overview') return <Overview books={books} side={side} />;
       if (sub === 'e-invoicing') return <EInvoicing books={books} />;
+      if (sub === 'emails') return <EmailsSent books={books} />;
       if ((sub === 'customers' || sub === 'suppliers') && item === 'import') return <ImportData key={sub} books={books} initial={sub} only />;
       if (sub === 'customers' || sub === 'suppliers') {
         return item ? <ContactPage key={item} books={books} side={side} id={item} /> : <ContactList books={books} side={side} />;

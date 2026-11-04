@@ -27,6 +27,7 @@ import { registerPortalRoutes } from './portal.js';
 import { registerEInvoiceRoutes } from './einvoice.js';
 import { registerApprovalRoutes, registerImportRoutes, registerSearchRoutes, registerSetupStatusRoutes } from './approvals.js';
 import { registerFxRoutes, registerYearEndRoutes } from './fx.js';
+import { registerEmailRoutes } from './email.js';
 import { configureEInvoicing } from '../books/einvoiceService.js';
 import { reviewedUpTo } from '../books/reviewService.js';
 import { registerSetupRoutes } from './setup.js';
@@ -264,6 +265,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerImportRoutes(app, ctx);
   registerFxRoutes(app, ctx);
   registerYearEndRoutes(app, ctx);
+  registerEmailRoutes(app, ctx);
   registerSearchRoutes(app, ctx);
   registerSetupStatusRoutes(app, ctx);
   registerSetupRoutes(app, ctx);

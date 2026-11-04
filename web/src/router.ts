@@ -6,8 +6,13 @@ export const DEMO = import.meta.env.VITE_DEMO === '1';
 let memoryPath = '/';
 const current = () => (DEMO ? memoryPath : window.location.pathname);
 
+let previousPath: string | null = null;
+/** Where the person was before the last navigate (for a Back button on pages opened from inside the app). */
+export const backPath = () => previousPath;
+
 export function navigate(to: string) {
   if (to === current()) return;
+  previousPath = current();
   if (DEMO) {
     memoryPath = to;
     window.dispatchEvent(new Event('nb:navigate'));

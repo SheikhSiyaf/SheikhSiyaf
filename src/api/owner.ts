@@ -4,7 +4,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
-import { uuidParam, type Ctx } from './context.js';
+import { baseUrl, uuidParam, type Ctx } from './context.js';
 import { newInvite } from './admin.js';
 
 async function requireOwner(db: Db) {
@@ -12,7 +12,7 @@ async function requireOwner(db: Db) {
 }
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-export function registerOwnerRoutes(app: FastifyInstance, { as }: Ctx) {
+export function registerOwnerRoutes(app: FastifyInstance, { as, opts }: Ctx) {
   const owner = <T>(req: Parameters<Ctx['as']>[0], fn: (db: Db) => Promise<T>) => as(req, async (db) => { await requireOwner(db); return fn(db); });
 
   app.get('/api/owner/tenants', async (req) => owner(req, async (db) => (await db.query(
@@ -28,7 +28,7 @@ export function registerOwnerRoutes(app: FastifyInstance, { as }: Ctx) {
       const id = (await db.query('SELECT owner_create_tenant($1, $2) AS id', [name, req.body!.kind])).rows[0].id as string;
       await db.query("SELECT set_config('app.acting_firm', $1, true)", [id]);   // work inside the new customer for the rest
       const u = (await db.query(`INSERT INTO users (firm_id, kind, full_name, email) VALUES ($1, 'admin', $2, $3) RETURNING id`, [id, adminName, adminEmail])).rows[0].id;
-      return { id, invite: { userId: u, name: adminName, email: adminEmail, token: await newInvite(db, u) } };
+      return { id, invite: { userId: u, name: adminName, email: adminEmail, token: await newInvite(db, u, baseUrl(req, opts)) } };
     });
   });
 
@@ -45,6 +45,6 @@ export function registerOwnerRoutes(app: FastifyInstance, { as }: Ctx) {
     await db.query("SELECT set_config('app.acting_firm', $1, true)", [id]);
     if ((await db.query('SELECT app_firm_id() AS f')).rows[0].f !== id) throw new HttpError(404, 'Not found.', 'err.notFound');
     const u = (await db.query(`INSERT INTO users (firm_id, kind, full_name, email) VALUES ($1, 'admin', $2, $3) RETURNING id`, [id, name, email])).rows[0].id;
-    return { invite: { userId: u, name, email, token: await newInvite(db, u) } };
+    return { invite: { userId: u, name, email, token: await newInvite(db, u, baseUrl(req, opts)) } };
   }));
 }

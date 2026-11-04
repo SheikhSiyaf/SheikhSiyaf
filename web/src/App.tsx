@@ -1,4 +1,5 @@
 import { OwnerConsole } from './admin/OwnerConsole.tsx';
+import { PublicDocument } from './pages/PublicDocument.tsx';
 import { getActingTenant } from './api.ts';
 import { useEffect } from 'react';
 import { api, useApi, type Me } from './api.ts';
@@ -42,7 +43,7 @@ function Screens() {
   const user = me.data?.user;
   useEffect(() => {
     if (!user) return;
-    if (path.startsWith('/invite/') || path === '/security') return;
+    if (path.startsWith('/invite/') || path.startsWith('/i/') || path === '/security') return;
     if (user.kind === 'owner') {
       if (path.startsWith('/admin') && !getActingTenant()) navigate('/owner');
       else if (!path.startsWith('/owner') && !path.startsWith('/admin')) navigate('/owner');
@@ -54,6 +55,9 @@ function Screens() {
   }, [user, path, me.data]);
 
   // A sign-in link works whether or not someone is signed in on this device.
+  // A link to an emailed document opens it for anyone holding the link.
+  const shared = /^\/i\/([\w-]+)$/.exec(path);
+  if (shared) return <PublicDocument token={shared[1]!} />;
   const invite = /^\/invite\/([\w-]+)$/.exec(path);
   if (invite) return <AcceptInvite token={invite[1]!} onDone={me.reload} />;
 

@@ -95,6 +95,7 @@ export interface SaleDoc {
 export function saleTitle(d: SaleDoc): Key {
   if (d.type === 'quotation') return 'pdf.quotation';
   if (d.type === 'credit_note') return 'pdf.creditNote';
+  if (d.type === 'debit_note') return 'pdf.debitNote';
   return d.seller.country === 'SA' && !d.contact?.vatNumber ? 'pdf.simplifiedInvoice' : 'pdf.taxInvoice';
 }
 
@@ -154,7 +155,7 @@ export interface PurchaseDoc extends Omit<SaleDoc, 'lines'> {
   contactName: string; payee?: string | null; paidFromName?: string | null; submittedByName?: string | null; decidedByName?: string | null; journalEntryId: string | null;
   lines: (SaleDoc['lines'][number] & { accountCode: string; accountName: string; costCentre: string | null })[];
 }
-const purchaseTitle = (t: string): Key => (t === 'supplier_credit' ? 'pdf.supplierCredit' : t === 'expense' ? 'pdf.expenseVoucher' : t === 'claim' ? 'pdf.expenseClaim' : 'pdf.purchaseBill');
+const purchaseTitle = (t: string): Key => (t === 'purchase_order' ? 'pdf.purchaseOrder' : t === 'supplier_credit' ? 'pdf.supplierCredit' : t === 'expense' ? 'pdf.expenseVoucher' : t === 'claim' ? 'pdf.expenseClaim' : 'pdf.purchaseBill');
 
 export function PurchasePdf({ d, attachments }: { d: PurchaseDoc; attachments: Attachment[] }) {
   const c = d.contact;

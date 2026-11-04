@@ -312,13 +312,13 @@ const sysAccts = (companyId: string) => {
 };
 const docTotals = (d: MDoc) => documentTotals(d.lines);
 function amountDue(d: MDoc): bigint {
-  if (!['invoice', 'bill', 'claim'].includes(d.type) || d.status !== 'issued') return 0n;   // expenses are paid at once
+  if (!['invoice', 'debit_note', 'bill', 'claim'].includes(d.type) || d.status !== 'issued') return 0n;   // expenses are paid at once
   const paid = sdb.payments.filter((p) => !p.voidedAt).flatMap((p) => p.allocations).filter((a) => a.documentId === d.id).reduce((s, a) => s + a.amount, 0n);
   const credited = sdb.docs.filter((c) => c.originalId === d.id && isCredit(c.type) && c.status === 'issued').reduce((s, c) => s + docTotals(c).gross, 0n);
   return docTotals(d).gross - paid - credited;
 }
 function stateOfDoc(d: MDoc): string {
-  if (d.type === 'quotation' || d.type === 'expense' || d.status === 'draft' || isCredit(d.type)) return d.status;
+  if (d.type === 'quotation' || d.type === 'purchase_order' || d.type === 'expense' || d.status === 'draft' || isCredit(d.type)) return d.status;
   if (d.type === 'claim') return d.status !== 'issued' ? d.status : amountDue(d) > 0n ? 'approved' : 'reimbursed';
   const due = amountDue(d);
   if (due < 0n) return 'credit';
@@ -377,7 +377,9 @@ function saveDraftM(companyId: string, b: Record<string, unknown>, id?: string):
   if (existing && existing.status !== 'draft') fail(400, 'Only drafts can be changed.', 'err.notDraft');
   if (existing) aprLockM(existing.id);
   const type = (existing?.type ?? b.type) as DocType;
-  if (!['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense', 'claim'].includes(type)) fail(400, 'Choose the document type.', 'err.format');
+  if (!['quotation', 'invoice', 'credit_note', 'debit_note', 'bill', 'supplier_credit', 'expense', 'claim', 'purchase_order'].includes(type)) fail(400, 'Choose the document type.', 'err.format');
+  if (!existing && type === 'debit_note' && !sdb.docs.some((o) => o.id === b.originalId && o.type === 'invoice' && o.status === 'issued' && o.contactId === b.contactId))
+    fail(400, 'A debit note points to an issued invoice of the same customer.', 'err.format');
   const isExpense = type === 'expense';
   const contact = b.contactId ? sdb.contacts.find((c) => c.id === b.contactId && c.companyId === companyId) : undefined;
   if (!contact && !(isExpense && !b.contactId)) fail(400, 'Choose the customer or supplier.', 'err.contact');
@@ -404,6 +406,7 @@ function issueM(id: string) {
   canPostIn(d.companyId);
   if (d.status !== 'draft') fail(400, 'This document has already been issued.', 'err.alreadyIssued');
   if (d.type === 'claim') fail(400, 'Claims are submitted and approved, not issued.', 'err.format');
+  if (d.type === 'purchase_order' || d.type === 'quotation') fail(400, 'Purchase orders and quotations are sent, not issued.', 'err.format');
   if (!d.lines.length) fail(400, 'Add at least one line.', 'err.noLines');
   if (d.type === 'expense' && !d.paidFromAccountId) fail(400, 'Choose the bank or cash account the expense was paid from.', 'err.bankAccount');
   if (d.type === 'expense' && !d.contactId && !(d.payee ?? '').trim()) fail(400, 'Enter who was paid (a supplier or a payee name).', 'err.payee');
@@ -431,6 +434,12 @@ function issueM(id: string) {
 }
 function quoteStatusM(id: string, status: string) {
   const d = docOf(id); canPostIn(d.companyId);
+  if (d.type === 'purchase_order') {
+    const ok = [['draft', 'sent'], ['sent', 'received'], ['draft', 'received'], ['draft', 'cancelled'], ['sent', 'cancelled'], ['received', 'cancelled']].some(([a, b]) => a === d.status && b === status);
+    if (!ok) fail(400, 'This purchase order cannot move to that status.', 'err.quoteStatus');
+    if (!d.number && status !== 'cancelled') d.number = nextNo(d.companyId, 'purchase_order', 'PO-');
+    d.status = status; return;
+  }
   if (d.type !== 'quotation') fail(400, 'Only quotations have this status.', 'err.format');
   const ok = [['draft', 'sent'], ['draft', 'accepted'], ['draft', 'declined'], ['sent', 'accepted'], ['sent', 'declined'], ['declined', 'accepted']].some(([a, b]) => a === d.status && b === status);
   if (!ok) fail(400, 'This quotation cannot move to that status.', 'err.quoteStatus');
@@ -447,6 +456,21 @@ function convertM(id: string) {
   q.status = 'invoiced';
   crmQuoteSync(q.id, 'invoiced');
   return nid;
+}
+function convertPoM(id: string) {
+  const o = docOf(id); canPostIn(o.companyId);
+  if (o.type !== 'purchase_order' || !['sent', 'received'].includes(o.status)) fail(400, 'Send the purchase order first.', 'err.poNotSent');
+  const terms = sdb.contacts.find((c) => c.id === o.contactId)!.paymentTermsDays ?? 30;
+  const nid = saveDraftM(o.companyId, { type: 'bill', contactId: o.contactId, issueDate: today(), dueDate: addDays(today(), terms), reference: o.number, notes: o.notes, originalId: o.id, lines: copyLines(o) });
+  o.status = 'billed';
+  return nid;
+}
+function debitM(id: string) {
+  const o = docOf(id); canPostIn(o.companyId);
+  if (o.type !== 'invoice' || o.status !== 'issued') fail(400, 'Only issued invoices get a debit note.', 'err.notIssued');
+  const first = copyLines(o)[0]!;
+  return saveDraftM(o.companyId, { type: 'debit_note', contactId: o.contactId, issueDate: today(), dueDate: o.dueDate && o.dueDate >= today() ? o.dueDate : null, reference: o.number, originalId: o.id,
+    lines: [{ ...first, description: `Additional charge on ${o.number}`, quantity: '1', unitPrice: '0' }] });
 }
 function creditM(id: string) {
   const o = docOf(id); canPostIn(o.companyId);
@@ -498,7 +522,7 @@ function payM(companyId: string, b: Record<string, unknown>) {
   if (direction === 'made') aprPaymentM(companyId, contact!.id, amount, b.approvalRequestId as string | undefined);
   for (const a of allocs) {
     const d = sdb.docs.find((x) => x.id === a.documentId);
-    if (!d || d.contactId !== contact!.id || d.status !== 'issued' || d.type !== (direction === 'received' ? 'invoice' : contact!.isEmployee ? 'claim' : 'bill'))
+    if (!d || d.contactId !== contact!.id || d.status !== 'issued' || !(direction === 'received' ? ['invoice', 'debit_note'] : contact!.isEmployee ? ['claim'] : ['bill']).includes(d.type))
       fail(400, 'A payment can only settle issued invoices (or bills) of the same customer (or supplier).', 'err.contact');
     if (a.amount <= 0n || a.amount > amountDue(d!)) fail(400, 'This is more than is due on the invoice.', 'err.overDue');
   }
@@ -1658,6 +1682,8 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/documents\/([\w-]+)$/, (m, b) => { const d = docOf(m[1]!); return { id: saveDraftM(d.companyId, { ...b, type: d.type, originalId: d.originalId }, d.id) }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/delete$/, (m) => { const d = docOf(m[1]!); canPostIn(d.companyId); if (d.status !== 'draft') fail(400, 'Only drafts can be deleted.', 'err.notDraft'); aprLockM(d.id); sdb.docs = sdb.docs.filter((x) => x.id !== d.id); return { ok: true }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/issue$/, (m) => { issueM(m[1]!); return { ok: true }; }],
+  ['POST', /^\/api\/documents\/([\w-]+)\/convert-po$/, (m) => ({ id: convertPoM(m[1]!) })],
+  ['POST', /^\/api\/documents\/([\w-]+)\/debit$/, (m) => ({ id: debitM(m[1]!) })],
   ['POST', /^\/api\/documents\/([\w-]+)\/quotation-status$/, (m, b) => { quoteStatusM(m[1]!, String(b?.status)); return { ok: true }; }],
   ['POST', /^\/api\/documents\/([\w-]+)\/convert$/, (m) => ({ id: convertM(m[1]!) })],
   ['POST', /^\/api\/documents\/([\w-]+)\/credit$/, (m) => ({ id: creditM(m[1]!) })],
@@ -3777,7 +3803,7 @@ function einvData(d: MDoc): EInvoiceData {
   const buyer: EParty | null = !c || (!c.vatNumber && /walk-?in/i.test(c.name)) ? null : { name: c.name, vatNumber: c.vatNumber, crNumber: c.crNumber, street: c.address, building: c.buildingNumber,
     district: c.district, city: c.city, postalCode: c.postalCode, country: c.country ?? co.country, email: c.email };
   const orig = d.originalId ? sdb.docs.find((x) => x.id === d.originalId) : null;
-  return { number: d.number ?? '', uuid: uid(), type: d.type === 'credit_note' ? 'credit_note' : 'invoice', issueDate: d.issueDate, issueTime: new Date().toISOString().slice(11, 19), supplyDate: d.issueDate,
+  return { number: d.number ?? '', uuid: uid(), type: d.type === 'credit_note' ? 'credit_note' : d.type === 'debit_note' ? 'debit_note' : 'invoice', issueDate: d.issueDate, issueTime: new Date().toISOString().slice(11, 19), supplyDate: d.issueDate,
     dueDate: d.dueDate, currency: co.currency, buyer,
     seller: { name: co.name, vatNumber: co.vatNumber, crNumber: co.crNumber, street: st.street ?? co.fields.address ?? '', building: st.buildingNumber, district: st.district, city: co.city, postalCode: st.postalCode, country: co.country },
     lines: d.lines.map((l, i) => ({ no: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, net: s(l.net), vat: s(l.vat), vatCode: l.vatCode, vatRate: l.vatRate })),
@@ -3812,7 +3838,7 @@ function makeEinvM(d: MDoc) {
   edb.einvoices.push(e);
   submitEinvM(e);   // sent straight after issuing, as on the server
 }
-function einvAfterIssueM(d: MDoc) { if (['invoice', 'credit_note'].includes(d.type) && einvSettings(d.companyId).enabled) makeEinvM(d); }
+function einvAfterIssueM(d: MDoc) { if (['invoice', 'credit_note', 'debit_note'].includes(d.type) && einvSettings(d.companyId).enabled) makeEinvM(d); }
 /** The demo's ZATCA sandbox: accepts every invoice (business invoices cleared, consumer sales reported). */
 function submitEinvM(e: MEinv) {
   if (e.status !== 'pending') return;

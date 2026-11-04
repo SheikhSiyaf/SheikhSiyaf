@@ -11,8 +11,8 @@ export const NAV: Module[] = [
   { key: 'Portal', subs: [s('overview'), s('requests'), s('documents'), s('monthly-reports')] },
   { key: 'Calendar', subs: [s('upcoming'), s('calendar-settings')] },
   { key: 'Approvals', subs: [s('waiting'), s('approval-history'), s('approval-rules')] },
-  { key: 'Sales', subs: [s('overview'), s('customers'), s('quotations'), s('invoices'), s('recurring-invoices'), s('credit-notes'), s('payments-received'), s('statements'), s('reminders'), s('e-invoicing'), s('emails')] },
-  { key: 'Purchases', subs: [s('overview'), s('suppliers'), s('bills'), s('supplier-credits'), s('payments-made')] },
+  { key: 'Sales', subs: [s('overview'), s('customers'), s('quotations'), s('invoices'), s('recurring-invoices'), s('credit-notes'), s('debit-notes'), s('payments-received'), s('statements'), s('reminders'), s('e-invoicing'), s('emails')] },
+  { key: 'Purchases', subs: [s('overview'), s('suppliers'), s('purchase-orders'), s('bills'), s('supplier-credits'), s('payments-made')] },
   { key: 'Expenses', subs: [s('overview'), s('expenses'), s('recurring'), s('categories'), s('claims'), s('approvals')] },
   { key: 'Bank', subs: [s('accounts'), s('import'), s('reconcile'), s('rules')] },
   { key: 'Inventory', subs: [s('items'), s('warehouse-desk'), s('grn'), s('gdn'), s('stock-value')] },
@@ -47,8 +47,8 @@ export const hiddenFor = (tenantKind?: string | null) => (tenantKind === 'compan
 export const isModuleBuilt = (m: Module) => m.subs.length === 0 || m.subs.some((x) => x.built);
 
 /** Document type behind each list page. */
-export const DOC_PAGES: Record<string, 'quotation' | 'invoice' | 'credit_note' | 'bill' | 'supplier_credit' | 'expense' | 'claim'> = {
-  quotations: 'quotation', invoices: 'invoice', 'credit-notes': 'credit_note', bills: 'bill', 'supplier-credits': 'supplier_credit', expenses: 'expense', claims: 'claim',
+export const DOC_PAGES: Record<string, 'quotation' | 'invoice' | 'credit_note' | 'debit_note' | 'bill' | 'supplier_credit' | 'expense' | 'claim' | 'purchase_order'> = {
+  quotations: 'quotation', invoices: 'invoice', 'credit-notes': 'credit_note', 'debit-notes': 'debit_note', 'purchase-orders': 'purchase_order', bills: 'bill', 'supplier-credits': 'supplier_credit', expenses: 'expense', claims: 'claim',
 };
 export const pageForType = (t: string) => Object.entries(DOC_PAGES).find(([, v]) => v === t)?.[0] ?? 'invoices';
-export const moduleForType = (t: string) => (t === 'expense' || t === 'claim' ? 'Expenses' : ['bill', 'supplier_credit'].includes(t) ? 'Purchases' : 'Sales');
+export const moduleForType = (t: string) => (t === 'expense' || t === 'claim' ? 'Expenses' : ['bill', 'supplier_credit', 'purchase_order'].includes(t) ? 'Purchases' : 'Sales');

@@ -30,12 +30,12 @@ portal, calendar, approvals and forecast) plus HRM, CRM and restaurant. Grouped 
 - ~~Recurring sales invoices~~ done.
 - ~~Customer statements and payment reminders~~ done.
 - **Multi-currency documents**: ledger accounts in other currencies, daily rates and the month-end revaluation are done; invoices, bills, payments and bank accounts in other currencies are next.
-- **Debit notes** for customers (ZATCA supports them; the books do not yet).
-- **Purchase orders** before bills, and delivery notes for sales.
 - ~~Budgets~~ done (Reports > Budgets).
 - **Receipt capture**: photos from the phone camera are attached (done); reading the amount and date from the photo (OCR) needs a provider.
 - ~~Notifications in the app~~ done (the bell).
 - ~~Bulk actions~~ done (issue and email many; approve several through the API).
+- ~~Debit notes~~ done (Sales > Debit notes, from an issued invoice).
+- ~~Purchase orders~~ done (Purchases > Purchase orders, then make the bill); delivery notes for sales are next.
 - ~~Export everything~~ done (ZIP of CSV files).
 
 ## C. Larger additions

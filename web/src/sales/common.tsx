@@ -3,7 +3,7 @@ import type { CompanyBooks } from '../api.ts';
 import { useI18n, type Key } from '../i18n.tsx';
 import { navigate } from '../router.ts';
 
-export type DocType = 'quotation' | 'invoice' | 'credit_note' | 'bill' | 'supplier_credit' | 'expense' | 'claim';
+export type DocType = 'quotation' | 'invoice' | 'credit_note' | 'debit_note' | 'bill' | 'supplier_credit' | 'expense' | 'claim' | 'purchase_order';
 export type Side = 'sales' | 'purchases';
 export type Direction = 'received' | 'made';
 
@@ -35,7 +35,7 @@ export interface PaymentRow {
   accountName: string; accountNameAr: string | null; method: string; reference: string | null; voidedAt: string | null; unallocated: string;
 }
 
-export const sideOf = (t: DocType): Side => (t === 'quotation' || t === 'invoice' || t === 'credit_note' ? 'sales' : 'purchases');
+export const sideOf = (t: DocType): Side => (t === 'quotation' || t === 'invoice' || t === 'credit_note' || t === 'debit_note' ? 'sales' : 'purchases');
 export const moduleOfSide = (s: Side) => (s === 'sales' ? 'Sales' : 'Purchases');
 
 /** Navigates inside a client's books: /c/<company>/<module>/<sub>/<item>/<extra> */

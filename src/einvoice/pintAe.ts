@@ -46,7 +46,7 @@ export function pintAeXml(d: EInvoiceData): string {
     el('cbc:IssueDate', null, d.issueDate),
     el('cbc:IssueTime', null, d.issueTime),
     !credit && d.dueDate && el('cbc:DueDate', null, d.dueDate),
-    el(credit ? 'cbc:CreditNoteTypeCode' : 'cbc:InvoiceTypeCode', null, credit ? '381' : '380'),
+    el(credit ? 'cbc:CreditNoteTypeCode' : 'cbc:InvoiceTypeCode', null, credit ? '381' : d.type === 'debit_note' ? '383' : '380'),
     credit && d.reason && el('cbc:Note', null, esc(d.reason)),
     el('cbc:DocumentCurrencyCode', null, cur),
     el('cbc:TaxCurrencyCode', null, 'AED'),

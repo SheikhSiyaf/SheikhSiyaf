@@ -61,11 +61,13 @@ export function registerSalesRoutes(app: FastifyInstance, { as }: Ctx) {
   });
   app.post<{ Params: P; Body: { status?: string } }>('/api/documents/:id/quotation-status', async (req) => as(req, async (db) => {
     const st = req.body?.status;
-    if (st !== 'sent' && st !== 'accepted' && st !== 'declined') throw new HttpError(400, 'Some values are not in the right format.', 'err.format');
+    if (st !== 'sent' && st !== 'accepted' && st !== 'declined' && st !== 'received' && st !== 'cancelled') throw new HttpError(400, 'Some values are not in the right format.', 'err.format');
     await S.setQuotationStatus(db, uuidParam(req.params.id), st);
     return { ok: true };
   }));
   app.post<{ Params: P }>('/api/documents/:id/convert', async (req) => as(req, async (db) => ({ id: await S.convertQuotation(db, uuidParam(req.params.id)) })));
+  app.post<{ Params: P }>('/api/documents/:id/convert-po', async (req) => as(req, async (db) => ({ id: await S.convertPurchaseOrder(db, uuidParam(req.params.id)) })));
+  app.post<{ Params: P }>('/api/documents/:id/debit', async (req) => as(req, async (db) => ({ id: await S.createDebit(db, uuidParam(req.params.id)) })));
   app.post<{ Params: P }>('/api/documents/:id/credit', async (req) => as(req, async (db) => ({ id: await S.createCredit(db, uuidParam(req.params.id)) })));
 
   // ---------------------------------------------------------------- payments

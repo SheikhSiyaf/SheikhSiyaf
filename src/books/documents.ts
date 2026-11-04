@@ -4,21 +4,21 @@
 import { divRoundHalfUp, fromMinor, toMinor, type Minor } from '../money.js';
 import { rateToBasisPoints, vatForLine } from '../vat/vat.js';
 
-export type DocType = 'quotation' | 'invoice' | 'credit_note' | 'bill' | 'supplier_credit' | 'expense' | 'claim';
+export type DocType = 'quotation' | 'invoice' | 'credit_note' | 'debit_note' | 'bill' | 'supplier_credit' | 'expense' | 'claim' | 'purchase_order';
 export type VatCode = 'standard' | 'zero' | 'exempt' | 'out_of_scope';
 export type Direction = 'received' | 'made';
 
-export const DOC_TYPES: DocType[] = ['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense', 'claim'];
+export const DOC_TYPES: DocType[] = ['quotation', 'invoice', 'credit_note', 'debit_note', 'bill', 'supplier_credit', 'expense', 'claim', 'purchase_order'];
 export const VAT_CODES: VatCode[] = ['standard', 'zero', 'exempt', 'out_of_scope'];
 export const PAYMENT_METHODS = ['bank_transfer', 'cash', 'card', 'cheque', 'other'] as const;
 
-export const sideOf = (t: DocType): 'sales' | 'purchases' => (t === 'quotation' || t === 'invoice' || t === 'credit_note' ? 'sales' : 'purchases');
+export const sideOf = (t: DocType): 'sales' | 'purchases' => (t === 'quotation' || t === 'invoice' || t === 'credit_note' || t === 'debit_note' ? 'sales' : 'purchases');
 export const isCredit = (t: DocType) => t === 'credit_note' || t === 'supplier_credit';
-export const posts = (t: DocType) => t !== 'quotation';
+export const posts = (t: DocType) => t !== 'quotation' && t !== 'purchase_order';
 
 /** Number prefixes; invoices use the client's own invoice prefix. */
 export function numberPrefix(type: DocType | 'receipt' | 'payment', invoicePrefix: string): string {
-  return { invoice: invoicePrefix, quotation: 'QT-', credit_note: 'CN-', bill: 'BILL-', supplier_credit: 'SC-', expense: 'EXP-', claim: 'CLM-', receipt: 'RCPT-', payment: 'PAY-' }[type];
+  return { invoice: invoicePrefix, quotation: 'QT-', credit_note: 'CN-', debit_note: 'DN-', purchase_order: 'PO-', bill: 'BILL-', supplier_credit: 'SC-', expense: 'EXP-', claim: 'CLM-', receipt: 'RCPT-', payment: 'PAY-' }[type];
 }
 export const formatNumber = (prefix: string, n: number) => `${prefix}${String(n).padStart(4, '0')}`;
 

@@ -13,7 +13,7 @@ type Rule = [method: 'GET' | 'POST' | '*', path: RegExp, resolve: (db: Db, m: Re
 
 const UUID = '([0-9a-f-]{36})';
 const docModules = (type: string) => (type === 'expense' || type === 'claim' ? ['Expenses']
-  : ['bill', 'supplier_credit'].includes(type) ? ['Purchases'] : ['Sales']);
+  : ['bill', 'supplier_credit', 'purchase_order'].includes(type) ? ['Purchases'] : ['Sales']);
 const body = (req: FastifyRequest) => (req.body ?? {}) as Record<string, unknown>;
 const query = (req: FastifyRequest) => (req.query ?? {}) as Record<string, string | undefined>;
 

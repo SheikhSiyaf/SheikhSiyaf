@@ -161,7 +161,7 @@ export async function saveDraft(db: Db, companyId: string, d: DocumentInput, id?
     if (!rowCount) bad('Only drafts can be changed.', 'err.notDraft');
     await db.query('DELETE FROM document_lines WHERE document_id = $1', [docId]);
   } else {
-    if (!d.type || !['quotation', 'invoice', 'credit_note', 'bill', 'supplier_credit', 'expense', 'claim'].includes(d.type)) bad('Choose the document type.', 'err.format');
+    if (!d.type || !['quotation', 'invoice', 'credit_note', 'debit_note', 'bill', 'supplier_credit', 'expense', 'claim', 'purchase_order'].includes(d.type)) bad('Choose the document type.', 'err.format');
     const { rows } = await db.query(
       `INSERT INTO documents (company_id, type, contact_id, issue_date, due_date, reference, notes, net_total, vat_total, gross_total,
          payee, paid_from_account_id, original_id, recurring_id, created_by)
@@ -198,6 +198,7 @@ export async function issueDocument(db: Db, id: string): Promise<void> {
   const d = await lockDoc(db, id);
   if (d.status !== 'draft') bad('This document has already been issued.', 'err.alreadyIssued');
   if (d.type === 'quotation') bad('Quotations are sent, not issued.', 'err.format');
+  if (d.type === 'purchase_order') bad('Purchase orders are sent, not issued.', 'err.format');
   if (d.type === 'claim') bad('Claims are submitted and approved, not issued.', 'err.format');
   const lines = await storedLines(db, id);
   if (!lines.length) bad('Add at least one line.', 'err.noLines');
@@ -214,13 +215,15 @@ export async function issueDocument(db: Db, id: string): Promise<void> {
   await afterIssue(db, id);   // e-invoicing (ZATCA, PINT AE) when the company has it on
 }
 
-export async function setQuotationStatus(db: Db, id: string, status: 'sent' | 'accepted' | 'declined'): Promise<void> {
+export async function setQuotationStatus(db: Db, id: string, status: 'sent' | 'accepted' | 'declined' | 'received' | 'cancelled'): Promise<void> {
   const d = await lockDoc(db, id);
-  if (d.type !== 'quotation') bad('Only quotations have this status.', 'err.format');
+  if (d.type !== 'quotation' && d.type !== 'purchase_order') bad('Only quotations and purchase orders have this status.', 'err.format');
+  const allowed = d.type === 'quotation' ? ['sent', 'accepted', 'declined'] : ['sent', 'received', 'cancelled'];
+  if (!allowed.includes(status)) bad('Choose a status.', 'err.format');
   let number = d.number;
-  if (!number) {
+  if (!number && status !== 'cancelled') {
     const company = await companyInfo(db, d.company_id);
-    number = await nextNumber(db, d.company_id, 'quotation', numberPrefix('quotation', company.invoicePrefix));
+    number = await nextNumber(db, d.company_id, d.type, numberPrefix(d.type, company.invoicePrefix));
     await db.query(`UPDATE documents SET status = $2, number = $3 WHERE id = $1`, [id, status, number]);
     return;
   }
@@ -241,6 +244,33 @@ export async function convertQuotation(db: Db, id: string): Promise<string> {
   });
   await db.query(`UPDATE documents SET status = 'invoiced' WHERE id = $1`, [id]);
   return newId;
+}
+
+/** Purchase order -> new draft bill with the same lines (the bill points back to the order). */
+export async function convertPurchaseOrder(db: Db, id: string): Promise<string> {
+  const o = await lockDoc(db, id);
+  if (o.type !== 'purchase_order' || !['sent', 'received'].includes(o.status)) bad('Send the purchase order first.', 'err.poNotSent');
+  const company = await companyInfo(db, o.company_id);
+  const terms = (await getContact(db, o.contact_id)).paymentTermsDays ?? company.paymentTermsDays;
+  const lines = (await storedLines(db, id)).map(({ description, quantity, unitPrice, accountId, costCentreId, vatCode }) =>
+    ({ description, quantity, unitPrice, accountId, costCentreId, vatCode }));
+  const newId = await saveDraft(db, o.company_id, {
+    type: 'bill', contactId: o.contact_id, issueDate: today(), dueDate: addDays(today(), terms), reference: o.number, notes: o.notes, originalId: o.id, lines,
+  });
+  await db.query(`UPDATE documents SET status = 'billed' WHERE id = $1`, [id]);
+  return newId;
+}
+
+/** Issued invoice -> new draft debit note (an extra charge on it), with one line to fill in. */
+export async function createDebit(db: Db, id: string): Promise<string> {
+  const o = await lockDoc(db, id);
+  if (o.type !== 'invoice' || o.status !== 'issued') bad('Only issued invoices get a debit note.', 'err.notIssued');
+  const first = (await storedLines(db, id))[0]!;
+  const due = (await db.query('SELECT due_date::text AS d FROM documents WHERE id = $1', [id])).rows[0].d as string | null;
+  return saveDraft(db, o.company_id, {
+    type: 'debit_note', contactId: o.contact_id, issueDate: today(), dueDate: due && due >= today() ? due : null, reference: o.number, originalId: o.id,
+    lines: [{ description: `Additional charge on ${o.number}`, quantity: '1', unitPrice: '0', accountId: first.accountId, costCentreId: first.costCentreId, vatCode: first.vatCode }],
+  });
 }
 
 /** Issued invoice (or bill) -> new draft credit note with the same lines, to be reduced as needed. */
@@ -284,7 +314,7 @@ export async function listDocuments(db: Db, companyId: string, type: DocType, f:
 
 /** draft | issued | paid | partly_paid | unpaid | overdue | credit, or a quotation's own status */
 function stateOf(r: { type: DocType; status: string; amountDue: string; grossTotal: string; dueDate: string | null }, t: string): string {
-  if (r.type === 'quotation' || r.type === 'expense' || r.status === 'draft' || isCredit(r.type)) return r.status;
+  if (r.type === 'quotation' || r.type === 'purchase_order' || r.type === 'expense' || r.status === 'draft' || isCredit(r.type)) return r.status;
   if (r.type === 'claim') return r.status !== 'issued' ? r.status : toMinor(r.amountDue) > 0n ? 'approved' : 'reimbursed';
   const due = toMinor(r.amountDue);
   if (due < 0n) return 'credit';

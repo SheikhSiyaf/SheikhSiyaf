@@ -90,11 +90,11 @@ export async function invoiceData(db: Db, documentId: string, uuid: string): Pro
   const buyer: EParty | null = !d.name || walkIn ? null : { name: d.name, nameAr: d.name_ar, vatNumber: d.vat_number, crNumber: d.cr_number, street: d.address, building: d.building_number,
     district: d.district, city: d.city, postalCode: d.postal_code, country: d.country ?? co.country, email: d.email };
   const data: EInvoiceData = {
-    number: d.number, uuid, type: d.type === 'credit_note' ? 'credit_note' : 'invoice', issueDate: d.issue_date, issueTime: at.time, supplyDate: d.issue_date, dueDate: d.due_date,
+    number: d.number, uuid, type: d.type === 'credit_note' ? 'credit_note' : d.type === 'debit_note' ? 'debit_note' : 'invoice', issueDate: d.issue_date, issueTime: at.time, supplyDate: d.issue_date, dueDate: d.due_date,
     currency: co.currency, seller, buyer,
     lines: lines.map((l) => ({ no: l.line_no, description: l.description, quantity: l.quantity, unitPrice: l.unit_price, net: l.net, vat: l.vat, vatCode: l.vat_code as VatCode, vatRate: l.vat_rate })),
     netTotal: d.net, vatTotal: d.vat, grossTotal: d.gross,
-    original: d.orig_number ? { number: d.orig_number, issueDate: d.orig_date } : null, reason: d.type === 'credit_note' ? (text(d.notes, 300) ?? 'Correction of the invoice') : null,
+    original: d.orig_number ? { number: d.orig_number, issueDate: d.orig_date } : null, reason: d.type === 'credit_note' ? (text(d.notes, 300) ?? 'Correction of the invoice') : d.type === 'debit_note' ? (text(d.notes, 300) ?? 'Additional charge on the invoice') : null,
     paymentMeans: d.paid ? '10' : '30',
     exemption: { zero: { code: s.zeroReasonCode, text: s.zeroReason }, exempt: { code: s.exemptReasonCode, text: s.exemptReason }, out_of_scope: { code: 'VATEX-SA-OOS', text: s.oosReason } },
   };
@@ -208,7 +208,7 @@ export async function devices(db: Db, companyId: string) {
 /** Called when an invoice or credit note is issued: makes its e-invoice if the company e-invoices. */
 export async function afterIssue(db: Db, documentId: string): Promise<string | null> {
   const doc = (await db.query(`SELECT d.company_id, d.type, c.country FROM documents d JOIN companies c ON c.id = d.company_id WHERE d.id = $1`, [documentId])).rows[0];
-  if (!doc || !['invoice', 'credit_note'].includes(doc.type)) return null;
+  if (!doc || !['invoice', 'credit_note', 'debit_note'].includes(doc.type)) return null;
   const s = await getSettings(db, doc.company_id);
   if (!s.enabled) return null;
   return makeEInvoice(db, documentId);

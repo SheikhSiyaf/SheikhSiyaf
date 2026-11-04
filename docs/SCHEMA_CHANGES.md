@@ -300,3 +300,15 @@ Every change below is covered by a test in `test/`.
 | `reminder_settings` (automatic or not, days after the due date, message, who turned it on) and `reminder_log` (each level once per invoice); `reminders_auto()` | Polite payment reminders by email. |
 | `budgets` and `budget_lines` (per income or expense account, optional cost centre, month 1 to 12) | Budget against actual. |
 | `notification_reads` (per person, own rows only) | The bell remembers what each person has seen; the notifications themselves are worked out live. |
+
+## 0033_doc_types.sql
+| Change | Why |
+|---|---|
+| `doc_type` gains `debit_note` and `purchase_order` (own file: a new enum value cannot be used in the same transaction) | The two new document kinds below. |
+
+## 0034_debit_notes_purchase_orders.sql
+| Change | Why |
+|---|---|
+| Debit notes: a sales document that must point to an issued invoice of the same customer, posts like an invoice, is allocated and paid like one, and goes to e-invoicing as a debit note (ZATCA type debit note, PINT AE 383) | Extra charges on an invoice already issued, as the tax authorities expect. |
+| Purchase orders: a purchases document that never posts; states draft → sent → received → billed or cancelled; a bill may point to its purchase order | Orders to suppliers before the bill arrives, and the bill made from the order. |
+| `doc_side()`, `contact_fits()`, `before_document_insert()`, `before_document_update()`, `document_amount_due()`, the e-invoice trigger and the `document_links` policy updated for the two kinds | Same rules for the new kinds. |

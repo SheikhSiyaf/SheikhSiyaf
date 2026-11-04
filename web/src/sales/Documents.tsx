@@ -22,6 +22,8 @@ const FILTERS: Record<string, string[]> = {
   expense: ['all', 'draft', 'issued', 'voided'],
   claim: ['all', 'draft', 'submitted', 'approved', 'rejected', 'reimbursed'],
   supplier_credit: ['all', 'draft', 'issued'],
+  debit_note: ['all', 'draft', 'unpaid', 'paid'],
+  purchase_order: ['all', 'draft', 'sent', 'received', 'billed', 'cancelled'],
 };
 
 // ------------------------------------------------------------------ list
@@ -35,14 +37,14 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
   const m = moduleForType(type);
   const page = pageForType(type);
   const list = useApi<DocRow[]>(`/api/companies/${books.company.id}/documents?type=${type}&status=${status}&q=${encodeURIComponent(q)}`);
-  const canCreate = books.canPost && (type === 'invoice' || type === 'quotation' || type === 'bill' || type === 'expense' || type === 'claim');
-  const hasDueCol = type === 'invoice' || type === 'bill';
+  const canCreate = books.canPost && (type === 'invoice' || type === 'quotation' || type === 'bill' || type === 'expense' || type === 'claim' || type === 'purchase_order');
+  const hasDueCol = type === 'invoice' || type === 'bill' || type === 'debit_note';
   const hasAmountDue = hasDueCol || type === 'claim';
   // Bulk: issue many drafts at once (invoices, credit notes, bills), or email many issued sales documents.
   const [picked, setPicked] = useState<string[]>([]);
   const [bulkMsg, setBulkMsg] = useState<{ ok?: string; bad?: string }>({});
   const [bulkBusy, setBulkBusy] = useState(false);
-  const canBulk = books.canPost && ['invoice', 'credit_note', 'quotation', 'bill'].includes(type);
+  const canBulk = books.canPost && ['invoice', 'credit_note', 'debit_note', 'quotation', 'bill'].includes(type);
   const rows = list.data ?? [];
   const drafts = rows.filter((d) => picked.includes(d.id) && d.status === 'draft' && type !== 'quotation');
   const sendable = rows.filter((d) => picked.includes(d.id) && d.status !== 'draft' && side === 'sales');
@@ -76,6 +78,8 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
         {sendable.length > 0 && <button className="b" id="bulk-email" disabled={bulkBusy} onClick={() => void bulk('email', sendable.map((d) => d.id))}>{t('bulk.email', { n: sendable.length })}</button>}
         <button className="link small" onClick={() => setPicked([])}>{t('bulk.clear')}</button>
       </div>}
+      {type === 'debit_note' && <p className="mut small">{t('doc.debitHowTo')}</p>}
+      {type === 'purchase_order' && <p className="mut small">{t('doc.poHowTo')}</p>}
       {(type === 'credit_note' || type === 'supplier_credit') && <p className="mut small">{t(type === 'credit_note' ? 'doc.creditHowTo' : 'doc.supplierCreditHowTo')}</p>}
       <div className="card">
         {list.error && <ErrorNote error={list.error} onRetry={list.reload} />}
@@ -141,7 +145,7 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
 
   const termsFor = (contactId: string) => contacts.data?.find((c) => c.id === contactId)?.paymentTermsDays ?? books.company.paymentTermsDays ?? 30;
   const addDays = (d: string, n: number) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
-  const hasDue = type === 'invoice' || type === 'bill' || type === 'quotation';
+  const hasDue = type === 'invoice' || type === 'bill' || type === 'quotation' || type === 'debit_note' || type === 'purchase_order';
 
   // Fill the form once the draft (or contacts, for a new document) are loaded.
   if (!form && (id ? existing.data : contacts.data)) {
@@ -196,7 +200,7 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
     const acct = books.accounts.find((a) => a.id === l.accountId);
     if (acct?.costCentreRequired && !l.costCentreId) problems.push(t('journal.needCostCentre', { account: `${acct.code} ${local(acct.name, acct.nameAr)}` }));
   });
-  const willPost = type !== 'quotation';
+  const willPost = type !== 'quotation' && type !== 'purchase_order';
   if (willPost && form.issueDate && isLocked(books, form.issueDate)) problems.push(t('journal.dateLocked', { date: lockedUpTo(books) ?? '' }));
 
   const body = () => ({
@@ -227,7 +231,7 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
       const saved = id ? await api<{ id: string }>(`/api/documents/${id}`, { body: body() })
         : await api<{ id: string }>(`/api/companies/${books.company.id}/documents`, { body: body() });
       if (andIssue) {
-        if (type === 'quotation') await api(`/api/documents/${saved.id}/quotation-status`, { body: { status: 'sent' } });
+        if (type === 'quotation' || type === 'purchase_order') await api(`/api/documents/${saved.id}/quotation-status`, { body: { status: 'sent' } });
         else if (isClaim) await api(`/api/documents/${saved.id}/submit`, { body: {} });
         else await api(`/api/documents/${saved.id}/issue`, { body: {} });
       }
@@ -251,11 +255,12 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
       </div>
       {error && <div className="notice bad" role="alert">{error}</div>}
       {isCreditDoc && <div className="notice">{t('doc.creditEditHint', { ref: form.reference })}</div>}
+      {type === 'debit_note' && <div className="notice">{t('doc.debitEditHint', { ref: form.reference })}</div>}
 
       <div className="card">
         <div className="row">
           <label className="f" style={{ flex: '2 1 240px' }}>{t(side === 'sales' ? 'contact.customer' : isExpense ? 'exp.supplierOptional' : isClaim ? 'claim.employee' : 'contact.supplier')}
-            <select id="doc-contact" value={form.contactId} onChange={(e) => setContact(e.target.value)} disabled={isCreditDoc}
+            <select id="doc-contact" value={form.contactId} onChange={(e) => setContact(e.target.value)} disabled={isCreditDoc || type === 'debit_note'}
               style={tried && !form.contactId && !isExpense ? { borderColor: 'var(--bad)' } : undefined}>
               <option value="">{isExpense ? t('exp.noSupplier') : t(side === 'sales' ? 'doc.pickCustomer' : isClaim ? 'claim.pickEmployee' : 'doc.pickSupplier')}</option>
               {(contacts.data ?? []).filter((c) => c.status === 'active' || c.id === form.contactId).map((c) => <option key={c.id} value={c.id}>{local(c.name, c.nameAr)}</option>)}
@@ -398,7 +403,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
     setBusy(true); setError(undefined);
     try { await fn(); d.reload(); } catch (e) { setError(errorText(t, has, e)); } finally { setBusy(false); }
   };
-  const due = x.status === 'issued' && (x.type === 'invoice' || x.type === 'bill');
+  const due = x.status === 'issued' && (x.type === 'invoice' || x.type === 'bill' || x.type === 'debit_note');
   const canPay = books.canPost && due && toMinor(x.amountDue) > 0n;
   const title = t(`doc.title.${x.type}` as Key);
   return (
@@ -429,6 +434,21 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
         {books.canPost && isClaim && x.status === 'issued' && toMinor(x.amountDue) > 0n && (
           <button className="b p" onClick={() => go('Purchases', 'payments-made', 'new', x.contactId!, x.id)}>{t('claim.reimburse')}</button>
         )}
+        {books.canPost && x.type === 'invoice' && x.status === 'issued' && <button className="b" id="doc-debit" disabled={busy} onClick={() => void run(async () => {
+          const r = await api<{ id: string }>(`/api/documents/${x.id}/debit`, { body: {} });
+          go('Sales', 'debit-notes', r.id);
+        })}>{t('doc.createDebit')}</button>}
+        {books.canPost && x.type === 'purchase_order' && !['billed', 'cancelled'].includes(x.status) && (
+          <>
+            {x.status === 'draft' && <button className="b p" id="po-send" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/quotation-status`, { body: { status: 'sent' } }))}>{t('po.markSent')}</button>}
+            {x.status === 'sent' && <button className="b" id="po-received" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/quotation-status`, { body: { status: 'received' } }))}>{t('po.markReceived')}</button>}
+            {['sent', 'received'].includes(x.status) && <button className="b p" id="po-bill" disabled={busy} onClick={() => void run(async () => {
+              const r = await api<{ id: string }>(`/api/documents/${x.id}/convert-po`, { body: {} });
+              go('Purchases', 'bills', r.id);
+            })}>{t('po.toBill')}</button>}
+            <button className="b" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/quotation-status`, { body: { status: 'cancelled' } }))}>{t('po.cancel')}</button>
+          </>
+        )}
         {books.canPost && x.type === 'quotation' && (
           <>
             {x.status === 'draft' && <button className="b p" disabled={busy} onClick={() => void run(() => api(`/api/documents/${x.id}/quotation-status`, { body: { status: 'sent' } }))}>{t('doc.markSent')}</button>}
@@ -442,8 +462,8 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
         )}
       </div>
       {error && <div className="notice bad" role="alert">{error}</div>}
-      {x.status === 'issued' && (x.type === 'invoice' || x.type === 'credit_note') && <EInvoiceStatus books={books} documentId={x.id} />}
-      {x.status !== 'draft' && ['invoice', 'credit_note', 'quotation'].includes(x.type) && <DocEmail books={books} documentId={x.id} />}
+      {x.status === 'issued' && (x.type === 'invoice' || x.type === 'credit_note' || x.type === 'debit_note') && <EInvoiceStatus books={books} documentId={x.id} />}
+      {x.status !== 'draft' && ['invoice', 'credit_note', 'debit_note', 'quotation'].includes(x.type) && <DocEmail books={books} documentId={x.id} />}
       {x.status === 'draft' && (x.type === 'bill' || x.type === 'credit_note') && <ApprovalPanel books={books} documentId={x.id} reload={d.reload} />}
       {isClaim && x.status === 'submitted' && mine && <div className="notice">{t('appr.yoursNotice')}</div>}
       {isClaim && x.status === 'rejected' && <div className="notice warn">{t('claim.rejectedBecause', { reason: x.rejectionReason ?? '', name: x.decidedByName ?? '' })}</div>}

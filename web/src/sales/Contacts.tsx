@@ -22,6 +22,7 @@ export function ContactList({ books, side }: { books: CompanyBooks; side: Side }
     <>
       <div className="top" style={{ marginBottom: 10 }}>
         <input type="search" placeholder={t('contact.search')} value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: '1 1 220px' }} aria-label={t('search')} />
+        {books.canPost && <button className="b" id="import-contacts" onClick={() => go(m, pageOf(side), 'import')}>{t('imp.fromExcel')}</button>}
         {books.canPost && <button className="b p" onClick={() => go(m, pageOf(side), 'new')}>{t(side === 'sales' ? 'contact.newCustomer' : 'contact.newSupplier')}</button>}
       </div>
       <div className="card">

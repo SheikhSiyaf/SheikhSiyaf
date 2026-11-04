@@ -101,6 +101,9 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/crm/deals/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_deals', m[1]!, ['CRM'])],
   ['*', new RegExp(`^/api/crm/activities/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_activities', m[1]!, ['CRM'])],
   ['*', new RegExp(`^/api/crm/campaigns/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_campaigns', m[1]!, ['CRM'])],
+  // bulk import: each kind to its module (view to preview, view and enter to import)
+  ['POST', new RegExp(`^/api/companies/${UUID}/import/([a-z]+)/(preview|run)$`), (_db, m) => ({ companyId: m[1]!,
+    modules: ({ customers: ['Sales'], suppliers: ['Purchases'], items: ['Inventory', 'Restaurant'], accounts: ['Ledger'], opening: ['Journal'] } as Record<string, string[]>)[m[2]!] ?? ['Ledger'] })],
   // e-invoicing belongs to Sales
   ['*', new RegExp(`^/api/companies/${UUID}/(einvoicing|einvoices)(/.*)?$`), c(['Sales', 'Restaurant'])],
   ['*', new RegExp(`^/api/einvoices/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'einvoices', m[1]!, ['Sales', 'Restaurant'])],

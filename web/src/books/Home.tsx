@@ -2,7 +2,9 @@ import { ReviewedBadge } from '../review/Review.tsx';
 import { useDates, useDeadlineText, type CalItem } from '../calendar/Calendar.tsx';
 import { today } from '../router.ts';
 import { useApi, type CompanyBooks } from '../api.ts';
-import { useI18n } from '../i18n.tsx';
+import { useI18n, type Key } from '../i18n.tsx';
+import { useState } from 'react';
+import { useGo } from '../sales/common.tsx';
 import { fmt, neg } from '../money.ts';
 import { toMinor, fromMinor } from '../money.ts';
 import { ErrorNote, Loading } from '../ui.tsx';
@@ -31,6 +33,7 @@ export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?:
       <ReviewedBadge books={books} go={go} />
       <FromAccountant books={books} go={go} />
       <WaitingApproval books={books} go={go} />
+      <GettingStarted books={books} />
       <div className="grid">
         {figs.map(([label, value, note]) => (
           <div key={label} className="card fig">
@@ -118,6 +121,34 @@ function WaitingApproval({ books, go }: { books: CompanyBooks; go: (m: string, s
       {books.canPost && w.data.approvedToAction > 0 && <span>{t('home.approvedToAction', { n: w.data.approvedToAction })}</span>}
       <span className="spacer" />
       <button className="b small p" onClick={() => go('Approvals', 'waiting')}>{t('home.openApprovals')}</button>
+    </div>
+  );
+}
+
+/** A short checklist for a client still being set up; hidden when everything is done or when dismissed. */
+function GettingStarted({ books }: { books: CompanyBooks }) {
+  const { t } = useI18n();
+  const goTo = useGo(books.company.id);
+  const k = `nb_setup_hidden_${books.company.id}`;
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem(k) === '1'; } catch { return false; } });
+  const s = useApi<{ steps: { key: string; done: boolean; go: [string, string?, string?] }[]; done: number; total: number }>(hidden || !books.canPost ? null : `/api/companies/${books.company.id}/setup-status`);
+  if (hidden || !s.data || s.data.done === s.data.total) return null;
+  const pct = Math.round((s.data.done / s.data.total) * 100);
+  return (
+    <div className="card" id="home-setup">
+      <div className="actions" style={{ marginBottom: 6 }}>
+        <h2 style={{ margin: 0 }}>{t('setup.title')}</h2>
+        <span className="small mut">{t('setup.progress', { done: s.data.done, total: s.data.total })}</span><span className="spacer" />
+        <button className="link small" onClick={() => { setHidden(true); try { localStorage.setItem(k, '1'); } catch { /* not kept */ } }}>{t('setup.hide')}</button>
+      </div>
+      <div className="bar-track" style={{ marginBottom: 8 }}><div className="bar-fill" style={{ width: `${pct}%` }} /></div>
+      <ol className="setup-steps">{s.data.steps.map((x) => (
+        <li key={x.key} className={x.done ? 'done' : ''}>
+          <span className="tick" aria-hidden="true">{x.done ? '✓' : ''}</span>
+          <span><b>{t(`setup.s.${x.key}` as Key)}</b><span className="small mut"> {t(`setup.h.${x.key}` as Key)}</span></span>
+          {!x.done && <button className="b small" onClick={() => goTo(x.go[0], x.go[1], x.go[2])}>{t(`setup.go.${x.key}` as Key)}</button>}
+        </li>
+      ))}</ol>
     </div>
   );
 }

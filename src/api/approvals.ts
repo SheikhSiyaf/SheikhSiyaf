@@ -49,3 +49,79 @@ export function registerApprovalRoutes(app: FastifyInstance, { as }: Ctx) {
   }));
   app.post<{ Params: Id; Body: { minimumCash?: string } }>('/api/companies/:id/forecast/settings', async (req) => inCompany(req, req.params.id, async (db, c) => { await F.saveSettings(db, c, req.body?.minimumCash); return ok; }));
 }
+
+// ---------------------------------------------------------------- bulk import (rows read from the file in the browser)
+import * as Imp from '../books/importService.js';
+type ImportBody = { rows?: unknown; date?: string; balanceToEquity?: boolean };
+export function registerImportRoutes(app: FastifyInstance, { as }: Ctx) {
+  const opts = { bodyLimit: 8 * 1024 * 1024 };
+  app.post<{ Params: { id: string; kind: string }; Body: ImportBody }>('/api/companies/:id/import/:kind/preview', opts, async (req) => {
+    const c = uuidParam(req.params.id); const kind = Imp.kindOf(req.params.kind);
+    return as(req, async (db) => { await member(db, c); return Imp.preview(db, c, kind, req.body?.rows, req.body ?? {}); });
+  });
+  app.post<{ Params: { id: string; kind: string }; Body: ImportBody }>('/api/companies/:id/import/:kind/run', opts, async (req) => {
+    const c = uuidParam(req.params.id); const kind = Imp.kindOf(req.params.kind);
+    return as(req, async (db) => { await member(db, c); return Imp.run(db, c, kind, req.body?.rows, req.body ?? {}); });
+  });
+}
+
+// ---------------------------------------------------------------- quick search (menu search box)
+import { accessTo } from '../books/modules.js';
+export function registerSearchRoutes(app: FastifyInstance, { as }: Ctx) {
+  app.get<{ Params: { id: string }; Querystring: { q?: string } }>('/api/companies/:id/search', async (req) => {
+    const c = uuidParam(req.params.id);
+    const q = String(req.query.q ?? '').trim().slice(0, 60);
+    return as(req, async (db) => {
+      await member(db, c);
+      if (q.length < 2) return { contacts: [], documents: [], items: [] };
+      const perms = (await db.query('SELECT permissions FROM app_client_role($1)', [c])).rows[0]?.permissions ?? null;
+      const can = (m: string) => accessTo(perms, m) !== 'none';
+      const like = `%${q.replace(/[%_\\]/g, (x) => `\\${x}`)}%`;
+      const contacts = (await db.query(
+        `SELECT id, name, name_ar AS "nameAr", vat_number AS "vatNumber", CASE WHEN is_employee THEN 'employee' WHEN is_customer THEN 'customer' ELSE 'supplier' END AS kind
+         FROM contacts WHERE company_id = $1 AND status = 'active' AND (name ILIKE $2 OR coalesce(name_ar, '') ILIKE $2 OR coalesce(vat_number, '') LIKE $2 OR coalesce(employee_no, '') ILIKE $2)
+         ORDER BY name LIMIT 8`, [c, like])).rows.filter((x) => (x.kind === 'customer' ? can('Sales') : x.kind === 'supplier' ? can('Purchases') : can('HRM') || can('Expenses')));
+      const types = [...(can('Sales') ? ['invoice', 'credit_note', 'quotation'] : []), ...(can('Purchases') ? ['bill', 'supplier_credit'] : []), ...(can('Expenses') ? ['expense', 'claim'] : [])];
+      const documents = types.length ? (await db.query(
+        `SELECT d.id, d.type, d.number, d.status, d.issue_date::text AS date, d.gross_total::text AS total, coalesce(ct.name, d.payee) AS contact
+         FROM documents d LEFT JOIN contacts ct ON ct.id = d.contact_id
+         WHERE d.company_id = $1 AND d.type = ANY ($3::doc_type[]) AND (d.number ILIKE $2 OR coalesce(d.reference, '') ILIKE $2 OR coalesce(ct.name, d.payee, '') ILIKE $2)
+         ORDER BY d.issue_date DESC LIMIT 8`, [c, like, types])).rows : [];
+      const items = can('Inventory') || can('Restaurant') ? (await db.query(
+        `SELECT id, sku, name, name_ar AS "nameAr" FROM items WHERE company_id = $1 AND (sku ILIKE $2 OR name ILIKE $2 OR coalesce(name_ar, '') ILIKE $2) ORDER BY name LIMIT 6`, [c, like])).rows : [];
+      return { contacts, documents, items };
+    });
+  });
+}
+
+// ---------------------------------------------------------------- getting started (Home): what is set up for this client
+export function registerSetupStatusRoutes(app: FastifyInstance, { as }: Ctx) {
+  app.get<{ Params: { id: string } }>('/api/companies/:id/setup-status', async (req) => {
+    const c = uuidParam(req.params.id);
+    return as(req, async (db) => {
+      await member(db, c);
+      const r = (await db.query(
+        `SELECT co.country, co.vat_status::text AS vat, co.modules,
+          EXISTS (SELECT 1 FROM bank_accounts WHERE company_id = $1 AND kind = 'bank') AS bank,
+          EXISTS (SELECT 1 FROM contacts WHERE company_id = $1 AND is_customer) AS customers,
+          EXISTS (SELECT 1 FROM contacts WHERE company_id = $1 AND is_supplier) AS suppliers,
+          EXISTS (SELECT 1 FROM items WHERE company_id = $1) AS items,
+          EXISTS (SELECT 1 FROM journal_entries WHERE company_id = $1) AS opening,
+          EXISTS (SELECT 1 FROM documents WHERE company_id = $1 AND type = 'invoice' AND status = 'issued') AS invoice,
+          EXISTS (SELECT 1 FROM einvoice_devices WHERE company_id = $1 AND status = 'active') OR coalesce((SELECT enabled FROM einvoice_settings WHERE company_id = $1), false) AS einvoicing,
+          EXISTS (SELECT 1 FROM approval_rules WHERE company_id = $1 AND active) AS approvals
+         FROM companies co WHERE co.id = $1`, [c])).rows[0];
+      const steps: { key: string; done: boolean; go: [string, string?, string?] }[] = [
+        { key: 'bank', done: r.bank, go: ['Bank', 'accounts', 'new'] },
+        { key: 'customers', done: r.customers, go: ['Sales', 'customers', 'import'] },
+        { key: 'suppliers', done: r.suppliers, go: ['Purchases', 'suppliers', 'import'] },
+        ...((r.modules ?? []).includes('Inventory') ? [{ key: 'items', done: r.items, go: ['Inventory', 'items', 'import'] as [string, string, string] }] : []),
+        { key: 'opening', done: r.opening, go: ['Ledger', 'import-data', 'opening'] },
+        ...(r.vat === 'registered' && r.country !== 'OM' ? [{ key: 'einvoicing', done: r.einvoicing, go: ['Sales', 'e-invoicing'] as [string, string] }] : []),
+        { key: 'approvals', done: r.approvals, go: ['Approvals', 'approval-rules'] },
+        { key: 'invoice', done: r.invoice, go: ['Sales', 'invoices', 'new'] },
+      ];
+      return { steps, done: steps.filter((s) => s.done).length, total: steps.length };
+    });
+  });
+}

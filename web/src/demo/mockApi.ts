@@ -21,6 +21,7 @@ import * as Comp from '../../../src/books/compliance.ts';
 import { FIRST_PIH, invoiceXml, kindFor } from '../../../src/einvoice/zatca/ubl.ts';
 import { pintAeInScope, pintAeXml } from '../../../src/einvoice/pintAe.ts';
 import * as Fc from '../../../src/books/forecast.ts';
+import * as Im from '../../../src/books/importRules.ts';
 import type { EInvoiceData, EParty } from '../../../src/einvoice/invoiceData.ts';
 import { tinyPdf } from '../../../src/db/tinyPdf.ts';
 import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, previousMonthEnd, targetDepreciation, type AssetTerms } from '../../../src/books/assets.ts';
@@ -3500,6 +3501,101 @@ function seedApprovals() {
     session = prev;
   }
 }
+
+
+// ---------------------------------------------------------------- bulk import (same rules as src/books/importService.ts)
+function importPreviewM(companyId: string, kind: Im.ImportKind, rows: unknown, o: Body) {
+  member(companyId);
+  const co = db.companies.find((c) => c.id === companyId)!;
+  const cells = (Array.isArray(rows) ? rows : []).map((r) => (Array.isArray(r) ? r.map((c) => (c == null ? '' : String(c))) : []));
+  const m = Im.mapRows(kind, cells);
+  const existing = new Set<string>(
+    kind === 'customers' || kind === 'suppliers' ? sdb.contacts.filter((c) => c.companyId === companyId && (kind === 'customers' ? c.isCustomer : c.isSupplier)).flatMap((c) => [`name:${c.name.toLowerCase()}`, ...(c.vatNumber ? [`vat:${c.vatNumber}`] : [])])
+    : kind === 'items' ? odb.items.filter((x) => x.companyId === companyId).map((x) => `sku:${x.sku.toLowerCase()}`)
+    : kind === 'accounts' ? db.accounts.filter((a) => a.companyId === companyId).map((a) => `code:${a.code}`) : []);
+  const keyOf = (v: Record<string, string>) => (kind === 'customers' || kind === 'suppliers' ? `name:${(v.name ?? '').toLowerCase()}` : kind === 'items' ? `sku:${(v.sku ?? '').toLowerCase()}` : `code:${v.code ?? ''}`);
+  const seen = new Set<string>();
+  const out = m.records.map((r) => {
+    const problems = Im.rowProblems(kind, r.values, co.country);
+    const key = keyOf(r.values);
+    if (seen.has(key)) problems.push('imp.p.repeated'); seen.add(key);
+    if (kind === 'opening' && r.values.code) { const a = db.accounts.find((x) => x.companyId === companyId && x.code === r.values.code); if (!a) problems.push('imp.p.noAccount'); else if (a.costCentreRequired) problems.push('imp.p.costCentre'); }
+    const exists = kind !== 'opening' && !problems.length && (existing.has(key) || (r.values.vatNumber && existing.has(`vat:${r.values.vatNumber}`)));
+    return { line: r.line, values: r.values, status: problems.length ? 'error' : exists ? 'exists' : 'new', problems };
+  });
+  const counts = { new: out.filter((x) => x.status === 'new').length, exists: out.filter((x) => x.status === 'exists').length, error: out.filter((x) => x.status === 'error').length };
+  let opening = null as null | { debit: string; credit: string; difference: string; date: string | null; problems: string[]; warnings: string[] };
+  if (kind === 'opening') {
+    let dr = 0n, cr = 0n; for (const x of out) { dr += Im.amount(x.values.debit ?? '') ?? 0n; cr += Im.amount(x.values.credit ?? '') ?? 0n; }
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(o?.date ?? '')) ? String(o!.date) : null;
+    const problems = [...(!date ? ['imp.p.date'] : db.periods.some((p) => p.companyId === companyId && p.lockedAt && date >= p.startDate && date <= p.endDate) ? ['imp.p.locked'] : []),
+      ...(dr !== cr && !o?.balanceToEquity ? ['imp.p.unbalanced'] : []), ...(dr === 0n && cr === 0n ? ['imp.p.nothing'] : [])];
+    const warnings = [...(out.some((x) => ['1100', '2000'].includes(x.values.code ?? '')) ? ['imp.w.control'] : []), ...(db.entries.some((e) => e.companyId === companyId && e.memo === 'Opening balances (imported)') ? ['imp.w.again'] : [])];
+    opening = { debit: s(dr), credit: s(cr), difference: s(dr - cr), date, problems, warnings };
+  }
+  return { kind, columns: m.columns, missing: m.missing, rows: out, counts, opening };
+}
+function importRunM(companyId: string, kind: Im.ImportKind, rows: unknown, o: Body) {
+  const p = importPreviewM(companyId, kind, rows, o);
+  if (p.missing.length) fail(400, 'Some required columns are missing.', 'err.importColumns', p.missing);
+  if (kind === 'opening') {
+    if (p.counts.error) fail(400, 'Fix the rows with problems first.', 'err.importRows');
+    if (p.opening!.problems.length) fail(400, 'The opening balances cannot be posted yet.', 'err.importOpening', p.opening!.problems);
+    const acct = (code: string) => db.accounts.find((a) => a.companyId === companyId && a.code === code)!.id;
+    const lines = p.rows.map((r) => ({ accountId: acct(r.values.code!), costCentreId: null, debit: Im.amount(r.values.debit ?? '') ?? 0n, credit: Im.amount(r.values.credit ?? '') ?? 0n })).filter((l) => l.debit || l.credit);
+    const diff = Im.amount(p.opening!.difference)!;
+    if (diff) lines.push({ accountId: acct('3000'), costCentreId: null, debit: diff < 0n ? -diff : 0n, credit: diff > 0n ? diff : 0n });
+    const entryId = post(session!, companyId, p.opening!.date!, 'Opening balances (imported)', lines);
+    return { imported: lines.length, skipped: 0, entryId };
+  }
+  const todo = p.rows.filter((r) => r.status === 'new');
+  if (!todo.length) fail(400, 'There is nothing new to import.', 'err.importNothing');
+  for (const r of todo) {
+    const v = r.values;
+    if (kind === 'customers' || kind === 'suppliers') saveContactM(companyId, { ...v, isCustomer: kind === 'customers', isSupplier: kind === 'suppliers', country: v.country?.toUpperCase() || '' });
+    else if (kind === 'items') saveItemM(companyId, { sku: v.sku, name: v.name, nameAr: v.nameAr, unit: v.unit || 'pcs', salePrice: v.salePrice ? s(Im.amount(v.salePrice)!) : null, reorderLevel: v.reorderLevel || null });
+    else saveAccountM(companyId, { code: v.code, name: v.name, nameAr: v.nameAr, type: Im.ACCOUNT_TYPE_WORDS[(v.type ?? '').toLowerCase().trim()], costCentreRequired: Im.isYes(v.costCentreRequired ?? '') });
+  }
+  return { imported: todo.length, skipped: p.counts.exists + p.counts.error, entryId: null };
+}
+routes.push(
+  ['POST', /^\/api\/companies\/([\w-]+)\/import\/([a-z]+)\/preview$/, (m, b) => importPreviewM(m[1]!, (Im.IMPORT_KINDS.find((k) => k === m[2]) ?? fail(400, 'Choose what to import.', 'err.format')), b?.rows, b)],
+  ['POST', /^\/api\/companies\/([\w-]+)\/import\/([a-z]+)\/run$/, (m, b) => importRunM(m[1]!, (Im.IMPORT_KINDS.find((k) => k === m[2]) ?? fail(400, 'Choose what to import.', 'err.format')), b?.rows, b)],
+);
+
+
+// ---------------------------------------------------------------- quick search and getting started (same as src/api/approvals.ts)
+routes.push(
+  ['GET', /^\/api\/companies\/([\w-]+)\/search$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const needle = String(q.get('q') ?? '').trim().toLowerCase();
+    if (needle.length < 2) return { contacts: [], documents: [], items: [] };
+    const perms = clientRoleIn(id)?.permissions ?? null; const can = (x: string) => accessTo(perms, x) !== 'none';
+    const has = (v: string | null | undefined) => (v ?? '').toLowerCase().includes(needle);
+    const contacts = sdb.contacts.filter((c) => c.companyId === id && c.status === 'active' && (has(c.name) || has(c.nameAr) || has(c.vatNumber) || has(c.employeeNo)))
+      .map((c) => ({ id: c.id, name: c.name, nameAr: c.nameAr, vatNumber: c.vatNumber, kind: c.isEmployee ? 'employee' : c.isCustomer ? 'customer' : 'supplier' }))
+      .filter((c) => (c.kind === 'customer' ? can('Sales') : c.kind === 'supplier' ? can('Purchases') : can('HRM') || can('Expenses'))).slice(0, 8);
+    const types = [...(can('Sales') ? ['invoice', 'credit_note', 'quotation'] : []), ...(can('Purchases') ? ['bill', 'supplier_credit'] : []), ...(can('Expenses') ? ['expense', 'claim'] : [])];
+    const documents = sdb.docs.filter((d) => d.companyId === id && types.includes(d.type)).map((d) => ({ d, c: sdb.contacts.find((x) => x.id === d.contactId) }))
+      .filter(({ d, c }) => has(d.number) || has(d.reference) || has(c?.name ?? d.payee)).sort((a, b) => b.d.issueDate.localeCompare(a.d.issueDate)).slice(0, 8)
+      .map(({ d, c }) => ({ id: d.id, type: d.type, number: d.number, status: d.status, date: d.issueDate, total: s(docTotals(d).gross), contact: c?.name ?? d.payee ?? null }));
+    const items = can('Inventory') || can('Restaurant') ? odb.items.filter((x) => x.companyId === id && (has(x.sku) || has(x.name) || has(x.nameAr))).slice(0, 6).map((x) => ({ id: x.id, sku: x.sku, name: x.name, nameAr: x.nameAr })) : [];
+    return { contacts, documents, items };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/setup-status$/, (m) => {
+    const id = inCo(m[1]!); const co = db.companies.find((c) => c.id === id)!;
+    const steps: { key: string; done: boolean; go: string[] }[] = [
+      { key: 'bank', done: odb.banks.some((b) => b.companyId === id && b.kind === 'bank'), go: ['Bank', 'accounts', 'new'] },
+      { key: 'customers', done: sdb.contacts.some((c) => c.companyId === id && c.isCustomer), go: ['Sales', 'customers', 'import'] },
+      { key: 'suppliers', done: sdb.contacts.some((c) => c.companyId === id && c.isSupplier), go: ['Purchases', 'suppliers', 'import'] },
+      ...(co.modules.includes('Inventory') ? [{ key: 'items', done: odb.items.some((x) => x.companyId === id), go: ['Inventory', 'items', 'import'] }] : []),
+      { key: 'opening', done: db.entries.some((e) => e.companyId === id), go: ['Ledger', 'import-data', 'opening'] },
+      ...(co.vatStatus === 'registered' && co.country !== 'OM' ? [{ key: 'einvoicing', done: edb.devices.some((x) => x.companyId === id && x.status === 'active') || einvSettings(id).enabled, go: ['Sales', 'e-invoicing'] }] : []),
+      { key: 'approvals', done: apdb.rules.some((r) => r.companyId === id && r.active), go: ['Approvals', 'approval-rules'] },
+      { key: 'invoice', done: sdb.docs.some((d) => d.companyId === id && d.type === 'invoice' && d.status === 'issued'), go: ['Sales', 'invoices', 'new'] },
+    ];
+    return { steps, done: steps.filter((x) => x.done).length, total: steps.length };
+  }],
+);
 
 // Sample data is created once everything above is defined.
 seed();

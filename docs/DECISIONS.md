@@ -32,6 +32,8 @@
 - Debit notes are not part of the books yet; the ZATCA compliance checks use debit-note samples only.
 - Approvals (step 5) cover supplier bills, supplier payments and customer credit notes, each from an amount set per client by an approver; expenses are recorded after the money is spent and stay outside (employee claims keep their own approval). Single level: one approver, never the sender. What would stop issuing (missing cost centre, locked period) is checked when it is sent, so nothing is approved that cannot be issued.
 - The cash flow forecast is worked out from the books each time (nothing stored but people's own items and the minimum cash). Payroll repeats last month's net pay; social insurance repeats last month's contributions on the calendar's due date; VAT due is the VAT payable of each return period so far.
+- Bulk import goes through the same services as typing (rules, audit, separation). Customers, suppliers, items and accounts: new rows are added, existing ones (same name or VAT number, code, account code) are left as they are, rows with problems are left out with the reason. Opening balances: all or nothing, one entry. Files are read in the browser; only the rows are sent.
+- What is still to build is kept in docs/PENDING.md, by priority.
 
 ## Open
 - Restaurant POS integration (importing sales from the restaurant's own POS instead of entering them in Nusuh Books): which POS systems.

@@ -85,6 +85,9 @@ export function ChartOfAccounts({ books, onChanged }: { books: CompanyBooks; onC
       </div>
       {msg.ok && <div className="notice">{msg.ok}</div>}
       {msg.bad && <div className="notice bad" role="alert">{msg.bad}</div>}
+      {books.canPost && <div className="actions no-print" style={{ marginBottom: 8 }}><span className="spacer" />
+        <button className="b" onClick={() => go('Ledger', 'import-data', 'accounts')}>{t('imp.fromExcel')}</button>
+        <button className="b" onClick={() => go('Ledger', 'import-data', 'opening')}>{t('imp.openingButton')}</button></div>}
       <div ref={ref}>
         {TYPES.map((type) => {
           const rows = list.data!.filter((a) => a.type === type);

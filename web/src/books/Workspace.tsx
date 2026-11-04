@@ -10,12 +10,15 @@ import { Home } from './Home.tsx';
 import { Journal } from './Journal.tsx';
 import { Reports } from './Reports.tsx';
 import { Vat } from './Vat.tsx';
-import { DOC_PAGES, NAV, hiddenFor, isModuleBuilt, moduleOf, navFor } from './nav.ts';
+import { DOC_PAGES, NAV, groupOf, hiddenFor, isModuleBuilt, moduleOf, navFor } from './nav.ts';
+import { Icon } from '../icons.tsx';
+import { QuickSearch } from './QuickSearch.tsx';
 import { Calendar } from '../calendar/Calendar.tsx';
 import { Portal } from '../portal/Portal.tsx';
 import { EInvoicing } from '../sales/EInvoicing.tsx';
 import { Approvals as ApprovalsHub } from '../approvals/Approvals.tsx';
 import { CashForecast } from './Forecast.tsx';
+import { ImportData } from './ImportData.tsx';
 import { accessTo } from '../../../src/books/modules.ts';
 import { Overview } from '../sales/Overview.tsx';
 import { ContactList, ContactPage } from '../sales/Contacts.tsx';
@@ -84,11 +87,13 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
   return (
     <div className="app">
       <Sidebar subtitle={b ? local(b.company.name, b.company.nameAr) : ''} user={me.user} roleLabel={b ? (b.access ? local(b.access.name, b.access.nameAr ?? null) : t(`role.${b.role}`)) : undefined} onSignOut={onSignOut}>
-        {(b ? navFor(b.company.modules, b.access?.permissions, hiddenFor(b.portal?.tenantKind)) : NAV.filter((m) => m.key === 'Home')).map((m) => (
+        {b && <QuickSearch books={b} />}
+        {(b ? navFor(b.company.modules, b.access?.permissions, hiddenFor(b.portal?.tenantKind)) : NAV.filter((m) => m.key === 'Home')).map((m, i, all) => (
           <div key={m.key}>
+            {(i === 0 || groupOf(all[i - 1]!.key) !== groupOf(m.key)) && <div className="side-group">{t(`navg.${groupOf(m.key)}` as Key)}</div>}
             <button className={`${m.key === mod.key ? 'on' : ''} ${isModuleBuilt(m) ? '' : 'soon'}`} aria-current={m.key === mod.key && !sub ? 'page' : undefined}
               aria-expanded={m.subs.length ? open === m.key : undefined} onClick={() => onModule(m)}>
-              {t(`mod.${m.key}` as Key)}{m.subs.length > 0 && <span className="chev" aria-hidden="true">{open === m.key ? '▾' : '▸'}</span>}
+              <Icon name={m.key} /><span className="side-label">{t(`mod.${m.key}` as Key)}</span>{m.subs.length > 0 && <span className="chev" aria-hidden="true">{open === m.key ? '▾' : '▸'}</span>}
             </button>
             {open === m.key && subMenu(m, 'side')}
           </div>
@@ -147,6 +152,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     }
     case 'Ledger':
       if (sub === 'chart-of-accounts') return <ChartOfAccounts books={books} onChanged={reloadBooks} />;
+      if (sub === 'import-data') return <ImportData key={item ?? ''} books={books} initial={item} />;
       if (sub === 'cost-centres-setup') return <CostCentres books={books} onChanged={reloadBooks} />;
       if (sub === 'general-ledger') return <GeneralLedger key={item ?? ''} books={books} initial={item} />;
       if (sub === 'cost-centre-ledger') return <CostCentreLedger key={item ?? ''} books={books} initial={item} />;
@@ -163,6 +169,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Inventory':
     case 'Restaurant': {
       const mod = module as 'Inventory' | 'Restaurant';
+      if ((sub === 'items' || sub === 'materials') && item === 'import') return <ImportData key="items" books={books} initial="items" only />;
       if (sub === 'food-sales') {
         if (item === 'new') return <FoodSale books={books} />;
         return item ? <DocView key={item} books={books} id={item} /> : <FoodSales books={books} />;
@@ -218,6 +225,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Purchases': {
       if (sub === 'overview') return <Overview books={books} side={side} />;
       if (sub === 'e-invoicing') return <EInvoicing books={books} />;
+      if ((sub === 'customers' || sub === 'suppliers') && item === 'import') return <ImportData key={sub} books={books} initial={sub} only />;
       if (sub === 'customers' || sub === 'suppliers') {
         return item ? <ContactPage key={item} books={books} side={side} id={item} /> : <ContactList books={books} side={side} />;
       }

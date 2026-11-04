@@ -55,6 +55,7 @@ export function ItemList({ books, mod = 'Inventory' }: { books: CompanyBooks; mo
       <div className="top" style={{ marginBottom: 10 }}>
         <input type="search" placeholder={w('inv.search')} value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: '1 1 220px' }} aria-label={t('search')} />
         {books.canPost && <button className="b" onClick={() => go(mod, subOf('grn', mod), 'new')}>{w('inv.newGrn')}</button>}
+        {books.canPost && <button className="b" onClick={() => go(mod, itemsOf(mod), 'import')}>{t('imp.fromExcel')}</button>}
         {books.canPost && <button className="b p" onClick={() => go(mod, itemsOf(mod), 'new')}>{w('inv.newItemPlus')}</button>}
       </div>
       <div className="card">

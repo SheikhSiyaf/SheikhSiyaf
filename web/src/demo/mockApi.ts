@@ -4703,11 +4703,70 @@ function seedRentals() {
     { id: uid(), companyId: co.id, contractId: k.id, itemId: frames.id, units: 300, basis: 'week', rate: '12.00', outDate: rentAddDays(today(), -14), returnDate: null, createdAt: now });
 }
 
+// ---------------------------------------------------------------- support chat (same rules as db/migrations/0042)
+interface MSupThread { id: string; firmId: string; companyId: string | null; openedBy: string; subject: string; category: string; status: 'open' | 'answered' | 'closed';
+  createdAt: string; lastMessageAt: string; ownerSeenAt: string | null; customerSeenAt: string | null }
+interface MSupMsg { id: string; threadId: string; author: string; fromOwner: boolean; body: string; createdAt: string }
+const supDb = { threads: [] as MSupThread[], messages: [] as MSupMsg[] };
+const supCanSee = (t: MSupThread) => { const u = me(); return u.kind === 'owner' || t.openedBy === u.id || (u.kind === 'admin' && u.firmId === t.firmId); };
+const supThreadOf = (id: string) => { const t = supDb.threads.find((x) => x.id === id); if (!t || !supCanSee(t)) fail(404, 'Not found.', 'err.notFound'); return t!; };
+function supRow(t: MSupThread) {
+  const owner = me().kind === 'owner'; const ms = supDb.messages.filter((m) => m.threadId === t.id); const last = ms.at(-1)!;
+  const seen = (owner ? t.ownerSeenAt : t.customerSeenAt) ?? '';
+  return { id: t.id, subject: t.subject, category: t.category, status: t.status, createdAt: t.createdAt, lastMessageAt: t.lastMessageAt, firmId: t.firmId,
+    customer: firms.find((f) => f.id === t.firmId)?.name ?? '', customerKind: firms.find((f) => f.id === t.firmId)?.kind ?? '', openedBy: t.openedBy,
+    openedByName: db.users.find((u) => u.id === t.openedBy)?.name ?? '', company: db.companies.find((c) => c.id === t.companyId)?.name ?? null, messages: ms.length,
+    unread: ms.filter((m) => m.fromOwner !== owner && m.createdAt > seen).length, lastBody: last.body, lastFromOwner: last.fromOwner };
+}
+const supList = () => supDb.threads.filter(supCanSee).sort((a, b) => Number(a.status === 'closed') - Number(b.status === 'closed') || b.lastMessageAt.localeCompare(a.lastMessageAt)).map(supRow);
+function supPost(t: MSupThread, body: string) {
+  const u = me(); const owner = u.kind === 'owner'; const text = String(body ?? '').trim();
+  if (!text) fail(400, 'Write your message.', 'err.supportBody');
+  const at = new Date().toISOString();
+  supDb.messages.push({ id: uid(), threadId: t.id, author: u.id, fromOwner: owner, body: text.slice(0, 5000), createdAt: at });
+  t.status = owner ? 'answered' : 'open'; t.lastMessageAt = at; if (owner) t.ownerSeenAt = at; else t.customerSeenAt = at;
+}
+routes.push(
+  ['GET', /^\/api\/support\/threads$/, () => supList()],
+  ['GET', /^\/api\/support\/unread$/, () => ({ unread: supList().filter((x) => x.unread > 0).length })],
+  ['POST', /^\/api\/support\/threads$/, (_m, b) => {
+    const u = me(); if (u.kind === 'owner') fail(400, 'Not allowed.', 'err.format');
+    const subject = String(b?.subject ?? '').trim(); const body = String(b?.body ?? '').trim();
+    if (!subject) fail(400, 'Say in a few words what it is about.', 'err.supportSubject');
+    if (!body) fail(400, 'Write your message.', 'err.supportBody');
+    const companyId = String(b?.companyId || '') || null;
+    if (companyId && !roleOf(u.id, companyId)) fail(400, 'That belongs to a different company.', 'err.otherCompany');
+    const at = new Date().toISOString();
+    const t: MSupThread = { id: uid(), firmId: u.firmId, companyId, openedBy: u.id, subject: subject.slice(0, 200), category: ['question', 'problem', 'billing', 'idea', 'other'].includes(String(b?.category)) ? String(b!.category) : 'question',
+      status: 'open', createdAt: at, lastMessageAt: at, ownerSeenAt: null, customerSeenAt: at };
+    supDb.threads.push(t); supDb.messages.push({ id: uid(), threadId: t.id, author: u.id, fromOwner: false, body: body.slice(0, 5000), createdAt: at });
+    return { id: t.id };
+  }],
+  ['GET', /^\/api\/support\/threads\/([\w-]+)$/, (m) => { const t = supThreadOf(m[1]!); const owner = me().kind === 'owner'; const row = supRow(t);
+    if (owner) t.ownerSeenAt = new Date().toISOString(); else t.customerSeenAt = new Date().toISOString();
+    return { ...row, unread: 0, messages: supDb.messages.filter((x) => x.threadId === t.id).map((x) => ({ id: x.id, fromOwner: x.fromOwner,
+      authorName: x.fromOwner && !owner ? 'Nusuh Books' : db.users.find((u) => u.id === x.author)?.name ?? '', mine: x.author === session, body: x.body, createdAt: x.createdAt })) }; }],
+  ['POST', /^\/api\/support\/threads\/([\w-]+)\/messages$/, (m, b) => { supPost(supThreadOf(m[1]!), String(b?.body ?? '')); return { id: uid() }; }],
+  ['POST', /^\/api\/support\/threads\/([\w-]+)\/close$/, (m) => { supThreadOf(m[1]!).status = 'closed'; return { ok: true }; }],
+);
+/** Sara asked how to email invoices; Nusuh Books answered (as in src/db/seed.ts). */
+function seedSupport() {
+  const sara = db.users.find((u) => u.name === 'Sara Nasser'); const ownerU = db.users.find((u) => u.kind === 'owner');
+  const co = db.companies.find((c) => c.name === 'Al Noor Trading'); if (!sara || !ownerU || !co) return;
+  const t0 = Date.now() - 2 * 86400000; const iso = (ms: number) => new Date(ms).toISOString();
+  const t: MSupThread = { id: uid(), firmId: sara.firmId, companyId: co.id, openedBy: sara.id, subject: 'How do I email an invoice to the customer?', category: 'question',
+    status: 'answered', createdAt: iso(t0), lastMessageAt: iso(t0 + 3600000), ownerSeenAt: iso(t0 + 3600000), customerSeenAt: iso(t0) };
+  supDb.threads.push(t);
+  supDb.messages.push({ id: uid(), threadId: t.id, author: sara.id, fromOwner: false, body: 'I issued ANT-0002. Can the customer get it by email with a link to pay?', createdAt: iso(t0) },
+    { id: uid(), threadId: t.id, author: ownerU.id, fromOwner: true, body: 'Yes: open the invoice and press "Email to customer". The email has a link to view, print and pay online (Sales > Online payments must be on).', createdAt: iso(t0 + 3600000) });
+}
+
 // Sample data is created once everything above is defined.
 seed();
 seedBilling();
 seedOnlinePay();
 seedRentals();
+seedSupport();
 seedEinvoicing();
 seedApprovals();
 db.activity.push({ id: uid(), firmId: firms.find((f) => f.name === DEMO_FIRM)!.id, at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });

@@ -484,6 +484,20 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
     for (const b of (await client.query(`SELECT id, period_start FROM billing_invoices WHERE firm_id = $1 OR period_start < date_trunc('month', current_date)`, [firmId])).rows) {
       await client.query(`SELECT billing_mark_paid($1, $2::date + 5, 'Bank transfer')`, [b.id, b.period_start]);
     }
+    // Help: Sara asked Nusuh Books how to email an invoice, and was answered.
+    {
+      const sara = DEMO_USERS.find((u) => u.name === 'Sara Nasser');
+      if (sara) {
+        await asUser(userIds[sara.email]!);
+        const t = (await client.query(`SELECT support_open($1, 'question', $2, $3) AS id`, ['How do I email an invoice to the customer?', companyIds.alnoor ?? null,
+          'I issued ANT-0002. Can the customer get it by email with a link to pay?'])).rows[0].id;
+        await asUser(userIds['owner@nusuhbooks.example']!);
+        await client.query('SELECT support_post($1, $2)', [t, 'Yes: open the invoice and press "Email to customer". The email has a link to view, print and pay online (Sales > Online payments must be on).']);
+        // Asked and answered in one seeding step: Sara has not read the answer yet.
+        await client.query(`UPDATE support_threads SET customer_seen_at = created_at - interval '1 minute' WHERE id = $1`, [t]);
+      }
+      await client.query(`SELECT set_config('app.user_id', '', true)`);   // the steps below run as nobody, as before
+    }
     // Online payments in sandbox mode, so Pay online on an invoice link can be tried; recorded as a person who posts.
     await client.query(`INSERT INTO payment_settings (company_id, enabled, provider, deposit_account_id, enabled_by)
       SELECT c.id, true, 'sandbox', (SELECT a.id FROM accounts a WHERE a.company_id = c.id AND a.is_bank ORDER BY a.code LIMIT 1),

@@ -43,6 +43,8 @@ const RAISED: [RegExp, string][] = [
   [/financial year is closed/, 'err.yearClosedPost'],
   [/Only an open invoice can be/, 'err.billOpenOnly'],
   [/Nothing is left to pay on this invoice/, 'err.payNothingDue'],
+  [/Say in a few words what it is about/, 'err.supportSubject'],
+  [/Write your message/, 'err.supportBody'],
   [/already rented out on some of these dates|Only \d+ of this item exist/, 'err.rentalBooked'],
   [/has been billed|billed period is|billed and no longer change|before the end of what has been billed/, 'err.rentalBilled'],
   [/Record the return of every item|Bill the rental up to the return dates/, 'err.rentalReturnFirst'],

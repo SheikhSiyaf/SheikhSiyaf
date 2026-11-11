@@ -2,6 +2,7 @@ import { OwnerConsole } from './admin/OwnerConsole.tsx';
 import { BillingInvoicePage } from './admin/Billing.tsx';
 import { PublicDocument } from './pages/PublicDocument.tsx';
 import { SandboxPay } from './pages/SandboxPay.tsx';
+import { SupportChat } from './support/Support.tsx';
 import { getActingTenant } from './api.ts';
 import { useEffect } from 'react';
 import { api, useApi, type Me } from './api.ts';
@@ -84,14 +85,16 @@ function Screens() {
     if (bi) return <BillingInvoicePage id={bi[1]!} back="/owner/billing" />;
     return <OwnerConsole me={me.data} path={path} onSignOut={signOut} />;
   }
+  // Everyone but the owner has Help: a chat with Nusuh Books (the owner answers in the owner console).
+  const help = (companyId?: string) => <SupportChat key="help" companyId={companyId} />;
   const ai = /^\/admin\/billing\/([0-9a-f-]{36})$/.exec(path);
   if (me.data.user.kind === 'admin' && ai) return <BillingInvoicePage id={ai[1]!} back="/admin/billing" />;
-  if (me.data.user.kind === 'admin') return <AdminConsole me={me.data} path={path} onSignOut={signOut} />;
+  if (me.data.user.kind === 'admin') return <><AdminConsole me={me.data} path={path} onSignOut={signOut} />{help()}</>;
 
   const m = /^\/c\/([0-9a-f-]{36})(?:\/(\w+))?/.exec(path);
   if (m) {
     const company = me.data.companies.find((c) => c.id === m[1]);
-    if (company) return <Workspace me={me.data} companyId={company.id} path={path} onSignOut={signOut} />;
+    if (company) return <><Workspace me={me.data} companyId={company.id} path={path} onSignOut={signOut} />{help(company.id)}</>;
   }
-  return <MyClients me={me.data} onSignOut={signOut} />;
+  return <><MyClients me={me.data} onSignOut={signOut} />{help()}</>;
 }

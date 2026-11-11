@@ -601,3 +601,37 @@ td.pick, th.pick { width: 28px; }
 .bd-bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 4px; }
 .bd-bar i { display: block; height: 4px; border-radius: 2px; background: var(--teal); }
 .bd-bar i.over { background: var(--bad); }
+
+/* ======================================================================
+   Help: chat with Nusuh Books (web/src/support/Support.tsx)
+   ====================================================================== */
+.help-fab { position: fixed; inset-inline-end: 18px; bottom: 18px; z-index: 40; display: inline-flex; align-items: center; gap: 6px;
+  background: var(--teal); color: #fff; border: 0; border-radius: 999px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer;
+  box-shadow: 0 6px 18px rgba(10, 30, 40, .22); }
+.help-fab span[aria-hidden] { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: rgba(255, 255, 255, .22); font-size: 13px; }
+.fab-badge { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: #c2410c; color: #fff; font-size: 12px; font-weight: 700; }
+.fab-badge.inline { margin-inline-start: 6px; vertical-align: middle; }
+.help-panel { position: fixed; inset-inline-end: 18px; bottom: 74px; z-index: 41; width: 380px; max-width: calc(100vw - 32px); height: min(560px, calc(100vh - 110px));
+  background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 16px 40px rgba(10, 30, 40, .25); display: flex; overflow: hidden; }
+.chat { display: flex; flex-direction: column; width: 100%; min-height: 0; }
+.chat-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.chat-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-body { padding: 12px; overflow: auto; flex: 1; }
+.chat-msgs { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
+.bubble { max-width: 85%; align-self: flex-start; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; }
+.bubble.me { align-self: flex-end; background: var(--tealbg); border-color: transparent; }
+.bubble.nb:not(.me) { border-inline-start: 3px solid var(--teal); }
+.bubble-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-send { padding: 10px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.chat-send textarea { width: 100%; resize: vertical; min-height: 44px; }
+.thread-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.thread-list button { width: 100%; text-align: start; display: flex; flex-direction: column; gap: 3px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font: inherit; color: var(--ink); cursor: pointer; }
+.thread-list button:hover { border-color: var(--teal); }
+.tl-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.owner-chat { height: min(640px, calc(100vh - 160px)); display: flex; padding: 0; overflow: hidden; }
+tr.unread-row td:first-child { font-weight: 600; }
+@media (max-width: 640px) {
+  .help-panel { inset: 0; width: 100%; max-width: none; height: 100%; border-radius: 0; bottom: 0; }
+  .help-fab { bottom: 12px; inset-inline-end: 12px; padding: 9px 13px; }
+}
+@media print { .help-fab, .help-panel { display: none !important; } }

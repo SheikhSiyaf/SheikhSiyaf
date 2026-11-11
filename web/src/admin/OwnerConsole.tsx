@@ -6,6 +6,7 @@ import { api, setActingTenant, useApi, type Me } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
 import { navigate } from '../router.ts';
 import { OwnerBilling, OwnerPlans } from './Billing.tsx';
+import { OwnerSupport, useOwnerSupportUnread } from '../support/Support.tsx';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
 
 interface Tenant { id: string; name: string; kind: 'firm' | 'company'; status: 'active' | 'suspended'; createdAt: string; companies: number; users: number; admins: string | null }
@@ -17,20 +18,21 @@ export function openTenant(t: { id: string; name: string; kind: string }) {
   navigate('/admin/clients');
 }
 
-const OWNER_TABS = [['customers', '/owner'], ['billing', '/owner/billing'], ['plans', '/owner/plans']] as const;
+const OWNER_TABS = [['customers', '/owner'], ['support', '/owner/support'], ['billing', '/owner/billing'], ['plans', '/owner/plans']] as const;
 
 export function OwnerConsole({ me, path, onSignOut }: { me: Me; path: string; onSignOut: () => void }) {
   const { t } = useI18n();
-  const tab = path.startsWith('/owner/billing') ? 'billing' : path.startsWith('/owner/plans') ? 'plans' : 'customers';
+  const tab = path.startsWith('/owner/billing') ? 'billing' : path.startsWith('/owner/plans') ? 'plans' : path.startsWith('/owner/support') ? 'support' : 'customers';
+  const unread = useOwnerSupportUnread();
   const title = t(`own.tab.${tab}`);
   return (
     <div className="app">
       <Sidebar subtitle={t('own.console')} user={me.user} roleLabel={t('own.role')} onSignOut={onSignOut}>
-        {OWNER_TABS.map(([k, to]) => <button key={k} id={`own-tab-${k}`} className={k === tab ? 'on' : ''} aria-current={k === tab ? 'page' : undefined} onClick={() => navigate(to)}>{t(`own.tab.${k}`)}</button>)}
+        {OWNER_TABS.map(([k, to]) => <button key={k} id={`own-tab-${k}`} className={k === tab ? 'on' : ''} aria-current={k === tab ? 'page' : undefined} onClick={() => navigate(to)}>{t(`own.tab.${k}`)}{k === 'support' && unread > 0 && <span className="fab-badge inline">{unread}</span>}</button>)}
       </Sidebar>
       <main>
         <div className="top"><h1>{title}</h1><TopControls /></div>
-        {tab === 'billing' ? <OwnerBilling /> : tab === 'plans' ? <OwnerPlans /> : <Customers />}
+        {tab === 'billing' ? <OwnerBilling /> : tab === 'plans' ? <OwnerPlans /> : tab === 'support' ? <OwnerSupport /> : <Customers />}
       </main>
     </div>
   );

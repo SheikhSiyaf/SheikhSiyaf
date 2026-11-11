@@ -11,6 +11,7 @@ const P: Record<string, string> = {
   Inventory: 'M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10',
   Restaurant: 'M7 3v8M5 3v5a2 2 0 0 0 4 0V3M7 11v10M16 3c-2 2-2 6 0 8v10',
   Assets: 'M4 20V9l8-5 8 5v11M9 20v-6h6v6',
+  Rentals: 'M4 20h16M6 20V6l6-2v16M12 8h6l2 4v8M6 10h6',
   Projects: 'M3 7h6l2 2h10v10H3z',
   HRM: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M17 11a2.5 2.5 0 1 0 0-5M21 19c0-2-1.5-3.5-3.5-4',
   CRM: 'M12 21s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 5.5-7 10-7 10z',

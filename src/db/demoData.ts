@@ -90,15 +90,15 @@ export const DEMO_ROLES: { name: string; nameAr: string; description: string; pe
   { name: 'Store keeper', nameAr: 'أمين المخزن', description: 'Goods in and out at the warehouse counter (counter only)', permissions: { Inventory: 'edit', Restaurant: 'edit' }, canApprove: false, posMode: true },
   { name: 'Counter cashier', nameAr: 'كاشير المنصة', description: 'Takes orders at the restaurant counter (counter only)', permissions: { Restaurant: 'edit' }, canApprove: false, posMode: true },
   { name: 'Finance manager', nameAr: 'المدير المالي', description: 'Sees everything, approves claims',
-    permissions: { Sales: 'view', Purchases: 'view', Expenses: 'view', Bank: 'view', Inventory: 'view', Restaurant: 'view', Assets: 'view', Projects: 'view', HRM: 'view', CRM: 'view', Journal: 'view', Ledger: 'view', Reports: 'view' }, canApprove: true },
+    permissions: { Sales: 'view', Purchases: 'view', Expenses: 'view', Bank: 'view', Inventory: 'view', Restaurant: 'view', Assets: 'view', Rentals: 'view', Projects: 'view', HRM: 'view', CRM: 'view', Journal: 'view', Ledger: 'view', Reports: 'view' }, canApprove: true },
 ];
 
 /** The self-managed company's own roles: its finance manager reviews and signs off months. */
 export const DEMO_SELF_ROLES: { name: string; nameAr: string; description: string; permissions: Record<string, 'view' | 'edit'>; canApprove: boolean; canReview: boolean; canSignOff: boolean }[] = [
   { name: 'Finance manager', nameAr: 'المدير المالي', description: 'Runs the books, approves claims, reviews and signs off each month',
-    permissions: { Sales: 'edit', Purchases: 'edit', Expenses: 'edit', Bank: 'edit', Inventory: 'edit', Restaurant: 'edit', Assets: 'edit', Projects: 'edit', HRM: 'edit', CRM: 'edit', Journal: 'edit', Ledger: 'edit', Reports: 'view' },
+    permissions: { Sales: 'edit', Purchases: 'edit', Expenses: 'edit', Bank: 'edit', Inventory: 'edit', Restaurant: 'edit', Assets: 'edit', Rentals: 'edit', Projects: 'edit', HRM: 'edit', CRM: 'edit', Journal: 'edit', Ledger: 'edit', Reports: 'view' },
     canApprove: true, canReview: true, canSignOff: true },
   { name: 'Accountant', nameAr: 'محاسب', description: 'Daily entry',
-    permissions: { Sales: 'edit', Purchases: 'edit', Expenses: 'edit', Bank: 'edit', Inventory: 'edit', Assets: 'edit', Projects: 'edit', HRM: 'edit', CRM: 'edit', Journal: 'edit', Ledger: 'edit', Reports: 'view' },
+    permissions: { Sales: 'edit', Purchases: 'edit', Expenses: 'edit', Bank: 'edit', Inventory: 'edit', Assets: 'edit', Rentals: 'edit', Projects: 'edit', HRM: 'edit', CRM: 'edit', Journal: 'edit', Ledger: 'edit', Reports: 'view' },
     canApprove: false, canReview: false, canSignOff: false },
 ];

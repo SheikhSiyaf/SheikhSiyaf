@@ -130,6 +130,12 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/companies/${UUID}/(einvoicing|einvoices)(/.*)?$`), c(['Sales', 'Restaurant'])],
   ['*', new RegExp(`^/api/einvoices/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'einvoices', m[1]!, ['Sales', 'Restaurant'])],
   ['*', new RegExp(`^/api/einvoicing/devices/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'einvoice_devices', m[1]!, ['Sales'])],
+  // rentals (billing makes a sales invoice, so it needs Sales too)
+  ['POST', new RegExp(`^/api/rental-contracts/${UUID}/bill$`), async (db, m) => { const n = await companyOf(db, 'rental_contracts', m[1]!, ['Rentals']); return n && { ...n, also: ['Sales'] }; }],
+  ['*', new RegExp(`^/api/companies/${UUID}/(rentals|rental-items|rental-contracts)(/.*)?$`), c(['Rentals'])],
+  ['*', new RegExp(`^/api/rental-items/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'rental_items', m[1]!, ['Rentals'])],
+  ['*', new RegExp(`^/api/rental-contracts/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'rental_contracts', m[1]!, ['Rentals'])],
+  ['*', new RegExp(`^/api/rental-lines/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'rental_lines', m[1]!, ['Rentals'])],
   // assets and projects
   ['*', new RegExp(`^/api/companies/${UUID}/(assets|asset-summary|depreciation)(/.*)?$`), c(['Assets'])],
   ['*', new RegExp(`^/api/assets/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'fixed_assets', m[1]!, ['Assets'])],

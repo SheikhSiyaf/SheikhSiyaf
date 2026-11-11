@@ -44,6 +44,7 @@ import { FoodSale, FoodSales, MenuList, RecipePage } from '../restaurant/Restaur
 import { WarehouseDesk } from '../inventory/Warehouse.tsx';
 import { EmailsSent } from '../sales/DocEmail.tsx';
 import { OnlinePayments } from '../sales/OnlinePayments.tsx';
+import { Rentals } from '../rentals/Rentals.tsx';
 import { Budgets, RecurringInvoices, Reminders, Statements } from '../sales/Tools.tsx';
 import { Bell } from './Notifications.tsx';
 import { Counter } from '../inventory/Counter.tsx';
@@ -201,6 +202,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Assets':
       if (sub === 'depreciation') return <Depreciation books={books} />;
       return item ? <AssetPage key={item} books={books} id={item} /> : <AssetRegister books={books} />;
+    case 'Rentals': return <Rentals books={books} sub={sub} item={item} />;
     case 'Review': return <Review books={books} sub={sub} item={item} />;
     case 'Portal': return <Portal books={books} sub={sub} item={item} extra={extra} />;
     case 'Calendar': return <Calendar books={books} sub={sub} />;

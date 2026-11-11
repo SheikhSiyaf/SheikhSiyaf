@@ -35,6 +35,7 @@ import * as Pay from '../books/payroll.js';
 import { monthEnd, nextMonthEnd, previousMonthEnd, targetDepreciation } from '../books/assets.js';
 import { toMinor } from '../money.js';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_SELF, DEMO_SELF_ROLES, DEMO_USERS } from './demoData.js';
+import * as Rent from '../books/rentalService.js';
 import { DEFAULT_MODULES } from '../books/modules.js';
 import * as Rest from '../books/restaurantService.js';
 
@@ -85,7 +86,7 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
            vat_rate, address, city, fy_end_month, fy_end_day, invoice_prefix, industry, modules)
          VALUES ($1,$2,$3,$4,$5,$6,$7,'registered',$8,$9,$10,$11,12,31,$12,$13,$14) RETURNING id`,
         [tenantOf(c.tenant), c.name, c.nameAr, c.country, c.currency, c.crNumber, c.legalForm, c.vatNumber, c.vatRate, c.address, c.city, c.invoicePrefix,
-         c.industry, DEFAULT_MODULES[c.industry]])).rows[0].id;
+         c.industry, c.key === 'alnoor' ? [...DEFAULT_MODULES[c.industry], 'Rentals'] : DEFAULT_MODULES[c.industry]])).rows[0].id;
       companyIds[c.key] = id;
       for (const u of DEMO_USERS.filter((x) => x.companies.includes(c.key))) {
         await client.query('INSERT INTO memberships (user_id, company_id, role, client_role_id) VALUES ($1,$2,$3,$4)', [userIds[u.email], id, u.role, u.clientRole ? (u.tenant === 'self' ? selfRoles : firmRoles)[u.clientRole] ?? null : null]);
@@ -152,6 +153,15 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       const faisal = await cust('Al Faisal Contracting', 'الفيصل للمقاولات', 7654321, 30);
       const walkIn = await cust('Walk-in customer', 'عميل نقدي', undefined, 0);
       const najd = await supp('Najd Wholesale', 'نجد للجملة', 2223334);
+      // Rentals (Al Noor rents out a crane, scaffolding and a generator): equipment and an open rental on hire.
+      if (c.key === 'alnoor') {
+        const crane = await Rent.saveItem(db, id, { code: 'CR-50', name: 'Mobile crane 50t', nameAr: 'رافعة متحركة 50 طن', category: 'Crane', identifier: 'Plate 4821 KSA', dayRate: '1500.00', hourRate: '350.00', monthRate: '30000.00' });
+        const frames = await Rent.saveItem(db, id, { code: 'SC-FR', name: 'Scaffolding frame', nameAr: 'إطار سقالات', category: 'Scaffolding', units: 500, dayRate: '2.50', weekRate: '12.00' });
+        await Rent.saveItem(db, id, { code: 'GN-100', name: 'Generator 100 kVA', nameAr: 'مولد 100 كيلو فولت أمبير', category: 'Generator', dayRate: '400.00', weekRate: '2400.00' });
+        const k = await Rent.saveContract(db, id, { contactId: faisal, site: 'Riyadh Metro, station 4', reference: 'PO-778', costCentreId: cc['Project A'] ?? null });
+        await Rent.addLine(db, k, { itemId: crane, basis: 'day', outDate: daysAgo(20) });
+        await Rent.addLine(db, k, { itemId: frames, basis: 'week', units: 300, outDate: daysAgo(14) });
+      }
       const telecom = await supp('Desert Telecom', 'الصحراء للاتصالات', 5556667);
 
       const SL = (description: string, quantity: string, unitPrice: string, centre?: string, code = '4000') =>

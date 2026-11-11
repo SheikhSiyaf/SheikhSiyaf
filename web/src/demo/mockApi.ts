@@ -4,6 +4,7 @@
 // It is NOT the source of truth: the real rules live in db/migrations and are covered by `npm test`.
 // Data resets when the page reloads.
 import { toMinor, fromMinor, divRoundHalfUp } from '../../../src/money.ts';
+import { addDays as rentAddDays, billRange as rentBillRange, daysInclusive as rentDaysInclusive, lineState as rentLineState, rentalAmount, type Basis as RentBasis } from '../../../src/books/rentals.ts';
 import { vatForLine } from '../../../src/vat/vat.ts';
 import * as Pay from '../../../src/books/payroll.ts';
 import { periodsFor, pct as rpct } from '../../../src/books/reportsService.ts';
@@ -4519,10 +4520,194 @@ function seedBilling() {
   for (const sub of bdb.subs) backToActiveB(sub.firmId);
 }
 
+// ---------------------------------------------------------------- rentals (same rules as db/migrations/0041 and src/books/rentalService.ts)
+interface MRItem { id: string; companyId: string; code: string; name: string; nameAr: string | null; category: string | null; identifier: string | null; units: number;
+  hourRate: string | null; dayRate: string | null; weekRate: string | null; monthRate: string | null; incomeAccountId: string; fixedAssetId: string | null; status: 'active' | 'retired'; notes: string | null }
+interface MRContract { id: string; companyId: string; number: string; contactId: string; costCentreId: string | null; site: string | null; reference: string | null;
+  status: 'open' | 'closed' | 'cancelled'; notes: string | null; createdAt: string }
+interface MRLine { id: string; companyId: string; contractId: string; itemId: string; units: number; basis: RentBasis; rate: string; outDate: string; returnDate: string | null; createdAt: string }
+interface MRBill { id: string; contractId: string; documentId: string; periodTo: string; lines: { lineId: string; from: string; to: string; amount: bigint }[] }
+const rentDb = { items: [] as MRItem[], contracts: [] as MRContract[], lines: [] as MRLine[], usage: [] as { lineId: string; date: string; hours: string; note: string | null }[], bills: [] as MRBill[] };
+const rentNo = new Map<string, number>();
+const liveBills = () => rentDb.bills.filter((b) => sdb.docs.some((d) => d.id === b.documentId));   // a deleted draft frees its period
+const lineBilledTo = (lineId: string) => liveBills().flatMap((b) => b.lines).filter((l) => l.lineId === lineId).map((l) => l.to).sort().at(-1) ?? null;
+const rItemOf = (id: string) => { const i = rentDb.items.find((x) => x.id === id) ?? fail(404, 'Not found.', 'err.notFound'); inCo(i.companyId); return i; };
+const rContractOf = (id: string) => { const k = rentDb.contracts.find((x) => x.id === id) ?? fail(404, 'Not found.', 'err.notFound'); inCo(k.companyId); return k; };
+const rLineOf = (id: string) => { const l = rentDb.lines.find((x) => x.id === id) ?? fail(404, 'Not found.', 'err.notFound'); inCo(l.companyId); return l; };
+const rentMoney = (v: unknown) => { const t = String(v ?? '').replace(/,/g, '').trim(); if (!t) return null; try { if (toMinor(t) > 0n) return s(toMinor(t)); } catch { /* below */ } return fail(400, 'Enter the rate as an amount above 0.', 'err.rentalRate'); };
+const rateOfM = (i: MRItem, b: RentBasis) => ({ hour: i.hourRate, day: i.dayRate, week: i.weekRate, month: i.monthRate })[b];
+function rentOutOn(itemId: string, day: string, except?: string) {
+  return rentDb.lines.filter((l) => l.itemId === itemId && l.id !== except && rentDb.contracts.find((k) => k.id === l.contractId)!.status !== 'cancelled'
+    && day >= l.outDate && (!l.returnDate || day <= l.returnDate)).reduce((a, l) => a + l.units, 0);
+}
+function rentCheckFree(l: MRLine) {
+  const it = rentDb.items.find((x) => x.id === l.itemId)!;
+  if (l.units > it.units) fail(400, `Only ${it.units} of this item exist.`, 'err.rentalBooked');
+  const end = l.returnDate ?? rentAddDays(l.outDate, 366);
+  let worst = 0;
+  for (let d = l.outDate; d <= end; d = rentAddDays(d, 1)) worst = Math.max(worst, rentOutOn(l.itemId, d, l.id));
+  if (worst + l.units > it.units) fail(400, `This item is already rented out on some of these dates (${it.units - worst} of ${it.units} units free).`, 'err.rentalBooked');
+}
+function saveRentItemM(companyId: string, b: Body, id?: string) {
+  canPostIn(companyId);
+  const code = String(b?.code ?? '').trim() || fail(400, 'Give the item a short code.', 'err.rentalCode');
+  const name = String(b?.name ?? '').trim() || fail(400, 'Enter the item name.', 'err.rentalName');
+  const units = Number(b?.units ?? 1); if (!Number.isInteger(units) || units < 1) fail(400, 'Units is a whole number, 1 or more.', 'err.rentalUnits');
+  const rates = [rentMoney(b?.hourRate), rentMoney(b?.dayRate), rentMoney(b?.weekRate), rentMoney(b?.monthRate)];
+  if (rates.every((r) => r === null)) fail(400, 'Give the item at least one rate (by the hour, day, week or month).', 'err.rentalNoRate');
+  if (rentDb.items.some((x) => x.companyId === companyId && x.code.toLowerCase() === code.toLowerCase() && x.id !== id)) fail(400, 'Another item has this code.', 'err.rentalCodeTaken');
+  const income = String(b?.incomeAccountId || '') || db.accounts.find((a) => a.companyId === companyId && a.code === '4100')!.id;
+  const v = { code, name, nameAr: String(b?.nameAr ?? '').trim() || null, category: String(b?.category ?? '').trim() || null, identifier: String(b?.identifier ?? '').trim() || null, units,
+    hourRate: rates[0]!, dayRate: rates[1]!, weekRate: rates[2]!, monthRate: rates[3]!, incomeAccountId: income, fixedAssetId: String(b?.fixedAssetId || '') || null,
+    status: b?.status === 'retired' ? 'retired' as const : 'active' as const, notes: String(b?.notes ?? '').trim() || null };
+  if (id) { Object.assign(rItemOf(id), v); return id; }
+  const x = { id: uid(), companyId, ...v }; rentDb.items.push(x); return x.id;
+}
+function rentItemRow(i: MRItem, day: string) {
+  const a = db.accounts.find((x) => x.id === i.incomeAccountId)!;
+  return { ...i, incomeAccountCode: a.code, fixedAssetNumber: null, out: rentOutOn(i.id, day),
+    nextBooking: rentDb.lines.filter((l) => l.itemId === i.id && l.outDate > day && rentDb.contracts.find((k) => k.id === l.contractId)!.status !== 'cancelled').map((l) => l.outDate).sort()[0] ?? null };
+}
+function rentCharges(contractId: string, upTo: string) {
+  return rentDb.lines.filter((l) => l.contractId === contractId).flatMap((l) => {
+    const r = rentBillRange(l, lineBilledTo(l.id), upTo); if (!r) return [];
+    const days = rentDaysInclusive(r.from, r.to);
+    const hrs = l.basis === 'hour' ? rentDb.usage.filter((u) => u.lineId === l.id && u.date >= r.from && u.date <= r.to).reduce((a, u) => a + toMinor(u.hours), 0n) : 0n;
+    const it = rentDb.items.find((x) => x.id === l.itemId)!;
+    return [{ l, it, ...r, days, hrs, amount: rentalAmount(l.basis, toMinor(l.rate), l.units, { days, hoursHundredths: Number(hrs) }) }];
+  });
+}
+function rentContractRow(k: MRContract) {
+  const c = sdb.contacts.find((x) => x.id === k.contactId)!; const ls = rentDb.lines.filter((l) => l.contractId === k.id);
+  return { id: k.id, number: k.number, status: k.status, site: k.site, reference: k.reference, contactId: k.contactId, customer: c.name, customerAr: c.nameAr,
+    from: ls.map((l) => l.outDate).sort()[0] ?? null, lines: ls.length, onHire: ls.filter((l) => l.outDate <= today() && !l.returnDate).length,
+    items: ls.map((l) => rentDb.items.find((i) => i.id === l.itemId)!.name).sort().join(', ') || null,
+    billedTo: liveBills().filter((b) => b.contractId === k.id).map((b) => b.periodTo).sort().at(-1) ?? null };
+}
+function rentContractM(id: string) {
+  const k = rContractOf(id); const c = sdb.contacts.find((x) => x.id === k.contactId)!;
+  const lines = rentDb.lines.filter((l) => l.contractId === id).sort((a, b) => a.outDate.localeCompare(b.outDate) || a.createdAt.localeCompare(b.createdAt)).map((l) => {
+    const it = rentDb.items.find((i) => i.id === l.itemId)!;
+    return { id: l.id, itemId: it.id, code: it.code, name: it.name, nameAr: it.nameAr, identifier: it.identifier, itemUnits: it.units, units: l.units, basis: l.basis, rate: l.rate,
+      outDate: l.outDate, returnDate: l.returnDate, billedTo: lineBilledTo(l.id), hours: s(rentDb.usage.filter((u) => u.lineId === l.id).reduce((a, u) => a + toMinor(u.hours), 0n)),
+      state: rentLineState(l, today()) };
+  });
+  const usage = rentDb.usage.filter((u) => lines.some((l) => l.id === u.lineId)).sort((a, b) => a.date.localeCompare(b.date))
+    .map((u) => ({ ...u, billed: liveBills().some((b) => b.lines.some((x) => x.lineId === u.lineId && u.date >= x.from && u.date <= x.to)) }));
+  const bills = liveBills().filter((b) => b.contractId === id).map((b) => { const d = sdb.docs.find((x) => x.id === b.documentId)!;
+    return { id: b.id, documentId: d.id, periodTo: b.periodTo, number: d.number, status: d.status, total: s(docTotals(d).gross) }; });
+  return { id: k.id, companyId: k.companyId, number: k.number, status: k.status, contactId: k.contactId, customer: c.name, customerAr: c.nameAr, costCentreId: k.costCentreId,
+    costCentre: db.costCentres.find((x) => x.id === k.costCentreId)?.name ?? null, site: k.site, reference: k.reference, notes: k.notes, createdAt: k.createdAt, lines, usage, bills,
+    unbilledToday: s(rentCharges(id, today()).reduce((a, c) => a + c.amount, 0n)) };
+}
+function rentLineSave(l: MRLine) {
+  const k = rentDb.contracts.find((x) => x.id === l.contractId)!;
+  if (k.status !== 'open') fail(400, 'This rental contract is closed.', 'err.rentalClosed');
+  if (l.returnDate && l.returnDate < l.outDate) fail(400, 'The return date cannot be before the date it went out.', 'err.rentalReturnEarly');
+  rentCheckFree(l);
+}
+const RENT_PER: Record<RentBasis, string> = { hour: 'an hour', day: 'a day', week: 'a week', month: 'a month' };
+function rentBillM(contractId: string, upTo: string) {
+  const k = rContractOf(contractId); canPostIn(k.companyId);
+  if (k.status !== 'open') fail(400, 'This rental contract is closed.', 'err.rentalClosed');
+  const all = rentCharges(contractId, upTo); const billable = all.filter((c) => c.amount > 0n);
+  if (!billable.length) fail(400, 'Nothing to bill up to this day.', 'err.rentalNothing');
+  const terms = sdb.contacts.find((c) => c.id === k.contactId)?.paymentTermsDays ?? 30;
+  const lines = billable.map((c) => {
+    const what = `${c.it.name} (${c.it.code}${c.it.identifier ? `, ${c.it.identifier}` : ''})${c.l.units > 1 ? ` x ${c.l.units}` : ''}`; const period = `${c.from} to ${c.to}`;
+    const base = { accountId: c.it.incomeAccountId, costCentreId: k.costCentreId, vatCode: 'standard' };
+    if (c.l.basis === 'day') return { ...base, description: `${what}, ${period}`, quantity: String(c.days * c.l.units), unitPrice: c.l.rate };
+    if (c.l.basis === 'hour') return { ...base, description: `${what}, ${s(c.hrs)} hours, ${period}`, quantity: s(c.hrs * BigInt(c.l.units)), unitPrice: c.l.rate };
+    return { ...base, description: `${what}, ${c.days} days at ${c.l.rate} ${RENT_PER[c.l.basis]}, ${period}`, quantity: '1', unitPrice: s(c.amount) };
+  });
+  const documentId = saveDraftM(k.companyId, { type: 'invoice', contactId: k.contactId, issueDate: upTo, dueDate: rentAddDays(upTo, terms), reference: k.reference || k.number,
+    notes: `Rental ${k.number}${k.site ? `, ${k.site}` : ''}, up to ${upTo}`, lines });
+  rentDb.bills.push({ id: uid(), contractId, documentId, periodTo: upTo, lines: all.map((c) => ({ lineId: c.l.id, from: c.from, to: c.to, amount: c.amount })) });
+  return documentId;
+}
+routes.push(
+  ['GET', /^\/api\/companies\/([\w-]+)\/rentals\/board$/, (m, _b, q) => { const id = inCo(m[1]!); const day = q.get('day') || today();
+    const active = rentDb.items.filter((i) => i.companyId === id && i.status === 'active').map((i) => rentItemRow(i, day));
+    const open = rentDb.contracts.filter((k) => k.companyId === id && k.status === 'open');
+    const per = open.map((k) => ({ id: k.id, a: rentCharges(k.id, day).reduce((a, c) => a + c.amount, 0n) })).filter((x) => x.a > 0n);
+    const ls = rentDb.lines.filter((l) => open.some((k) => k.id === l.contractId));
+    return { day, onHire: ls.filter((l) => rentLineState(l, day) === 'on_hire').length, booked: ls.filter((l) => rentLineState(l, day) === 'booked').length,
+      startingThisWeek: ls.filter((l) => l.outDate > day && l.outDate <= rentAddDays(day, 7)).length, idle: active.filter((i) => i.out === 0).length, items: active.length,
+      utilisation: active.length ? Math.round((active.reduce((a, i) => a + Math.min(i.out, i.units) / i.units, 0) / active.length) * 100) : 0,
+      unbilled: s(per.reduce((a, x) => a + x.a, 0n)), unbilledByContract: per.map((x) => ({ id: x.id, amount: s(x.a) })), openContracts: open.length }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/rental-items$/, (m, _b, q) => { const id = inCo(m[1]!); const day = q.get('day') || today();
+    return rentDb.items.filter((i) => i.companyId === id).sort((a, b) => a.status.localeCompare(b.status) || (a.category ?? '~').localeCompare(b.category ?? '~') || a.code.localeCompare(b.code)).map((i) => rentItemRow(i, day)); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/rental-items$/, (m, b) => ({ id: saveRentItemM(inCo(m[1]!), b) })],
+  ['GET', /^\/api\/rental-items\/([\w-]+)$/, (m) => rentItemRow(rItemOf(m[1]!), today())],
+  ['POST', /^\/api\/rental-items\/([\w-]+)$/, (m, b) => { const i = rItemOf(m[1]!); return { id: saveRentItemM(i.companyId, b, i.id) }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/rental-contracts$/, (m, _b, q) => { const id = inCo(m[1]!); const st = q.get('status');
+    return rentDb.contracts.filter((k) => k.companyId === id && (!st || k.status === st)).sort((a, b) => Number(b.status === 'open') - Number(a.status === 'open') || b.number.localeCompare(a.number)).map(rentContractRow); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/rental-contracts$/, (m, b) => { const id = inCo(m[1]!); canPostIn(id);
+    if (!sdb.contacts.some((c) => c.id === b?.contactId && c.companyId === id && c.isCustomer)) fail(400, 'Choose a customer of this company.', 'err.contact');
+    const n = (rentNo.get(id) ?? 0) + 1; rentNo.set(id, n);
+    const k: MRContract = { id: uid(), companyId: id, number: `RNT-${String(n).padStart(4, '0')}`, contactId: String(b!.contactId), costCentreId: String(b?.costCentreId || '') || null,
+      site: String(b?.site ?? '').trim() || null, reference: String(b?.reference ?? '').trim() || null, status: 'open', notes: null, createdAt: new Date().toISOString() };
+    rentDb.contracts.push(k); return { id: k.id }; }],
+  ['GET', /^\/api\/rental-contracts\/([\w-]+)$/, (m) => rentContractM(m[1]!)],
+  ['POST', /^\/api\/rental-contracts\/([\w-]+)\/lines$/, (m, b) => { const k = rContractOf(m[1]!); canPostIn(k.companyId);
+    const basis = (['hour', 'day', 'week', 'month'].includes(String(b?.basis)) ? b!.basis : fail(400, 'Choose how it is charged.', 'err.rentalBasis')) as RentBasis;
+    const it = rentDb.items.find((i) => i.id === b?.itemId && i.companyId === k.companyId) ?? fail(400, 'Choose the equipment.', 'err.rentalItem');
+    if (it.status !== 'active') fail(400, 'This item is retired and no longer rented out.', 'err.rentalItem');
+    const rate = rentMoney(b?.rate) ?? rateOfM(it, basis) ?? fail(400, 'This item has no rate for that period: enter one.', 'err.rentalRate');
+    const units = Number(b?.units ?? 1); if (!Number.isInteger(units) || units < 1) fail(400, 'Units is a whole number, 1 or more.', 'err.rentalUnits');
+    const out = String(b?.outDate ?? ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(out)) fail(400, 'Enter the date it goes out.', 'err.date');
+    const l: MRLine = { id: uid(), companyId: k.companyId, contractId: k.id, itemId: it.id, units, basis, rate, outDate: out, returnDate: String(b?.returnDate || '') || null, createdAt: new Date().toISOString() };
+    rentLineSave(l); rentDb.lines.push(l); return { id: l.id }; }],
+  ['POST', /^\/api\/rental-lines\/([\w-]+)\/return$/, (m, b) => { const l = rLineOf(m[1]!); canPostIn(l.companyId);
+    const d = String(b?.date ?? ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) fail(400, 'Enter the return date.', 'err.date');
+    const billed = lineBilledTo(l.id); if (billed && d < billed) fail(400, `The return date cannot be before the end of what has been billed (${billed}).`, 'err.rentalBilled');
+    const next = { ...l, returnDate: d }; rentLineSave(next); l.returnDate = d; return { ok: true }; }],
+  ['POST', /^\/api\/rental-lines\/([\w-]+)\/hours$/, (m, b) => { const l = rLineOf(m[1]!); canPostIn(l.companyId);
+    const d = String(b?.date ?? ''); const h = String(b?.hours ?? '').trim();
+    if (l.basis !== 'hour') fail(400, 'Hours are recorded only for items rented by the hour.', 'err.rentalHourBasis');
+    if (d < l.outDate || (l.returnDate && d > l.returnDate)) fail(400, 'Record hours on days the item was out.', 'err.rentalHourBasis');
+    if (liveBills().some((x) => x.lines.some((y) => y.lineId === l.id && d >= y.from && d <= y.to))) fail(400, 'These hours have been billed and no longer change.', 'err.rentalBilled');
+    rentDb.usage = rentDb.usage.filter((u) => !(u.lineId === l.id && u.date === d));
+    if (h && Number(h) !== 0) { if (!/^\d{1,2}(\.\d{1,2})?$/.test(h) || Number(h) > 24) fail(400, 'Enter the hours worked that day, up to 24.', 'err.rentalHours'); rentDb.usage.push({ lineId: l.id, date: d, hours: s(toMinor(h)), note: null }); }
+    return { ok: true }; }],
+  ['POST', /^\/api\/rental-lines\/([\w-]+)\/delete$/, (m) => { const l = rLineOf(m[1]!); canPostIn(l.companyId);
+    if (lineBilledTo(l.id)) fail(400, 'This line has been billed and stays on the contract.', 'err.rentalBilled');
+    rentDb.usage = rentDb.usage.filter((u) => u.lineId !== l.id); rentDb.lines = rentDb.lines.filter((x) => x.id !== l.id); return { ok: true }; }],
+  ['POST', /^\/api\/rental-contracts\/([\w-]+)\/bill$/, (m, b) => ({ documentId: rentBillM(m[1]!, String(b?.upTo || today())) })],
+  ['POST', /^\/api\/rental-contracts\/([\w-]+)\/close$/, (m) => { const k = rContractOf(m[1]!); canPostIn(k.companyId);
+    if (k.status !== 'open') fail(400, 'This rental contract is already closed.', 'err.rentalClosed');
+    const ls = rentDb.lines.filter((l) => l.contractId === k.id);
+    if (ls.some((l) => !l.returnDate) || ls.some((l) => (lineBilledTo(l.id) ?? '') < l.returnDate!)) fail(400, 'Record the return of every item, and bill up to the return dates, before closing the rental.', 'err.rentalReturnFirst');
+    k.status = 'closed'; return { ok: true }; }],
+  ['POST', /^\/api\/rental-contracts\/([\w-]+)\/cancel$/, (m) => { const k = rContractOf(m[1]!); canPostIn(k.companyId);
+    if (k.status !== 'open' || liveBills().some((b) => b.contractId === k.id)) fail(400, 'This rental has been billed: return the items and close it instead.', 'err.rentalBilled');
+    k.status = 'cancelled'; return { ok: true }; }],
+);
+/** Al Noor rents out a crane, scaffolding and a generator; one rental is on hire (as in src/db/seed.ts). */
+function seedRentals() {
+  const co = db.companies.find((c) => c.name === 'Al Noor Trading'); if (!co) return;
+  if (!co.modules.includes('Rentals')) co.modules.push('Rentals');
+  const income = db.accounts.find((a) => a.companyId === co.id && a.code === '4100')?.id; if (!income) return;
+  const I = (code: string, name: string, nameAr: string, category: string, x: Partial<MRItem>): MRItem => ({ id: uid(), companyId: co.id, code, name, nameAr, category, identifier: null, units: 1,
+    hourRate: null, dayRate: null, weekRate: null, monthRate: null, incomeAccountId: income, fixedAssetId: null, status: 'active', notes: null, ...x });
+  const crane = I('CR-50', 'Mobile crane 50t', 'رافعة متحركة 50 طن', 'Crane', { identifier: 'Plate 4821 KSA', dayRate: '1500.00', hourRate: '350.00', monthRate: '30000.00' });
+  const frames = I('SC-FR', 'Scaffolding frame', 'إطار سقالات', 'Scaffolding', { units: 500, dayRate: '2.50', weekRate: '12.00' });
+  rentDb.items.push(crane, frames, I('GN-100', 'Generator 100 kVA', 'مولد 100 كيلو فولت أمبير', 'Generator', { dayRate: '400.00', weekRate: '2400.00' }));
+  const faisal = sdb.contacts.find((c) => c.companyId === co.id && c.name === 'Al Faisal Contracting'); if (!faisal) return;
+  rentNo.set(co.id, 1);
+  const k: MRContract = { id: uid(), companyId: co.id, number: 'RNT-0001', contactId: faisal.id, costCentreId: db.costCentres.find((x) => x.companyId === co.id && x.name === 'Project A')?.id ?? null,
+    site: 'Riyadh Metro, station 4', reference: 'PO-778', status: 'open', notes: null, createdAt: new Date().toISOString() };
+  rentDb.contracts.push(k);
+  const now = new Date().toISOString();
+  rentDb.lines.push({ id: uid(), companyId: co.id, contractId: k.id, itemId: crane.id, units: 1, basis: 'day', rate: '1500.00', outDate: rentAddDays(today(), -20), returnDate: null, createdAt: now },
+    { id: uid(), companyId: co.id, contractId: k.id, itemId: frames.id, units: 300, basis: 'week', rate: '12.00', outDate: rentAddDays(today(), -14), returnDate: null, createdAt: now });
+}
+
 // Sample data is created once everything above is defined.
 seed();
 seedBilling();
 seedOnlinePay();
+seedRentals();
 seedEinvoicing();
 seedApprovals();
 db.activity.push({ id: uid(), firmId: firms.find((f) => f.name === DEMO_FIRM)!.id, at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });

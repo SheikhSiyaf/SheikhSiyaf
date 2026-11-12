@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-12 (ZATCA sandbox test).
+Last updated: 2026-11-12 (ZATCA Stage 2 preparation).
 
 ---
 
@@ -71,7 +71,7 @@ console: creates customers and companies, bills them, answers support messages, 
 - **Reports**: trial balance, P&L, balance sheet, VAT return, aged reports, budgets, forecast, multi-currency
   ledger accounts with month-end revaluation, export of everything.
 - **Review layer**: reviewer checks and sign-off; signing off a month locks it. Year-end close.
-- **E-invoicing**: ZATCA (Saudi) built. Sandbox test (Stage 1, dummy data, see docs/ZATCA_SANDBOX_REPORT.md): onboarding, all 6 compliance checks and clearance of standard invoice, credit and debit notes pass; reporting of simplified invoices rejected in the sandbox (most likely the sandbox's dummy production certificate; to be settled in simulation). Missing: automatic 24-hour reporting job, certificate renewal. UAE Peppol: not built
+- **E-invoicing**: ZATCA (Saudi) built. Sandbox test (Stage 1, dummy data, see docs/ZATCA_SANDBOX_REPORT.md): onboarding, all 6 compliance checks and clearance of standard invoice, credit and debit notes pass; reporting of simplified invoices rejected in the sandbox (most likely the sandbox's dummy production certificate; to be settled in simulation). A device is now never switched on with a certificate that does not match its key. Code checked against ZATCA's XML and Security standards v1.2 (2023-05-19); not supported: advance-payment invoices. Stage 2 can run on a local test database. Missing: automatic 24-hour reporting job, certificate renewal. UAE Peppol: not built
   (needs an accredited service provider).
 - **Portal, calendar of deadlines, approvals, forecast.**
 - **HRM** (payroll, GOSI and GPSSA, end of service, leave, WPS and Mudad files), **CRM**, **Restaurant**.

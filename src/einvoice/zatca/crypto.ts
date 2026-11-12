@@ -66,6 +66,12 @@ export interface CertInfo {
   validTo: string;
 }
 
+/** Does the certificate carry this private key's public key? Signing with a key the certificate does not name makes
+ *  every invoice fail ZATCA's checks (the QR public key and the signature no longer match the certificate). */
+export function certMatchesKey(cert: CertInfo, key: KeyObject): boolean {
+  return cert.publicKeyDer.equals(createPublicKey(key).export({ type: 'spki', format: 'der' }));
+}
+
 /** Reads the certificate from ZATCA's binarySecurityToken (base64 of the base64 DER), or from base64 DER itself. */
 export function certInfo(tokenOrBase64: string): CertInfo {
   const inner = Buffer.from(tokenOrBase64, 'base64').toString('latin1');

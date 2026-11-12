@@ -189,6 +189,9 @@ export async function finishOnboarding(db: Db, deviceId: string): Promise<{ stat
   const p = await client(dev.environment).productionCsid(creds, dev.compliance_request_id);
   if ('error' in p) return { status: 'checks_passed', checks };
   const prod = p as { token: string; secret: string };
+  // Never switch a device on with a certificate that is not for its own key: every invoice would be rejected.
+  if (!Z.certMatchesKey(Z.certInfo(prod.token), Z.keyFrom(unbox(dev.private_key_enc))))
+    bad('The certificate ZATCA sent does not belong to this device, so the device was not switched on. Connect the device again with a new one-time password.', 'err.einvCertMismatch');
   // Only one active device per company: the earlier one is retired.
   await db.query(`UPDATE einvoice_devices SET status = 'retired' WHERE company_id = $1 AND status = 'active'`, [dev.company_id]);
   await db.query(`UPDATE einvoice_devices SET status = 'active', production_token = $2, production_secret_enc = $3, cert_valid_to = $4 WHERE id = $1`,

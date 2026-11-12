@@ -3,7 +3,7 @@
 // real sandbox is reached from the server; see docs/DECISIONS.md).
 import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { as, owner, seed, type Fixture, type Company } from './helpers.js';
@@ -15,15 +15,28 @@ import type { Fetch } from '../src/einvoice/zatca/api.js';
 let f: Fixture;
 let token: string;
 const calls: { url: string; headers: Record<string, string>; body: Record<string, string> }[] = [];
-let mode: 'ok' | 'down' = 'ok';
+let mode: 'ok' | 'down' | 'otherKey' = 'ok';
+let caDir: string, issued: string;
+/** Like ZATCA: the certificate is issued for the key in the CSR (signed by the stand-in CA). */
+function issueFor(csrBase64: string): string {
+  const csr = path.join(caDir, 'r.pem'), out = path.join(caDir, 'i.pem');
+  writeFileSync(csr, Buffer.from(csrBase64, 'base64').toString('utf8'));
+  execFileSync('openssl', ['x509', '-req', '-in', csr, '-CA', path.join(caDir, 'c.pem'), '-CAkey', path.join(caDir, 'k.pem'), '-CAcreateserial', '-days', '30', '-out', out], { stdio: 'pipe' });
+  return Buffer.from(readFileSync(out, 'utf8').replace(/-----[^-]+-----|\s/g, '')).toString('base64');
+}
 const reply = (status: number, body: unknown) => ({ status, text: async () => JSON.stringify(body) });
 const fakeZatca: Fetch = async (url, init) => {
   const body = init.body ? JSON.parse(init.body) : {};
   calls.push({ url, headers: init.headers, body });
   if (mode === 'down') throw new Error('connect ETIMEDOUT');
   const p = new URL(url).pathname.replace('/e-invoicing/developer-portal', '');
-  if (p === '/compliance') return init.headers.OTP === '123345' ? reply(200, { requestID: 1234567890, binarySecurityToken: token, secret: 'compliance-secret' }) : reply(400, { errors: ['Invalid-OTP'] });
-  if (p === '/production/csids') return reply(200, { requestID: 30368, binarySecurityToken: token, secret: 'production-secret' });
+  if (p === '/compliance') {
+    if (init.headers.OTP !== '123345') return reply(400, { errors: ['Invalid-OTP'] });
+    issued = issueFor(body.csr);
+    return reply(200, { requestID: 1234567890, binarySecurityToken: issued, secret: 'compliance-secret' });
+  }
+  // 'otherKey': a certificate for some other key (what ZATCA's sandbox hands out at this step).
+  if (p === '/production/csids') return reply(200, { requestID: 30368, binarySecurityToken: mode === 'otherKey' ? token : issued, secret: 'production-secret' });
   const xml = Buffer.from(body.invoice, 'base64').toString('utf8');
   const hash = X.invoiceHash(xml).base64;
   if (hash !== body.invoiceHash) return reply(400, { validationResults: { status: 'ERROR', errorMessages: [{ code: 'invalid-invoice-hash', message: 'hash mismatch' }] } });
@@ -49,7 +62,7 @@ const einvoiceOf = async (docId: string) => (await owner.query(`SELECT * FROM ei
 let b2b: string, b2c: string, firstInvoice: string;
 beforeAll(async () => {
   f = await seed();
-  const dir = mkdtempSync(path.join(tmpdir(), 'csid-'));
+  const dir = caDir = mkdtempSync(path.join(tmpdir(), 'csid-'));
   execFileSync('openssl', ['ecparam', '-name', 'secp256k1', '-genkey', '-noout', '-out', path.join(dir, 'k.pem')]);
   execFileSync('openssl', ['req', '-new', '-x509', '-key', path.join(dir, 'k.pem'), '-subj', '/DC=local/DC=gov/DC=extgazt/CN=TSZEINVOICE-SubCA-1', '-days', '30', '-out', path.join(dir, 'c.pem')]);
   token = Buffer.from(readFileSync(path.join(dir, 'c.pem'), 'utf8').replace(/-----[^-]+-----|\s/g, '')).toString('base64');
@@ -67,6 +80,18 @@ describe('Settings and onboarding', () => {
     await expect(as(f.a.clientViewer, (db) => E.saveSettings(db, f.a.id, { district: 'X' }))).rejects.toThrow();
   });
 
+  it('a production certificate for a different key is refused: the device is not switched on', async () => {
+    const id = await as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'sandbox', otp: '123345', name: 'EGS-Mismatch' }));
+    mode = 'otherKey';
+    try {
+      await expect(as(f.staff, (db) => E.finishOnboarding(db, id))).rejects.toThrow(/certificate ZATCA sent does not belong to this device/);
+    } finally { mode = 'ok'; }
+    const d = (await owner.query('SELECT status, production_token FROM einvoice_devices WHERE id = $1', [id])).rows[0];
+    expect(d.status).not.toBe('active');
+    expect(d.production_token).toBeNull();
+    expect((await as(f.staff, (db) => E.getSettings(db, f.a.id))).enabled).toBe(false);
+  });
+
   it('a wrong one-time password is refused; the right one gives a device with an encrypted key', async () => {
     await expect(as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'sandbox', otp: '111111' }))).rejects.toThrow(/did not accept/);
     await expect(as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'sandbox', otp: '12' }))).rejects.toThrow(/6 digits/);
@@ -81,7 +106,7 @@ describe('Settings and onboarding', () => {
     expect(r.checks.map((c) => c.type)).toEqual(['standard:invoice', 'standard:credit_note', 'standard:debit_note', 'simplified:invoice', 'simplified:credit_note', 'simplified:debit_note']);
     expect(r.checks.every((c) => c.outcome === 'accepted')).toBe(true);
     expect((await as(f.staff, (db) => E.getSettings(db, f.a.id))).enabled).toBe(true);
-    expect(calls.find((c) => c.url.endsWith('/compliance/invoices'))!.headers.Authorization).toBe(`Basic ${Buffer.from(`${token}:compliance-secret`).toString('base64')}`);
+    expect(calls.filter((c) => c.url.endsWith('/compliance/invoices')).at(-1)!.headers.Authorization).toBe(`Basic ${Buffer.from(`${issued}:compliance-secret`).toString('base64')}`);
   });
 });
 

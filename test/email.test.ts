@@ -82,19 +82,20 @@ describe('Invoices to customers', () => {
 
 describe('The sender job', () => {
   it('sends what is queued; with no provider it waits; failures are retried and end as failed', async () => {
+    // The queue is shared with other test files running at the same time: take enough to reach this test's own emails.
     await owner.query(`UPDATE email_outbox SET next_try_at = now() - interval '1 second' WHERE status = 'queued'`);
-    const held = await sendQueued(app, { cfg: { provider: 'none', from: 'x@y.z' } });
+    const held = await sendQueued(app, { limit: 1000, cfg: { provider: 'none', from: 'x@y.z' } });
     expect(held.length).toBeGreaterThan(0);
     expect((await owner.query(`SELECT count(*)::int AS n FROM email_outbox WHERE status = 'queued' AND attempts = 0`)).rows[0].n).toBeGreaterThan(0);
     await owner.query(`UPDATE email_outbox SET next_try_at = now() - interval '1 second' WHERE status = 'queued'`);
-    const sent = await sendQueued(app, { cfg: { provider: 'resend', from: 'x@y.z', key: 'k' }, fetchFn: fake() });
+    const sent = await sendQueued(app, { limit: 1000, cfg: { provider: 'resend', from: 'x@y.z', key: 'k' }, fetchFn: fake() });
     expect(sent.every((x) => x.ok)).toBe(true);
     expect((await owner.query(`SELECT status, provider_id FROM email_outbox WHERE document_id = $1`, [invoice])).rows[0]).toEqual({ status: 'sent', provider_id: 'msg_1' });
     // A provider that keeps refusing: 6 tries, then failed; a person can try again.
     const id = await as(f.staff, (db) => E.queue(db, { companyId: f.a.id, kind: 'notice', to: 'x@example.com', mail: { subject: 's', text: 't', html: '' } }));
     for (let i = 0; i < 6; i++) {
       await owner.query(`UPDATE email_outbox SET next_try_at = now() - interval '1 second' WHERE id = $1`, [id]);
-      await sendQueued(app, { cfg: { provider: 'resend', from: 'x@y.z', key: 'k' }, fetchFn: fake(500, 'down') });
+      await sendQueued(app, { limit: 1000, cfg: { provider: 'resend', from: 'x@y.z', key: 'k' }, fetchFn: fake(500, 'down') });
     }
     expect((await owner.query(`SELECT status, attempts FROM email_outbox WHERE id = $1`, [id])).rows[0]).toEqual({ status: 'failed', attempts: 6 });
     await as(f.staff, (db) => E.retry(db, id));

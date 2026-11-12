@@ -286,6 +286,8 @@ export async function notifications(db: Db, companyId: string): Promise<Notice[]
   if (f.n) out.push({ key: `emails:${f.at?.toISOString?.() ?? f.at}`, kind: 'emailsFailed', count: f.n, params: { n: f.n }, module: 'Sales', sub: 'emails', at: f.at });
   const ej = await one(`SELECT count(*)::int AS n, max(created_at) AS at FROM einvoices WHERE company_id = $1 AND status = 'rejected'`);
   if (ej.n) out.push({ key: `einv:${ej.at?.toISOString?.() ?? ej.at}`, kind: 'einvoiceRejected', count: ej.n, params: { n: ej.n }, module: 'Sales', sub: 'e-invoicing', at: ej.at });
+  const late = await one(`SELECT count(*)::int AS n, min(created_at) AS at FROM einvoices WHERE company_id = $1 AND scheme = 'zatca' AND kind = 'simplified' AND status = 'pending' AND created_at <= now() - interval '12 hours'`);
+  if (late.n) out.push({ key: `einvLate:${today()}:${late.n}`, kind: 'einvoiceLate', count: late.n, params: { n: late.n, hours: Math.floor((Date.now() - new Date(late.at).getTime()) / 3_600_000) }, module: 'Sales', sub: 'e-invoicing', at: late.at });
   const od = (await openInvoices(db, companyId, null)).filter((o) => o.daysOverdue > 0);
   if (od.length) out.push({ key: `overdue:${today()}:${od.length}`, kind: 'overdue', count: od.length, params: { n: od.length, amount: fromMinor(od.reduce((t, o) => t + toMinor(o.amountDue), 0n)) }, module: 'Sales', sub: 'reminders', at: null });
   const ri = await one(`SELECT count(*)::int AS n FROM recurring_invoices WHERE company_id = $1 AND active AND next_date <= current_date AND mode = 'draft'`);

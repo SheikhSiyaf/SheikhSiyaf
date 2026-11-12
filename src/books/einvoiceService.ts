@@ -239,6 +239,9 @@ export async function makeEInvoice(db: Db, documentId: string): Promise<string |
     [companyId, documentId, dev.id, st.kind, uuid, Number(dev.icv) + 1, dev.last_hash, st.hash, st.xml, st.qr])).rows[0].id;
 }
 
+/** Minutes before the next try after the 1st, 2nd, ... failed attempt to reach ZATCA; the last repeats. */
+export const RETRY_MINUTES = [2, 5, 10, 15, 30];
+
 /** Sends a pending ZATCA e-invoice: clearance (standard) or reporting (simplified). */
 export async function submit(db: Db, id: string): Promise<{ status: string; warnings: string[]; errors: string[] }> {
   const e = (await db.query(`SELECT e.*, d.environment, d.production_token, d.production_secret_enc FROM einvoices e JOIN einvoice_devices d ON d.id = e.device_id WHERE e.id = $1 FOR UPDATE OF e`, [id])).rows[0] ?? notFound();
@@ -248,9 +251,12 @@ export async function submit(db: Db, id: string): Promise<{ status: string; warn
   const sub = { invoiceHash: e.invoice_hash, uuid: e.uuid, xml: e.xml };
   const r: Result = e.kind === 'standard' ? await c.clearance(creds, sub) : await c.reporting(creds, sub);
   const status = r.outcome === 'accepted' ? (e.kind === 'standard' ? 'cleared' : 'reported') : r.outcome === 'rejected' ? 'rejected' : 'pending';
+  // Still waiting (ZATCA not reached, or its login refused): the next try after 2, 5, 10, 15, then every 30 minutes.
+  const wait = RETRY_MINUTES[e.attempts] ?? RETRY_MINUTES[RETRY_MINUTES.length - 1]!;
   await db.query(
-    `UPDATE einvoices SET status = $2, cleared_xml = $3, warnings = $4, errors = $5, http_status = $6, attempts = attempts + 1, submitted_at = now() WHERE id = $1`,
-    [id, status, r.clearedXml ?? null, JSON.stringify(r.warnings), JSON.stringify(r.errors), r.httpStatus]);
+    `UPDATE einvoices SET status = $2, cleared_xml = $3, warnings = $4, errors = $5, http_status = $6, attempts = attempts + 1, submitted_at = now(),
+       last_attempt_at = now(), next_attempt_at = CASE WHEN $2 = 'pending' THEN now() + make_interval(mins => $7) END WHERE id = $1`,
+    [id, status, r.clearedXml ?? null, JSON.stringify(r.warnings), JSON.stringify(r.errors), r.httpStatus, wait]);
   return { status, warnings: r.warnings, errors: r.errors };
 }
 export async function submitPending(db: Db, companyId: string, limit = 50) {

@@ -307,6 +307,10 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
   });
 
   // ------------------------------------------------------------ activity log
+  // Unsent simplified e-invoices (ZATCA): number, times, status, ZATCA's technical error and attempts only.
+  app.get('/api/admin/einvoices', async (req) => admin(req, async (db) => (await db.query(
+    `SELECT id, company, number, issued_at AS "issuedAt", hours_waiting AS "hoursWaiting", status, last_error AS "lastError", attempts, next_attempt_at AS "nextAttemptAt"
+     FROM admin_einvoices_unsent()`)).rows));
   app.get('/api/admin/activity', async (req) => admin(req, async (db) => {
     const { rows } = await db.query('SELECT * FROM admin_activity(300)');
     const names = new Map<string, string>((await db.query(

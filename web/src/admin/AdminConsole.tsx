@@ -26,7 +26,7 @@ interface ClientDetail {
   staff: { id: string; name: string; role: string; status: string; assigned: boolean }[];
 }
 
-const TABS = ['Clients', 'Staff', 'Roles', 'Activity', 'Billing', 'Settings'] as const;
+const TABS = ['Clients', 'Staff', 'Roles', 'Activity', 'EInvoices', 'Billing', 'Settings'] as const;
 const LEGAL_FORMS = ['LLC', 'Sole establishment', 'Joint stock company', 'Partnership', 'Branch of foreign company', 'Other'] as const;
 const DERIVED = { SA: { currency: 'SAR', rate: 15 }, AE: { currency: 'AED', rate: 5 }, OM: { currency: 'OMR', rate: 5 } } as const;
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -72,7 +72,7 @@ export function AdminConsole({ me, path, onSignOut, owner }: { me: Me; path: str
           <TopControls />
         </div>
         <TenantCtx.Provider value={tenant}>
-        {tab === 'Staff' ? <Staff /> : tab === 'Billing' ? <AdminBilling /> : tab === 'Roles' ? <Roles /> : tab === 'Activity' ? <Activity /> : tab === 'Settings' ? <Settings />
+        {tab === 'Staff' ? <Staff /> : tab === 'Billing' ? <AdminBilling /> : tab === 'Roles' ? <Roles /> : tab === 'Activity' ? <Activity /> : tab === 'EInvoices' ? <UnsentEInvoices /> : tab === 'Settings' ? <Settings />
           : adding && tenant.owner ? <AddClient /> : clientId ? <ClientPage id={clientId} /> : <Clients />}
         </TenantCtx.Provider>
       </main>
@@ -839,6 +839,47 @@ function Activity() {
               </tr>
             ))}
             {log.data.length === 0 && <tr><td colSpan={3} className="mut">{t('activity.empty')}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Unsent e-invoices (ZATCA)
+interface UnsentRow { id: string; company: string; number: string; issuedAt: string; hoursWaiting: number; status: 'waiting' | 'retrying' | 'rejected'; lastError: string | null;
+  attempts: number; nextAttemptAt: string | null }
+
+function UnsentEInvoices() {
+  const { t, lang } = useI18n();
+  const rows = useApi<UnsentRow[]>('/api/admin/einvoices');
+  if (rows.error) return <ErrorNote error={rows.error} onRetry={rows.reload} />;
+  if (!rows.data) return <Loading />;
+  const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(lang === 'ar' ? 'ar-SA-u-ca-gregory-nu-latn' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '');
+  const late = rows.data.filter((r) => r.status !== 'rejected' && r.hoursWaiting >= 12).length;
+  const tone = { waiting: '', retrying: 'warn', rejected: 'bad' } as const;
+  return (
+    <div className="card">
+      <div className="mut small" style={{ marginBottom: 8 }}>{t('unsent.hint')}</div>
+      {late > 0 && <div className="notice warn" role="alert" style={{ marginBottom: 8 }}>{t('unsent.late', { n: late })}</div>}
+      <div className="wrap">
+        <table className="stack">
+          <thead><tr><th>{t('unsent.company')}</th><th>{t('unsent.number')}</th><th>{t('unsent.issued')}</th><th className="num">{t('unsent.hours')}</th>
+            <th>{t('unsent.status')}</th><th>{t('unsent.error')}</th><th className="num">{t('unsent.attempts')}</th><th>{t('unsent.next')}</th></tr></thead>
+          <tbody>
+            {rows.data.map((r) => (
+              <tr key={r.id}>
+                <td data-label={t('unsent.company')}>{r.company}</td>
+                <td data-label={t('unsent.number')}>{r.number}</td>
+                <td data-label={t('unsent.issued')} className="small">{fmt(r.issuedAt)}</td>
+                <td data-label={t('unsent.hours')} className="num">{r.hoursWaiting}</td>
+                <td data-label={t('unsent.status')}><span className={`badge ${tone[r.status]}`}>{t(`unsent.s.${r.status}` as Key)}</span></td>
+                <td data-label={t('unsent.error')} className="small" dir="ltr">{r.lastError ?? ''}</td>
+                <td data-label={t('unsent.attempts')} className="num">{r.attempts}</td>
+                <td data-label={t('unsent.next')} className="small">{fmt(r.nextAttemptAt)}</td>
+              </tr>
+            ))}
+            {rows.data.length === 0 && <tr><td colSpan={8} className="mut">{t('unsent.empty')}</td></tr>}
           </tbody>
         </table>
       </div>

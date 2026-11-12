@@ -9,6 +9,7 @@ import { startToolJobs } from '../books/toolsJobs.js';
 import { startBillingJob } from '../books/billingService.js';
 import { startBankFeedJob } from '../books/bankFeedService.js';
 import { startAuthPurgeJob } from '../auth/throttle.js';
+import { startEInvoiceSender } from '../books/einvoiceSender.js';
 
 // Unsafe settings stop the server in production; elsewhere they are warnings (src/config.ts validateConfig).
 const problems = validateConfig(process.env);
@@ -57,6 +58,8 @@ startToolJobs(pool, (m) => app.log.info(m));
 startBillingJob(pool, (m) => app.log.info(m));
 // Direct bank feeds, synced every six hours (BANK_FEED_JOBS=off turns it off).
 startBankFeedJob(pool, (m) => app.log.info(m));
+// Simplified e-invoices reported to ZATCA every 2 minutes, with retries and warnings (EINVOICE_JOBS=off turns it off).
+startEInvoiceSender(pool, config.publicUrl ?? '', (m) => app.log.info(m));
 // Sign-in attempts older than 24 hours are deleted every hour.
 startAuthPurgeJob(pool, (m) => app.log.info(m));
 console.log(serveWeb

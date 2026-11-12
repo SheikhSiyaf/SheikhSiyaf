@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-12.
+Last updated: 2026-11-12 (ZATCA sandbox test).
 
 ---
 
@@ -71,7 +71,7 @@ console: creates customers and companies, bills them, answers support messages, 
 - **Reports**: trial balance, P&L, balance sheet, VAT return, aged reports, budgets, forecast, multi-currency
   ledger accounts with month-end revaluation, export of everything.
 - **Review layer**: reviewer checks and sign-off; signing off a month locks it. Year-end close.
-- **E-invoicing**: ZATCA (Saudi) client built, not yet tested against ZATCA's real servers. UAE Peppol: not built
+- **E-invoicing**: ZATCA (Saudi) built. Sandbox test (Stage 1, dummy data, see docs/ZATCA_SANDBOX_REPORT.md): onboarding, all 6 compliance checks and clearance of standard invoice, credit and debit notes pass; reporting of simplified invoices rejected in the sandbox (most likely the sandbox's dummy production certificate; to be settled in simulation). Missing: automatic 24-hour reporting job, certificate renewal. UAE Peppol: not built
   (needs an accredited service provider).
 - **Portal, calendar of deadlines, approvals, forecast.**
 - **HRM** (payroll, GOSI and GPSSA, end of service, leave, WPS and Mudad files), **CRM**, **Restaurant**.
@@ -110,7 +110,7 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 - Later, per feature: Moyasar account (online payment), ZATCA onboarding per company (one-time code from the
   Fatoora portal), Lean or Tarabut agreement (bank feeds), an accredited UAE Peppol provider.
 
-**Go-live blockers** (from PENDING.md): run ZATCA against real servers; hosting and a security review; legal
+**Go-live blockers** (from PENDING.md): ZATCA Stage 2 (simulation with the resort's real one-time code: waiting for your go-ahead); hosting and a security review; legal
 advice on Saudi and UAE data protection (PDPL); confirm GOSI/GPSSA rates, WPS and Mudad layouts and VAT return
 boxes with the authorities; opening balances as open invoices; choose the UAE provider (companies with AED 50
 million or more go live on 1 January 2027); move the browser checks into automated CI.

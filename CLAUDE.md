@@ -52,3 +52,5 @@ Entry settings per client: invoice prefix, payment terms, period lock date.
 - `npm test` (rules, separation, API) and `npm run typecheck` must pass before every commit.
 - Every UI string lives in web/src/i18n.tsx (English and Arabic). Amounts use src/money.ts, never floats.
 - Schema changes go in a new file in `db/migrations/`. Never edit an applied migration. Record each change and the reason for it in docs/SCHEMA_CHANGES.md.
+- docs/ADVISOR_BRIEF.md is the brief the owner gives Claude chat (their advisor). After each feature or fix, update its "What is built" and "Where things stand" sections and the date, and say so in the reply.
+- Use the headroom approach for large files: outline first, then read only the parts needed.

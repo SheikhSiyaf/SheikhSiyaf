@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-12 (automatic ZATCA reporting).
+Last updated: 2026-11-12 (automatic ZATCA reporting; Administrator e-invoices tab checked in English and Arabic).
 
 ---
 

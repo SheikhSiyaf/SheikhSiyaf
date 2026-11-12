@@ -874,7 +874,7 @@ function UnsentEInvoices() {
                 <td data-label={t('unsent.issued')} className="small">{fmt(r.issuedAt)}</td>
                 <td data-label={t('unsent.hours')} className="num">{r.hoursWaiting}</td>
                 <td data-label={t('unsent.status')}><span className={`badge ${tone[r.status]}`}>{t(`unsent.s.${r.status}` as Key)}</span></td>
-                <td data-label={t('unsent.error')} className="small" dir="ltr">{r.lastError ?? ''}</td>
+                <td data-label={t('unsent.error')} className="small">{r.lastError && <span dir="ltr">{r.lastError}</span>}</td>
                 <td data-label={t('unsent.attempts')} className="num">{r.attempts}</td>
                 <td data-label={t('unsent.next')} className="small">{fmt(r.nextAttemptAt)}</td>
               </tr>

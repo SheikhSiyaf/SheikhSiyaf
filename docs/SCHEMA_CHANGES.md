@@ -376,3 +376,13 @@ Every change below is covered by a test in `test/`.
 | Row-level security through `support_can_see()`: the person who raised it, their own customer's Administrators and the owner; no other customer and no other staff | Conversations stay between the customer and Nusuh Books. They carry only what people write: the owner still never sees books. |
 | No INSERT or UPDATE rights for the app: `support_open()` (customers only, a company of their own), `support_post()` (sets "from Nusuh Books" only for the owner; the owner's message marks it answered, the customer's opens it again), `support_close()`, `support_seen()` | Nobody can write as Nusuh Books or change a status by hand. |
 | `support_list()`, `support_messages_of()` (the owner's people are shown to customers as "Nusuh Books"), `support_opener()` (owner only, for the reply email) | Reading across customers for the owner without opening the users or firms tables. |
+
+## 0043_einvoice_sender.sql
+| Change | Why |
+|---|---|
+| `einvoices.next_attempt_at` and `last_attempt_at`; `before_einvoice_change()` lets only these and the authority's answer change (a new pending e-invoice is due at once) | The server sends simplified e-invoices by itself and retries after 2, 5, 10, 15, then every 30 minutes while ZATCA cannot be reached. The e-invoice itself still never changes. |
+| `einvoice_send_leases` (one row per device, ends by itself after 5 minutes) with `einvoice_lease()` and `einvoice_release()`; RLS on, no policies | Only one sender works on a device at a time, so two servers or overlapping runs never send the same invoice twice. |
+| `einvoices_to_send()` (devices with simplified e-invoices waiting, and who connected the device, for the server only) | The sender works as the person who connected the device, like the other jobs. |
+| `einvoice_warnings` (e-invoice, stage: 12, 20, 24 hours, rejected, login refused) with `einvoice_warnings_due()`, `einvoice_warned()` and `einvoice_warning_recipients()` (the customer's Administrators and the company's people who can enter sales); RLS on, no policies | ZATCA allows 24 hours to report a simplified invoice; each warning goes once. Warning emails carry counts and invoice numbers only. |
+| `admin_einvoices_unsent()` (Administrators only: invoice number, issue time, hours waiting, status, ZATCA's technical error, attempts, next attempt) | The Administrator sees what is not yet reported without seeing amounts, customers or invoice contents. |
+| `job_runs` with `job_started()`, `job_finished()` and `job_status()`; RLS on, no policies | When each background job last ran and whether it succeeded, so monitoring can alert if one stops. |

@@ -54,3 +54,4 @@ Entry settings per client: invoice prefix, payment terms, period lock date.
 - Schema changes go in a new file in `db/migrations/`. Never edit an applied migration. Record each change and the reason for it in docs/SCHEMA_CHANGES.md.
 - docs/ADVISOR_BRIEF.md is the brief the owner gives Claude chat (their advisor). After each feature or fix, update its "What is built" and "Where things stand" sections and the date, and say so in the reply.
 - Use the headroom approach for large files: outline first, then read only the parts needed.
+- Required project logs (docs/SCHEMA_CHANGES.md for every migration) are always updated, even when the owner has asked for no other new or changed files.

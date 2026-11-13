@@ -7,7 +7,7 @@ import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { fmt } from '../money.ts';
 import { today } from '../router.ts';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
-import { useGo, type Contact } from '../sales/common.tsx';
+import { bankAccounts, useGo, type Contact } from '../sales/common.tsx';
 import { accessTo } from '../../../src/books/modules.ts';
 import { addDays, groupNights, nights as nightsOf, nightsLine } from '../../../src/books/rooms.ts';
 
@@ -25,6 +25,8 @@ interface Booking extends BookingRow {
   extras: { id: string; date: string; description: string; quantity: string; unitPrice: string; billed: boolean }[];
   bills: { id: string; documentId: string; nightsFrom: string; nightsTo: string; number: string | null; status: string; total: string }[];
   unbilled: { lines: Charge[]; quoted: string; total: string; difference: string } | null;
+  deposit: { held: string; movements: { id: string; kind: 'taken' | 'returned' | 'applied'; amount: string; date: string; accountName: string; method: string; reference: string | null;
+    documentId: string | null; documentNumber: string | null }[] };
 }
 interface FrontDesk { day: string; arrivals: BookingRow[]; notArrived: BookingRow[]; departures: BookingRow[]; inHouse: BookingRow[]; rooms: number; outOfService: number;
   occupied: number; occupancy: number }
@@ -287,9 +289,13 @@ function BookingPage({ books, id, canEdit }: { books: CompanyBooks; id: string; 
   const [extra, setExtra] = useState<{ date: string; description: string; quantity: string; unitPrice: string }>();
   const [edit, setEdit] = useState<{ roomId: string; arrival: string; departure: string; adults: string; children: string }>();
   const [upTo, setUpTo] = useState(today());
+  const [dep, setDep] = useState<{ kind: 'take' | 'return' | 'apply'; amount: string; accountId: string; method: string; documentId: string }>();
   if (d.error) return <ErrorNote error={d.error} onRetry={d.reload} />;
   if (!d.data) return <Loading />;
   const b = d.data;
+  const banks = bankAccounts(books);
+  const held = Number(b.deposit.held) > 0;
+  const issuedBills = b.bills.filter((x) => x.status === 'issued');
   const open = canEdit && (b.status === 'reserved' || b.status === 'in_house');
   const canSales = accessTo(books.access?.permissions, 'Sales') === 'edit';
   const post = (path: string, body: object, ok: string, after?: (r: { documentId?: string | null }) => void) =>
@@ -350,6 +356,37 @@ function BookingPage({ books, id, canEdit }: { books: CompanyBooks; id: string; 
           <table className="stack" style={{ marginTop: 6 }}><tbody>{b.extras.map((x) => (
             <tr key={x.id}><td className="ltr small">{x.date}</td><td>{x.description}</td><td className="num">{Number(x.quantity)} × {fmt(x.unitPrice)}</td>
               <td className="num">{x.billed ? <span className="small mut">{t('room.billed')}</span> : open ? <button className="b small" disabled={busy} onClick={() => post(`/api/booking-extras/${x.id}/delete`, {}, t('room.removed'))}>{t('room.remove')}</button> : null}</td></tr>))}</tbody></table>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="actions"><h2 style={{ margin: 0 }}>{t('dep.title')}</h2><span className="spacer" />
+          {canEdit && !dep && open && <button className="b small" id="dep-take" onClick={() => setDep({ kind: 'take', amount: '', accountId: banks[0]?.id ?? '', method: 'card', documentId: '' })}>{t('dep.take')}</button>}
+          {canEdit && !dep && held && <button className="b small" id="dep-return" onClick={() => setDep({ kind: 'return', amount: b.deposit.held, accountId: banks[0]?.id ?? '', method: 'cash', documentId: '' })}>{t('dep.return')}</button>}
+          {canEdit && canSales && !dep && held && issuedBills.length > 0 && <button className="b small" id="dep-apply" onClick={() => setDep({ kind: 'apply', amount: '', accountId: banks[0]?.id ?? '', method: 'other', documentId: issuedBills[issuedBills.length - 1]!.documentId })}>{t('dep.apply')}</button>}</div>
+        <div className="small mut">{t('dep.hint')}</div>
+        <div style={{ marginTop: 6 }}><b>{t('dep.held', { amount: fmt(b.deposit.held), cur: books.company.currency })}</b></div>
+        {dep && (
+          <form className="inset" style={{ marginTop: 8 }} onSubmit={(e) => { e.preventDefault(); post(`/api/bookings/${id}/deposit/${dep.kind}`, { ...dep, amount: dep.amount || undefined }, t(`dep.done.${dep.kind}` as Key), () => setDep(undefined)); }}>
+            <div className="row">
+              {dep.kind === 'apply' && <label className="f">{t('dep.invoice')}<select value={dep.documentId} onChange={(e) => setDep({ ...dep, documentId: e.target.value })}>
+                {issuedBills.map((x) => <option key={x.id} value={x.documentId}>{x.number} · {fmt(x.total)}</option>)}</select></label>}
+              <label className="f">{t('dep.amount')}<input id="dep-amount" inputMode="decimal" className="num" value={dep.amount} placeholder={dep.kind === 'apply' ? t('dep.asMuch') : ''}
+                onChange={(e) => setDep({ ...dep, amount: e.target.value })} /></label>
+              <label className="f">{t('dep.account')}<select value={dep.accountId} onChange={(e) => setDep({ ...dep, accountId: e.target.value })}>
+                {banks.map((a) => <option key={a.id} value={a.id}>{a.code} · {local(a.name, a.nameAr)}</option>)}</select></label>
+              {dep.kind !== 'apply' && <label className="f">{t('dep.method')}<select value={dep.method} onChange={(e) => setDep({ ...dep, method: e.target.value })}>
+                {['cash', 'card', 'bank_transfer', 'cheque', 'other'].map((m) => <option key={m} value={m}>{t(`method.${m}` as Key)}</option>)}</select></label>}
+            </div>
+            {dep.kind === 'apply' && <div className="small mut">{t('dep.applyHint')}</div>}
+            <div className="actions"><button className="b p" id="dep-save" disabled={busy || !dep.accountId || (dep.kind !== 'apply' && !dep.amount)}>{t(`dep.${dep.kind}` as Key)}</button>
+              <button type="button" className="b" onClick={() => setDep(undefined)}>{t('cancel')}</button></div>
+          </form>
+        )}
+        {b.deposit.movements.length > 0 && (
+          <table className="stack" style={{ marginTop: 6 }}><tbody>{b.deposit.movements.map((m) => (
+            <tr key={m.id}><td className="ltr small">{m.date}</td><td>{t(`dep.kind.${m.kind}` as Key)}{m.documentNumber && <> · <button className="link" onClick={() => go('Sales', 'invoices', m.documentId!)}>{m.documentNumber}</button></>}</td>
+              <td className="small mut">{m.accountName}</td><td className="num"><span className="ltr">{m.kind === 'taken' ? '' : '−'}{fmt(m.amount)}</span></td></tr>))}</tbody></table>
         )}
       </div>
 

@@ -38,6 +38,10 @@ export function registerRoomRoutes(app: FastifyInstance, { as }: Ctx) {
   app.post<{ Params: P }>('/api/bookings/:id/no-show', async (req) => as(req, async (db) => { await R.noShow(db, id(req)); return ok; }));
   app.post<{ Params: P; Body: R.ExtraInput }>('/api/bookings/:id/extras', async (req) => as(req, async (db) => ({ id: await R.addExtra(db, id(req), req.body ?? {}) })));
   app.post<{ Params: P }>('/api/booking-extras/:id/delete', async (req) => as(req, async (db) => { await R.deleteExtra(db, id(req)); return ok; }));
+  // refundable security deposits: taken, returned, or used to pay the guest's invoice
+  app.post<{ Params: P; Body: R.DepositInput }>('/api/bookings/:id/deposit/take', async (req) => as(req, async (db) => ({ id: await R.takeDeposit(db, id(req), req.body ?? {}) })));
+  app.post<{ Params: P; Body: R.DepositInput }>('/api/bookings/:id/deposit/return', async (req) => as(req, async (db) => ({ id: await R.returnDeposit(db, id(req), req.body ?? {}) })));
+  app.post<{ Params: P; Body: R.DepositInput }>('/api/bookings/:id/deposit/apply', async (req) => as(req, async (db) => ({ id: await R.applyDeposit(db, id(req), req.body ?? {}) })));
   app.post<{ Params: P; Body: { upTo?: string; issue?: boolean } }>('/api/bookings/:id/bill', async (req) => {
     const documentId = await as(req, (db) => R.bill(db, id(req), { upTo: req.body?.upTo || undefined, issue: req.body?.issue === true }));
     if (req.body?.issue === true) await sendAfterIssue(as, req, documentId);

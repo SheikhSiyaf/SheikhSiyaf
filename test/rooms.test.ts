@@ -150,3 +150,49 @@ describe('Front desk, calendar and separation', () => {
     await expect(as(f.staff, (db) => db.query('DELETE FROM bookings WHERE id = $1', [id]))).rejects.toThrow();
   });
 });
+
+describe('Refundable security deposits (0045)', () => {
+  let bk: string, bank: string;
+  it('a deposit is held in 2150 with no VAT and no invoice; part is returned; never more than held', async () => {
+    if (!(await owner.query(`SELECT 1 FROM accounts WHERE company_id = $1 AND code = '2150'`, [f.a.id])).rows[0])
+      await owner.query(`INSERT INTO accounts (company_id, code, name, type) VALUES ($1, '2150', 'Guest deposits held', 'liability')`, [f.a.id]);
+    await owner.query(`UPDATE accounts SET is_bank = true WHERE id = $1`, [f.a.cash]);
+    bank = f.a.cash;
+    bk = await as(f.staff, (db) => R.createBooking(db, f.a.id, { contactId: guest, roomId: r103, arrival: '2027-08-01', departure: '2027-08-03' }));
+    const vatBefore = await bal('2100');
+    await as(f.staff, (db) => R.takeDeposit(db, bk, { amount: '500.00', date: '2027-08-01', accountId: bank, method: 'card' }));
+    expect(await bal('2150')).toBe('500.00');
+    expect(await bal('2100')).toBe(vatBefore);
+    await expect(as(f.staff, (db) => R.returnDeposit(db, bk, { amount: '600.00', accountId: bank }))).rejects.toThrow(/holds only 500.00/);
+    await as(f.staff, (db) => R.returnDeposit(db, bk, { amount: '100.00', date: '2027-08-01', accountId: bank }));
+    expect((await as(f.staff, (db) => R.getBooking(db, bk))).deposit.held).toBe('400.00');
+    expect(await bal('2150')).toBe('400.00');
+  });
+
+  it('keeping part for damage: an extra on the bill (with VAT), then the deposit pays the invoice; the rest goes back', async () => {
+    await as(f.staff, (db) => R.checkIn(db, bk, '2027-08-01'));
+    await as(f.staff, (db) => R.addExtra(db, bk, { date: '2027-08-02', description: 'Broken lamp', unitPrice: '115.00' }));
+    const inv = (await as(f.staff, (db) => R.checkOut(db, bk, { day: '2027-08-03' })))!;
+    const d = await doc(inv);
+    expect(d.gross).toBe('1014.99');   // 2 nights at 450.00 with VAT = 899.99, plus the lamp 115.00 with VAT
+    // The deposit pays as much of the invoice as it can: 400.00 of 1,014.99.
+    await as(f.staff, (db) => R.applyDeposit(db, bk, { documentId: inv, date: '2027-08-03', accountId: bank }));
+    const due = (await owner.query('SELECT document_amount_due($1)::text AS v', [inv])).rows[0].v;
+    expect(due).toBe('614.99');
+    expect(await bal('2150')).toBe('0.00');
+    await expect(as(f.staff, (db) => R.returnDeposit(db, bk, { amount: '1.00', accountId: bank }))).rejects.toThrow(/holds only 0.00/);
+    const dep = (await as(f.staff, (db) => R.getBooking(db, bk))).deposit;
+    expect(dep.movements.map((m: { kind: string; amount: string }) => [m.kind, m.amount])).toEqual([['taken', '500.00'], ['returned', '100.00'], ['applied', '400.00']]);
+  });
+
+  it('movements never change; a deposit pays only the same guest\'s invoice; other companies see nothing', async () => {
+    await expect(as(f.staff, (db) => db.query(`UPDATE booking_deposits SET amount = 1 WHERE booking_id = $1`, [bk]))).rejects.toThrow();
+    const other = await as(f.staff, (db) => S.saveContact(db, f.a.id, { isCustomer: true, name: 'Someone else' }));
+    const b2 = await as(f.staff, (db) => R.createBooking(db, f.a.id, { contactId: other, roomId: r103, arrival: '2027-09-01', departure: '2027-09-02' }));
+    await as(f.staff, (db) => R.takeDeposit(db, b2, { amount: '50.00', accountId: bank }));
+    const inv = (await owner.query(`SELECT document_id FROM booking_bills WHERE booking_id = $1`, [bk])).rows[0].document_id;
+    await expect(as(f.staff, (db) => R.applyDeposit(db, b2, { documentId: inv, accountId: bank }))).rejects.toThrow(/same guest/);
+    expect((await as(f.b.clientAccountant, (db) => db.query('SELECT * FROM booking_deposits'))).rows).toHaveLength(0);
+    await expect(as(f.a.clientViewer, (db) => R.takeDeposit(db, b2, { amount: '1.00', accountId: bank }))).rejects.toThrow();
+  });
+});

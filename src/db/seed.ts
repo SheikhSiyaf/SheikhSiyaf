@@ -174,6 +174,7 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
         const inHouse = await Room.createBooking(db, id, { guest: guest('Mona Al Zahrani', '0559876543'), roomId: room['202'], arrival: daysAgo(2), departure: daysAgo(-3), adults: 2, children: 1, source: 'Phone' });
         await Room.checkIn(db, inHouse, daysAgo(2));
         await Room.addExtra(db, inHouse, { date: daysAgo(1), description: 'Breakfast', quantity: '3', unitPrice: '69.00' });
+        await Room.takeDeposit(db, inHouse, { amount: '500.00', date: daysAgo(2), accountId: acct['1000'], method: 'card' });
         const leaving = await Room.createBooking(db, id, { guest: guest('Peter Lindqvist', '+46701234567'), roomId: room['101'], arrival: daysAgo(3), departure: daysAgo(0), source: 'Travel agent', reference: 'TA-55120' });
         await Room.checkIn(db, leaving, daysAgo(3));
         await Room.createBooking(db, id, { guest: guest('Sami Haddad', '0533334444'), roomId: room['102'], arrival: daysAgo(0), departure: daysAgo(-2), adults: 1, source: 'Walk-in' });

@@ -5,7 +5,8 @@ import type { Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
 import { fromMinor, toMinor } from '../money.js';
 import { addDays as addDaysDoc } from './documents.js';
-import { issueDocument, nextNumber, saveContact, saveDraft } from './documentsService.js';
+import { issueDocument, nextNumber, recordPayment, saveContact, saveDraft } from './documentsService.js';
+import { postEntry } from '../ledger/ledger.js';
 import { addDays, extraLine, groupNights, nights, nightsLine, type Season } from './rooms.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
@@ -227,7 +228,8 @@ export async function checkOut(db: Db, id: string, o: { day?: string; issue?: bo
 const BOOKING_COLS = `b.id, b.number, b.status, b.contact_id AS "contactId", c.name AS guest, c.name_ar AS "guestAr", c.phone, c.vat_number AS "guestVat",
   b.room_id AS "roomId", r.number AS room, t.name AS "typeName", t.name_ar AS "typeNameAr", b.arrival::text AS arrival, b.departure::text AS departure,
   (b.departure - b.arrival) AS nights, b.adults, b.children, b.agreed_rate::text AS "agreedRate", b.source, b.reference, b.notes,
-  b.checked_in_at AS "checkedInAt", b.checked_out_at AS "checkedOutAt", (SELECT max(nights_to)::text FROM booking_bills x WHERE x.booking_id = b.id) AS "billedTo"`;
+  b.checked_in_at AS "checkedInAt", b.checked_out_at AS "checkedOutAt", (SELECT max(nights_to)::text FROM booking_bills x WHERE x.booking_id = b.id) AS "billedTo",
+  booking_deposit_held(b.id)::text AS "depositHeld"`;
 const BOOKING_FROM = `FROM bookings b JOIN contacts c ON c.id = b.contact_id JOIN rooms r ON r.id = b.room_id JOIN room_types t ON t.id = r.room_type_id`;
 
 export async function listBookings(db: Db, companyId: string, f: { from?: string; to?: string; status?: string } = {}) {
@@ -245,7 +247,7 @@ export async function getBooking(db: Db, id: string) {
   const open = ['reserved', 'in_house'].includes(b.status);
   const next = open ? await charges(db, id) : null;
   const sum = (k: 'quoted' | 'total' | 'difference') => fromMinor((next?.charges ?? []).reduce((s, x) => s + toMinor(x[k]), 0n));
-  return { ...b, extras, bills, unbilled: next ? { lines: next.charges, quoted: sum('quoted'), total: sum('total'), difference: sum('difference') } : null };
+  return { ...b, extras, bills, deposit: await deposits(db, id), unbilled: next ? { lines: next.charges, quoted: sum('quoted'), total: sum('total'), difference: sum('difference') } : null };
 }
 
 /** The front desk on a day: arrivals, departures, guests in house, and how full the hotel is. */
@@ -276,4 +278,83 @@ export async function calendar(db: Db, companyId: string, from: string, days = 1
     FROM bookings b JOIN contacts c ON c.id = b.contact_id
     WHERE b.company_id = $1 AND b.status IN ('reserved', 'in_house', 'departed') AND b.arrival < $3 AND b.departure > $2 ORDER BY b.arrival`, [companyId, from, to])).rows;
   return { from, to, nights: nights(from, to), rooms: rooms.filter((r) => r.status !== 'retired'), bookings };
+}
+
+// ------------------------------------------------------------------ refundable security deposits (0045)
+// Held in 2150 Guest deposits held, no VAT, no invoice. Returned to the guest, or used to pay the guest's invoice.
+const METHODS = ['bank_transfer', 'cash', 'card', 'cheque', 'other'];
+export interface DepositInput { amount?: string; date?: string; accountId?: string; method?: string; reference?: string | null; documentId?: string }
+
+async function depositContext(db: Db, bookingId: string) {
+  const b = (await db.query(`SELECT b.company_id AS "companyId", b.contact_id AS "contactId", b.number, c.name AS guest,
+      (SELECT id FROM accounts WHERE company_id = b.company_id AND code = '2150') AS "depositAccount", booking_deposit_held(b.id)::text AS held
+    FROM bookings b JOIN contacts c ON c.id = b.contact_id WHERE b.id = $1`, [bookingId])).rows[0] ?? notFound();
+  if (!b.depositAccount) bad("This client's chart of accounts has no account 2150 Guest deposits held.", 'err.chart');
+  return b as { companyId: string; contactId: string; number: string; guest: string; depositAccount: string; held: string };
+}
+function depositAmount(v: unknown): bigint {
+  const s = String(v ?? '').replace(/,/g, '').trim();
+  try { const m = toMinor(s); if (m > 0n) return m; } catch { /* below */ }
+  return bad('Enter the amount, above 0.', 'err.amount');
+}
+async function insertDeposit(db: Db, b: { companyId: string }, bookingId: string, kind: string, amount: bigint, date: string, x: DepositInput, entryId: string,
+  extra: { documentId?: string; paymentId?: string } = {}) {
+  return (await db.query(`INSERT INTO booking_deposits (company_id, booking_id, kind, amount, entry_date, account_id, method, reference, document_id, payment_id, journal_entry_id, created_by)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, app_user_id()) RETURNING id`,
+    [b.companyId, bookingId, kind, fromMinor(amount), date, x.accountId, METHODS.includes(String(x.method)) ? x.method : 'cash', txt(x.reference, 80),
+      extra.documentId ?? null, extra.paymentId ?? null, entryId])).rows[0].id as string;
+}
+
+/** The guest leaves a deposit: Dr bank or cash / Cr 2150 Guest deposits held. */
+export async function takeDeposit(db: Db, bookingId: string, x: DepositInput): Promise<string> {
+  const b = await depositContext(db, bookingId);
+  const amount = depositAmount(x.amount), d = x.date ? date(x.date) : today();
+  if (!x.accountId) bad('Choose the bank or cash account.', 'err.bankAccount');
+  const a = fromMinor(amount);
+  const entry = await postEntry(db, { companyId: b.companyId, entryDate: d, memo: `Deposit held · ${b.number} · ${b.guest}`, sourceType: 'booking_deposit', sourceId: bookingId,
+    lines: [{ accountId: x.accountId!, debit: a }, { accountId: b.depositAccount, credit: a }] });
+  return insertDeposit(db, b, bookingId, 'taken', amount, d, x, entry);
+}
+
+/** The deposit (or part) goes back to the guest: Dr 2150 / Cr bank or cash. */
+export async function returnDeposit(db: Db, bookingId: string, x: DepositInput): Promise<string> {
+  const b = await depositContext(db, bookingId);
+  const amount = depositAmount(x.amount ?? b.held), d = x.date ? date(x.date) : today();
+  if (amount > toMinor(b.held)) bad(`The booking holds only ${b.held} as deposit.`, 'err.depositTooMuch');
+  if (!x.accountId) bad('Choose the bank or cash account.', 'err.bankAccount');
+  const a = fromMinor(amount);
+  const entry = await postEntry(db, { companyId: b.companyId, entryDate: d, memo: `Deposit returned · ${b.number} · ${b.guest}`, sourceType: 'booking_deposit', sourceId: bookingId,
+    lines: [{ accountId: b.depositAccount, debit: a }, { accountId: x.accountId!, credit: a }] });
+  return insertDeposit(db, b, bookingId, 'returned', amount, d, x, entry);
+}
+
+/** The deposit pays the guest's invoice: the deposit is returned from the account and, in the same step, received
+ *  from the guest against the invoice (Dr 2150 / Cr bank, then Dr bank / Cr Receivables). At most what the invoice
+ *  still owes and what the booking holds. */
+export async function applyDeposit(db: Db, bookingId: string, x: DepositInput): Promise<string> {
+  const b = await depositContext(db, bookingId);
+  if (!x.documentId) bad('Choose the invoice the deposit pays.', 'err.depositInvoice');
+  if (!x.accountId) bad('Choose the bank or cash account.', 'err.bankAccount');
+  const inv = (await db.query(`SELECT d.status, d.type, d.contact_id, document_amount_due(d.id)::text AS due FROM documents d WHERE d.id = $1 AND d.company_id = $2`,
+    [x.documentId, b.companyId])).rows[0] ?? notFound();
+  if (inv.type !== 'invoice' || inv.status !== 'issued' || inv.contact_id !== b.contactId) bad("A deposit pays only an issued invoice of the same guest.", 'err.depositInvoice');
+  const held = toMinor(b.held), due = toMinor(inv.due);
+  const amount = x.amount ? depositAmount(x.amount) : (held < due ? held : due);
+  if (amount <= 0n) bad('Nothing to pay: the invoice is paid or no deposit is held.', 'err.depositNothing');
+  if (amount > held) bad(`The booking holds only ${b.held} as deposit.`, 'err.depositTooMuch');
+  if (amount > due) bad(`The invoice owes only ${inv.due}.`, 'err.overAllocated');
+  const d = x.date ? date(x.date) : today(), a = fromMinor(amount);
+  const entry = await postEntry(db, { companyId: b.companyId, entryDate: d, memo: `Deposit used to pay the bill · ${b.number} · ${b.guest}`, sourceType: 'booking_deposit', sourceId: bookingId,
+    lines: [{ accountId: b.depositAccount, debit: a }, { accountId: x.accountId!, credit: a }] });
+  const paymentId = await recordPayment(db, b.companyId, { direction: 'received', contactId: b.contactId, date: d, amount: a, accountId: x.accountId, method: 'other',
+    reference: `Deposit ${b.number}`, allocations: [{ documentId: x.documentId!, amount: a }] });
+  return insertDeposit(db, b, bookingId, 'applied', amount, d, { ...x, method: 'other' }, entry, { documentId: x.documentId, paymentId });
+}
+
+export async function deposits(db: Db, bookingId: string) {
+  const rows = (await db.query(`SELECT k.id, k.kind, k.amount::text AS amount, k.entry_date::text AS date, a.code AS "accountCode", a.name AS "accountName", k.method, k.reference,
+      k.document_id AS "documentId", d.number AS "documentNumber" FROM booking_deposits k JOIN accounts a ON a.id = k.account_id LEFT JOIN documents d ON d.id = k.document_id
+    WHERE k.booking_id = $1 ORDER BY k.created_at`, [bookingId])).rows;
+  const held = (await db.query('SELECT booking_deposit_held($1)::text AS h', [bookingId])).rows[0].h as string;
+  return { held, movements: rows };
 }

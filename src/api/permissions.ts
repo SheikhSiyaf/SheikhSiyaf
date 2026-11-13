@@ -131,7 +131,7 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/einvoices/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'einvoices', m[1]!, ['Sales', 'Restaurant'])],
   ['*', new RegExp(`^/api/einvoicing/devices/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'einvoice_devices', m[1]!, ['Sales'])],
   // rooms (billing and checking out make a sales invoice, so they need Sales too)
-  ['POST', new RegExp(`^/api/bookings/${UUID}/(bill|check-out)$`), async (db, m) => { const n = await companyOf(db, 'bookings', m[1]!, ['Rooms']); return n && { ...n, also: ['Sales'] }; }],
+  ['POST', new RegExp(`^/api/bookings/${UUID}/(bill|check-out|deposit/apply)$`), async (db, m) => { const n = await companyOf(db, 'bookings', m[1]!, ['Rooms']); return n && { ...n, also: ['Sales'] }; }],
   ['*', new RegExp(`^/api/companies/${UUID}/(rooms|room-types|room-rates|bookings)(/.*)?$`), c(['Rooms'])],
   ['*', new RegExp(`^/api/room-types/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'room_types', m[1]!, ['Rooms'])],
   ['*', new RegExp(`^/api/room-rates/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'room_rates', m[1]!, ['Rooms'])],

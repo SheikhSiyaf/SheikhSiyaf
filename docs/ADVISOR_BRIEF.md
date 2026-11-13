@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-13 (Rooms module, stage 1).
+Last updated: 2026-11-13 (Rooms module, stages 1 and 2).
 
 ---
 
@@ -68,7 +68,7 @@ console: creates customers and companies, bills them, answers support messages, 
 - **Purchases**: bills, purchase orders, expense claims with approvals, receipt photos.
 - **Inventory, fixed assets, bank** (reconciliation, direct bank feeds: sandbox only), **projects**.
 - **Rentals**: renting out equipment such as cranes and scaffolding as income (contracts, usage, rental bills).
-- **Rooms** (hotels, new "hospitality" industry): room types with nightly rates including VAT and seasons, rooms, bookings (never two on the same night), front desk, calendar, check-in and check-out, extras, and the guest bill as an ordinary invoice on 4200 Room revenue. Next: refundable deposits, then advance payments (needs a ZATCA change; VAT treatment to be confirmed by an accountant).
+- **Rooms** (hotels, new "hospitality" industry): room types with nightly rates including VAT and seasons, rooms, bookings (never two on the same night), front desk, calendar, check-in and check-out, extras, and the guest bill as an ordinary invoice on 4200 Room revenue. Refundable security deposits (held in 2150, no VAT; returned, or used to pay the guest's bill). Next: advance payments (needs a ZATCA change; VAT treatment to be confirmed by an accountant).
 - **Reports**: trial balance, P&L, balance sheet, VAT return, aged reports, budgets, forecast, multi-currency
   ledger accounts with month-end revaluation, export of everything.
 - **Review layer**: reviewer checks and sign-off; signing off a month locks it. Year-end close.

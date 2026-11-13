@@ -635,3 +635,23 @@ tr.unread-row td:first-child { font-weight: 600; }
   .help-fab { bottom: 12px; inset-inline-end: 12px; padding: 9px 13px; }
 }
 @media print { .help-fab, .help-panel { display: none !important; } }
+
+/* Rooms: the calendar (rooms x nights). On phones it becomes a list, room by room. */
+.room-cal { border-collapse: collapse; width: 100%; table-layout: fixed; min-width: 760px; }
+.room-cal th, .room-cal td { border: 1px solid var(--line); padding: 2px; text-align: center; font-size: 12px; height: 40px; }
+.room-cal thead th { font-weight: 600; color: var(--mut); }
+.room-cal thead th.today { color: var(--teal); }
+.room-cal tbody th { width: 110px; text-align: start; padding: 4px 8px; font-weight: normal; }
+.room-cal td.room-off { background: repeating-linear-gradient(45deg, transparent 0 6px, var(--line) 6px 7px); }
+.room-bar { width: 100%; height: 32px; border: 0; border-radius: 8px; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 6px;
+  font: inherit; font-size: 12px; background: var(--tealbg); color: var(--teal); }
+.room-bar.st-in_house { background: var(--warnbg); color: var(--warn); }
+.room-bar.st-departed { background: var(--bg); color: var(--mut); }
+.room-free { width: 100%; height: 32px; border: 0; background: transparent; color: var(--mut); cursor: pointer; opacity: 0; font-size: 16px; }
+.room-free:hover, .room-free:focus-visible { opacity: 1; background: var(--tealbg); border-radius: 8px; }
+.room-cal-list { display: none; }
+.room-cal-item { padding: 8px 0; border-bottom: 1px solid var(--line); }
+@media (max-width: 760px) {
+  .room-cal-wrap { display: none; }
+  .room-cal-list { display: block; }
+}

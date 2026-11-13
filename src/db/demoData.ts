@@ -7,7 +7,7 @@ export const DEMO_SELF = 'Desert Rose Trading';
 export interface DemoCompany {
   key: string; name: string; nameAr: string; country: 'SA' | 'AE'; currency: string; vatRate: string;
   crNumber: string; vatNumber: string; legalForm: string; address: string; city: string; invoicePrefix: string;
-  industry: 'trading' | 'restaurant';
+  industry: 'trading' | 'restaurant' | 'hospitality';
   /** Which customer owns it: the demo accounting firm (default) or the company that runs its own books. */
   tenant?: 'firm' | 'self';
 }
@@ -21,6 +21,8 @@ export const DEMO_COMPANIES: DemoCompany[] = [
     crNumber: '1010654321', vatNumber: '310987654300003', legalForm: 'Joint stock company', address: 'Prince Sultan St', city: 'Jeddah', invoicePrefix: 'RSC-', industry: 'trading' },
   { key: 'desertrose', name: 'Desert Rose Trading', nameAr: 'وردة الصحراء للتجارة', country: 'SA', currency: 'SAR', vatRate: '15.00',
     crNumber: '1010777888', vatNumber: '311122233300003', legalForm: 'LLC', address: 'Tahlia Street', city: 'Jeddah', invoicePrefix: 'DRT-', industry: 'trading', tenant: 'self' },
+  { key: 'corniche', name: 'Corniche Hotel', nameAr: 'فندق الكورنيش', country: 'SA', currency: 'SAR', vatRate: '15.00',
+    crNumber: '4030123456', vatNumber: '312345678900003', legalForm: 'LLC', address: 'Corniche Road, Al Shati', city: 'Jeddah', invoicePrefix: 'CH-', industry: 'hospitality' },
 ];
 
 export interface DemoUser {
@@ -37,7 +39,7 @@ export interface DemoUser {
 
 export const DEMO_USERS: DemoUser[] = [
   { name: 'Nadia Admin', email: 'admin@firm.example', kind: 'admin', role: 'admin', companies: [] },
-  { name: 'Omar Al Harbi', email: 'omar@firm.example', kind: 'firm_staff', role: 'partner', companies: ['alnoor', 'marina', 'riyadh'] },
+  { name: 'Omar Al Harbi', email: 'omar@firm.example', kind: 'firm_staff', role: 'partner', companies: ['alnoor', 'marina', 'riyadh', 'corniche'] },
   { name: 'Layla Haddad', email: 'layla@firm.example', kind: 'firm_staff', role: 'reviewer', companies: ['alnoor', 'marina'] },
   { name: 'Rami Saleh', email: 'rami@firm.example', kind: 'firm_staff', role: 'staff_accountant', companies: ['riyadh'] },
   { name: 'Sara Nasser', email: 'sara@alnoor.example', kind: 'client', role: 'client_accountant', companies: ['alnoor'], company: 'Al Noor Trading' },
@@ -45,6 +47,7 @@ export const DEMO_USERS: DemoUser[] = [
   { name: 'Yousef Al Dossari', email: 'yousef@alnoor.example', kind: 'client', role: 'client_accountant', companies: ['alnoor'], company: 'Al Noor Trading', clientRole: 'Store keeper' },
   { name: 'Hana Rahman', email: 'hana@marinacafe.example', kind: 'client', role: 'client_accountant', companies: ['marina'], company: 'Marina Café LLC' },
   { name: 'Maya Fernandes', email: 'maya@marinacafe.example', kind: 'client', role: 'client_accountant', companies: ['marina'], company: 'Marina Café LLC', clientRole: 'Counter cashier' },
+  { name: 'Lina Al Ghamdi', email: 'lina@cornichehotel.example', kind: 'client', role: 'client_accountant', companies: ['corniche'], company: 'Corniche Hotel' },
   { name: 'Khalid Al Otaibi', email: 'khalid@riyadhsupplies.example', kind: 'client', role: 'client_viewer', companies: ['riyadh'], company: 'Riyadh Supplies Co' },
   { name: 'Nusuh Books (owner)', email: 'owner@nusuhbooks.example', kind: 'owner', role: 'owner', companies: [], tenant: 'platform' },
   { name: 'Hamad Al Zahrani', email: 'admin@desertrose.example', kind: 'admin', role: 'admin', companies: [], tenant: 'self', company: 'Desert Rose Trading' },

@@ -18,6 +18,7 @@ export const NAV: Module[] = [
   { key: 'Inventory', subs: [s('items'), s('warehouse-desk'), s('grn'), s('gdn'), s('stock-value')] },
   { key: 'Restaurant', subs: [s('food-sales'), s('menu'), s('materials'), s('stock-desk'), s('materials-in'), s('wastage'), s('material-value')] },
   { key: 'Assets', subs: [s('register'), s('depreciation')] },
+  { key: 'Rooms', subs: [s('front-desk'), s('room-calendar'), s('bookings'), s('room-setup')] },
   { key: 'Rentals', subs: [s('rental-board'), s('rental-contracts'), s('equipment')] },
   { key: 'Projects', subs: [s('projects'), s('project-report')] },
   { key: 'HRM', subs: [s('overview'), s('employees'), s('attendance'), s('leave'), s('payroll'), s('loans'), s('end-of-service'), s('hr-documents')] },
@@ -33,7 +34,7 @@ export const NAV: Module[] = [
 export const GROUPS: [string, string[]][] = [
   ['today', ['Home', 'Portal', 'Calendar', 'Approvals']],
   ['money', ['Sales', 'Purchases', 'Expenses', 'Bank']],
-  ['operations', ['Inventory', 'Restaurant', 'Assets', 'Rentals', 'Projects']],
+  ['operations', ['Inventory', 'Restaurant', 'Rooms', 'Assets', 'Rentals', 'Projects']],
   ['people', ['HRM', 'CRM']],
   ['books', ['Journal', 'Ledger', 'Reports', 'Review']],
 ];

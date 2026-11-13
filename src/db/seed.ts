@@ -36,6 +36,7 @@ import { monthEnd, nextMonthEnd, previousMonthEnd, targetDepreciation } from '..
 import { toMinor } from '../money.js';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_SELF, DEMO_SELF_ROLES, DEMO_USERS } from './demoData.js';
 import * as Rent from '../books/rentalService.js';
+import * as Room from '../books/roomService.js';
 import { DEFAULT_MODULES } from '../books/modules.js';
 import * as Rest from '../books/restaurantService.js';
 
@@ -153,6 +154,33 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       const faisal = await cust('Al Faisal Contracting', 'الفيصل للمقاولات', 7654321, 30);
       const walkIn = await cust('Walk-in customer', 'عميل نقدي', undefined, 0);
       const najd = await supp('Najd Wholesale', 'نجد للجملة', 2223334);
+      // Rooms (Corniche Hotel): room types with rates including VAT, a winter season, rooms (one out of service), and
+      // bookings in every state: a stay billed and checked out last week, guests in house (one leaving today), an
+      // arrival today, a business guest booked ahead, and a cancellation.
+      if (c.key === 'corniche') {
+        const std = await Room.saveType(db, id, { code: 'STD', name: 'Standard room', nameAr: 'غرفة عادية', capacity: 2, rate: '450.00' });
+        const dlx = await Room.saveType(db, id, { code: 'DLX', name: 'Deluxe sea view', nameAr: 'ديلوكس بإطلالة بحرية', capacity: 3, rate: '690.00' });
+        const ste = await Room.saveType(db, id, { code: 'STE', name: 'Family suite', nameAr: 'جناح عائلي', capacity: 5, rate: '1150.00' });
+        await Room.saveSeason(db, id, { typeId: dlx, name: 'Winter season', from: daysAgo(-20), to: daysAgo(-50), rate: '805.00' });
+        const room: Record<string, string> = {};
+        for (const [n, t, fl] of [['101', std, '1'], ['102', std, '1'], ['103', std, '1'], ['104', std, '1'], ['201', dlx, '2'], ['202', dlx, '2'], ['203', dlx, '2'], ['301', ste, '3'], ['302', ste, '3']] as const)
+          room[n] = await Room.saveRoom(db, id, { number: n, typeId: t, floor: fl });
+        await Room.saveRoom(db, id, { number: '302', typeId: ste, floor: '3', status: 'out_of_service', notes: 'Bathroom renovation' }, room['302']);
+        const guest = (name: string, phone: string) => ({ name, phone });
+        const past = await Room.createBooking(db, id, { guest: guest('Khalid Al Harbi', '0551234567'), roomId: room['201'], arrival: daysAgo(9), departure: daysAgo(6), adults: 2, source: 'Website' });
+        await Room.checkIn(db, past, daysAgo(9));
+        await Room.addExtra(db, past, { date: daysAgo(8), description: 'Laundry', quantity: '2', unitPrice: '23.00' });
+        await Room.checkOut(db, past, { day: daysAgo(6) });
+        const inHouse = await Room.createBooking(db, id, { guest: guest('Mona Al Zahrani', '0559876543'), roomId: room['202'], arrival: daysAgo(2), departure: daysAgo(-3), adults: 2, children: 1, source: 'Phone' });
+        await Room.checkIn(db, inHouse, daysAgo(2));
+        await Room.addExtra(db, inHouse, { date: daysAgo(1), description: 'Breakfast', quantity: '3', unitPrice: '69.00' });
+        const leaving = await Room.createBooking(db, id, { guest: guest('Peter Lindqvist', '+46701234567'), roomId: room['101'], arrival: daysAgo(3), departure: daysAgo(0), source: 'Travel agent', reference: 'TA-55120' });
+        await Room.checkIn(db, leaving, daysAgo(3));
+        await Room.createBooking(db, id, { guest: guest('Sami Haddad', '0533334444'), roomId: room['102'], arrival: daysAgo(0), departure: daysAgo(-2), adults: 1, source: 'Walk-in' });
+        await Room.createBooking(db, id, { contactId: faisal, roomId: room['301'], arrival: daysAgo(-5), departure: daysAgo(-8), adults: 4, agreedRate: '1000.00', source: 'Email', notes: 'Company booking for the site team' });
+        const off = await Room.createBooking(db, id, { guest: guest('Reem Al Qahtani', '0545556666'), roomId: room['203'], arrival: daysAgo(-1), departure: daysAgo(-4), source: 'Website' });
+        await Room.cancel(db, off);
+      }
       // Rentals (Al Noor rents out a crane, scaffolding and a generator): equipment and an open rental on hire.
       if (c.key === 'alnoor') {
         const crane = await Rent.saveItem(db, id, { code: 'CR-50', name: 'Mobile crane 50t', nameAr: 'رافعة متحركة 50 طن', category: 'Crane', identifier: 'Plate 4821 KSA', dayRate: '1500.00', hourRate: '350.00', monthRate: '30000.00' });

@@ -45,8 +45,6 @@ const RAISED: [RegExp, string][] = [
   [/Nothing is left to pay on this invoice/, 'err.payNothingDue'],
   [/Say in a few words what it is about/, 'err.supportSubject'],
   [/Write your message/, 'err.supportBody'],
-  [/bookings_room_id_daterange_excl|conflicting key value violates exclusion constraint "bookings/, 'err.roomBooked'],
-  [/room_rates_room_type_id_daterange_excl|exclusion constraint "room_rates/, 'err.roomSeasonOverlap'],
   [/This booking has been billed|before the nights already billed|This extra has been billed|A bill is (never changed|freed only)/, 'err.roomBilled'],
   [/Bill every night before checking out|Bill every extra before checking out/, 'err.roomBillFirst'],
   [/This booking is finished/, 'err.roomFinished'],
@@ -201,6 +199,10 @@ export function toHttpError(err: unknown): HttpError {
     case '23502':
       return new HttpError(400, 'Fill in all required fields.', 'err.required');
     case '23P01':
+      // Overlaps the database refuses: a room booked twice, two seasons on the same dates, or accounting periods.
+      if (e.constraint === 'bookings_room_id_daterange_excl') return new HttpError(400, 'This room is already booked on some of these nights.', 'err.roomBooked');
+      if (e.constraint === 'room_rates_room_type_id_daterange_excl') return new HttpError(400, 'This season overlaps another season of the same room type.', 'err.roomSeasonOverlap');
+      if (e.constraint === 'booking_bills_booking_id_daterange_excl') return new HttpError(400, 'These nights have already been billed.', 'err.roomBilled');
       return new HttpError(400, 'This period overlaps another period.', 'err.overlap');
     case '23503':
       return new HttpError(400, 'Something you picked no longer exists.', 'err.missing');

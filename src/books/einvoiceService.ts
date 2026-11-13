@@ -74,7 +74,7 @@ async function company(db: Db, id: string) {
 export async function invoiceData(db: Db, documentId: string, uuid: string): Promise<{ data: EInvoiceData; companyId: string; country: string }> {
   const d = (await db.query(
     `SELECT d.id, d.company_id, d.type, d.status, d.number, d.issue_date::text AS issue_date, d.due_date::text AS due_date, d.issued_at, d.notes,
-            d.net_total::text AS net, d.vat_total::text AS vat, d.gross_total::text AS gross, o.number AS orig_number, o.issue_date::text AS orig_date,
+            d.net_total::text AS net, d.vat_total::text AS vat, d.gross_total::text AS gross, o.number AS orig_number, o.issue_date::text AS orig_date, d.is_advance,
             c.name, c.name_ar, c.vat_number, c.cr_number, c.address, c.city, c.country, c.email, c.building_number, c.district, c.postal_code,
             EXISTS (SELECT 1 FROM payment_allocations a WHERE a.document_id = d.id) AS paid
      FROM documents d LEFT JOIN contacts c ON c.id = d.contact_id LEFT JOIN documents o ON o.id = d.original_id WHERE d.id = $1`, [documentId])).rows[0] ?? notFound();
@@ -84,6 +84,10 @@ export async function invoiceData(db: Db, documentId: string, uuid: string): Pro
     `SELECT line_no, description, quantity::text, unit_price::text, net_amount::text AS net, vat_amount::text AS vat, vat_code, vat_rate::text
      FROM document_lines WHERE document_id = $1 ORDER BY line_no`, [documentId])).rows;
   const at = localParts(d.issued_at ? new Date(d.issued_at) : clock(), co.country);
+  // Advances deducted (0046): each advance invoice's number, date and time as they are on its own e-invoice.
+  const prepayments = (await db.query(`SELECT a.number, a.issue_date::text AS date, a.issued_at, x.net_amount::text AS net, x.vat_amount::text AS vat, x.vat_code, x.vat_rate::text AS rate
+    FROM advance_deductions x JOIN documents a ON a.id = x.advance_id WHERE x.document_id = $1 ORDER BY a.issue_date, a.number`, [documentId])).rows
+    .map((p) => ({ number: p.number, issueDate: p.date, issueTime: localParts(new Date(p.issued_at), co.country).time, net: p.net, vat: p.vat, vatCode: p.vat_code as VatCode, vatRate: p.rate }));
   const seller: EParty = { name: co.name, nameAr: co.nameAr, vatNumber: co.vatNumber, crNumber: co.crNumber, street: s.street ?? co.address, building: s.buildingNumber,
     district: s.district, city: co.city, postalCode: s.postalCode, country: co.country, email: co.email };
   const walkIn = !d.vat_number && /walk-?in/i.test(d.name ?? '');
@@ -93,7 +97,7 @@ export async function invoiceData(db: Db, documentId: string, uuid: string): Pro
     number: d.number, uuid, type: d.type === 'credit_note' ? 'credit_note' : d.type === 'debit_note' ? 'debit_note' : 'invoice', issueDate: d.issue_date, issueTime: at.time, supplyDate: d.issue_date, dueDate: d.due_date,
     currency: co.currency, seller, buyer,
     lines: lines.map((l) => ({ no: l.line_no, description: l.description, quantity: l.quantity, unitPrice: l.unit_price, net: l.net, vat: l.vat, vatCode: l.vat_code as VatCode, vatRate: l.vat_rate })),
-    netTotal: d.net, vatTotal: d.vat, grossTotal: d.gross,
+    netTotal: d.net, vatTotal: d.vat, grossTotal: d.gross, advance: Boolean(d.is_advance), prepayments,
     original: d.orig_number ? { number: d.orig_number, issueDate: d.orig_date } : null, reason: d.type === 'credit_note' ? (text(d.notes, 300) ?? 'Correction of the invoice') : d.type === 'debit_note' ? (text(d.notes, 300) ?? 'Additional charge on the invoice') : null,
     paymentMeans: d.paid ? '10' : '30',
     exemption: { zero: { code: s.zeroReasonCode, text: s.zeroReason }, exempt: { code: s.exemptReasonCode, text: s.exemptReason }, out_of_scope: { code: 'VATEX-SA-OOS', text: s.oosReason } },

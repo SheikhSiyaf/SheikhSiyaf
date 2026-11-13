@@ -196,3 +196,21 @@ describe('Refundable security deposits (0045)', () => {
     await expect(as(f.a.clientViewer, (db) => R.takeDeposit(db, b2, { amount: '1.00', accountId: bank }))).rejects.toThrow();
   });
 });
+
+describe('Advance payments on a booking (0046)', () => {
+  it('an advance of 1,000.00 is invoiced (386, on 2160) and paid; checking out deducts it: 1,349.99 bill, 350.00 left to pay', async () => {
+    if (!(await owner.query(`SELECT 1 FROM accounts WHERE company_id = $1 AND code = '2160'`, [f.a.id])).rows[0])
+      await owner.query(`INSERT INTO accounts (company_id, code, name, type) VALUES ($1, '2160', 'Customer advances', 'liability')`, [f.a.id]);
+    await owner.query('UPDATE accounts SET is_bank = true WHERE id = $1', [f.a.cash]);
+    const bk = await as(f.staff, (db) => R.createBooking(db, f.a.id, { contactId: guest, roomId: r102, arrival: '2027-10-01', departure: '2027-10-04' }));
+    const adv = await as(f.staff, (db) => R.takeAdvance(db, bk, { amount: '1000.00', date: '2027-09-20', accountId: f.a.cash, method: 'card' }));
+    expect((await owner.query('SELECT is_advance, net_total::text AS n, vat_total::text AS v FROM documents WHERE id = $1', [adv])).rows[0]).toEqual({ is_advance: true, n: '869.56', v: '130.43' });   // 999.99: never more than the 1,000.00 paid
+    expect((await as(f.staff, (db) => R.getBooking(db, bk))).advances).toMatchObject([{ documentId: adv, total: '999.99', left: '999.99', due: '0.00' }]);
+    await as(f.staff, (db) => R.checkIn(db, bk, '2027-10-01'));
+    const inv = (await as(f.staff, (db) => R.checkOut(db, bk, { day: '2027-10-04' })))!;
+    const d = await doc(inv);
+    expect(d).toMatchObject({ status: 'issued', gross: '1349.99' });
+    expect((await owner.query('SELECT document_amount_due($1)::text AS v', [inv])).rows[0].v).toBe('350.00');
+    expect((await as(f.staff, (db) => R.getBooking(db, bk))).advances).toMatchObject([{ left: '0.00' }]);
+  });
+});

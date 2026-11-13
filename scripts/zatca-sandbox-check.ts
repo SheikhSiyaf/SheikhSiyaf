@@ -76,6 +76,26 @@ async function main() {
   let icv = 0, pih = X.FIRST_PIH;
   const stamp = (d: EInvoiceData, cert: Z.CertInfo) => { const at = local(); const st = X.stampInvoice(d, { icv: ++icv, pih }, key, cert, `${at.date}T${at.time}`); pih = st.hash; save(`${d.number}.xml`, st.xml); return st; };
 
+  // --advances: only the compliance checks for advance payments (section 9.5): an advance invoice (386) and a final
+  // invoice that deducts it, standard and simplified. No production CSID, clearance or reporting.
+  if (process.argv.includes('--advances')) {
+    for (const b of [buyer, null]) {
+      const k = b ? 'S' : 'P';
+      const adv: EInvoiceData = { ...doc(`ADV-${k}1`, 'invoice', b), advance: true,
+        lines: [{ no: 1, description: 'Advance for booking BKG-0001', quantity: '1.000', unitPrice: '1000.00', net: '1000.00', vat: '150.00', vatCode: 'standard', vatRate: '15.00' }],
+        netTotal: '1000.00', vatTotal: '150.00', grossTotal: '1150.00' };
+      const fin: EInvoiceData = { ...doc(`FIN-${k}1`, 'invoice', b),
+        lines: [{ no: 1, description: 'Room 202, 4 nights', quantity: '4.000', unitPrice: '500.00', net: '2000.00', vat: '300.00', vatCode: 'standard', vatRate: '15.00' }],
+        netTotal: '2000.00', vatTotal: '300.00', grossTotal: '2300.00',
+        prepayments: [{ number: adv.number, issueDate: adv.issueDate, issueTime: adv.issueTime, net: '1000.00', vat: '150.00', vatCode: 'standard', vatRate: '15.00' }] };
+      for (const d of [adv, fin]) {
+        const st = stamp(d, cCert);
+        report('compliance check', { ...d, number: `${d.number}${d.advance ? ' (386)' : ' (prepaid)'}` }, icv, await client.complianceCheck(cCreds, { invoiceHash: st.hash, uuid: d.uuid, xml: st.xml }));
+      }
+    }
+    return finish({ complianceCsid: 'issued', mode: 'advances only' });
+  }
+
   for (const d of cases('CMP')) {
     const st = stamp(d, cCert);
     const r = await client.complianceCheck(cCreds, { invoiceHash: st.hash, uuid: d.uuid, xml: st.xml });

@@ -61,6 +61,8 @@ export function invoiceXml(d: EInvoiceData, chain: Chain, qr?: string, signature
     tag === 'cac:TaxCategory' && code !== 'standard' && el('cbc:TaxExemptionReason', null, text(d.exemption[code].text)),
     tag === 'cac:TaxCategory' ? el('cac:TaxScheme', null, el('cbc:ID', { schemeID: 'UN/ECE 5153', schemeAgencyID: '6' }, 'VAT')) : el('cac:TaxScheme', null, el('cbc:ID', null, 'VAT')));
   const doc = (d.type === 'credit_note' || d.type === 'debit_note');
+  const pre = d.prepayments ?? [];
+  const prepaid = pre.reduce((t, p) => t + toCents(p.net) + toCents(p.vat), 0n);
   const body = [
     signatureBlock ?? null,
     el('cbc:ProfileID', null, 'reporting:1.0'),
@@ -68,7 +70,7 @@ export function invoiceXml(d: EInvoiceData, chain: Chain, qr?: string, signature
     el('cbc:UUID', null, d.uuid),
     el('cbc:IssueDate', null, d.issueDate),
     el('cbc:IssueTime', null, d.issueTime),
-    el('cbc:InvoiceTypeCode', { name: kind === 'standard' ? '0100000' : '0200000' }, TYPE_CODE[d.type]),
+    el('cbc:InvoiceTypeCode', { name: kind === 'standard' ? '0100000' : '0200000' }, d.advance ? '386' : TYPE_CODE[d.type]),
     el('cbc:DocumentCurrencyCode', null, cur),
     el('cbc:TaxCurrencyCode', null, cur),
     doc && d.original && el('cac:BillingReference', null, el('cac:InvoiceDocumentReference', null, el('cbc:ID', null, text(d.original.number)))),
@@ -85,7 +87,8 @@ export function invoiceXml(d: EInvoiceData, chain: Chain, qr?: string, signature
       ...[...groups.values()].map((g) => el('cac:TaxSubtotal', null, el('cbc:TaxableAmount', amt(cur), fromCents(g.net)), el('cbc:TaxAmount', amt(cur), fromCents(g.vat)), category(g.code, g.rate, 'cac:TaxCategory')))),
     el('cac:LegalMonetaryTotal', null,
       el('cbc:LineExtensionAmount', amt(cur), d.netTotal), el('cbc:TaxExclusiveAmount', amt(cur), d.netTotal), el('cbc:TaxInclusiveAmount', amt(cur), d.grossTotal),
-      el('cbc:AllowanceTotalAmount', amt(cur), '0.00'), el('cbc:PrepaidAmount', amt(cur), '0.00'), el('cbc:PayableAmount', amt(cur), d.grossTotal)),
+      el('cbc:AllowanceTotalAmount', amt(cur), '0.00'), el('cbc:PrepaidAmount', amt(cur), fromCents(prepaid)),
+      el('cbc:PayableAmount', amt(cur), fromCents(toCents(d.grossTotal) - prepaid))),
     ...d.lines.map((l) => el('cac:InvoiceLine', null,
       el('cbc:ID', null, String(l.no)),
       el('cbc:InvoicedQuantity', { unitCode: 'PCE' }, l.quantity),
@@ -93,6 +96,18 @@ export function invoiceXml(d: EInvoiceData, chain: Chain, qr?: string, signature
       el('cac:TaxTotal', null, el('cbc:TaxAmount', amt(cur), l.vat), el('cbc:RoundingAmount', amt(cur), addMoney(l.net, l.vat))),
       el('cac:Item', null, el('cbc:Name', null, text(l.description)), category(l.vatCode, l.vatRate, 'cac:ClassifiedTaxCategory')),
       el('cac:Price', null, el('cbc:PriceAmount', amt(cur), l.unitPrice)))),
+    // Advances deducted (section 9.5, BR-KSA-73 to 80): one zero-value line per advance invoice, with its reference and
+    // the net and VAT taken off.
+    ...pre.map((p, i) => el('cac:InvoiceLine', null,
+      el('cbc:ID', null, String(d.lines.length + i + 1)),
+      el('cbc:InvoicedQuantity', { unitCode: 'PCE' }, '0.00'),
+      el('cbc:LineExtensionAmount', amt(cur), '0.00'),
+      el('cac:DocumentReference', null, el('cbc:ID', null, text(p.number)), el('cbc:IssueDate', null, p.issueDate), el('cbc:IssueTime', null, p.issueTime),
+        el('cbc:DocumentTypeCode', null, '386')),
+      el('cac:TaxTotal', null, el('cbc:TaxAmount', amt(cur), '0.00'), el('cbc:RoundingAmount', amt(cur), '0.00'),
+        el('cac:TaxSubtotal', null, el('cbc:TaxableAmount', amt(cur), p.net), el('cbc:TaxAmount', amt(cur), p.vat), category(p.vatCode, p.vatRate, 'cac:TaxCategory'))),
+      el('cac:Item', null, el('cbc:Name', null, 'Prepayment adjustment'), category(p.vatCode, p.vatRate, 'cac:ClassifiedTaxCategory')),
+      el('cac:Price', null, el('cbc:PriceAmount', amt(cur), '0.00')))),
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>\n${el('Invoice', { xmlns: NS.inv, 'xmlns:cac': NS.cac, 'xmlns:cbc': NS.cbc, 'xmlns:ext': NS.ext }, ...body)}`;
 }

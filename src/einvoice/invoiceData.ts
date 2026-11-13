@@ -29,6 +29,11 @@ export interface EInvoiceData {
   reason?: string | null;
   /** UN/ECE 4461: 10 cash, 30 credit transfer, 42 bank account, 48 card, 1 not defined. */
   paymentMeans: string;
+  /** An advance-payment invoice (ZATCA type 386). */
+  advance?: boolean;
+  /** Advances deducted on this final invoice (ZATCA KSA-26 to KSA-34): each advance invoice's number, date and time,
+   *  and the net and VAT taken off. Their sum is the prepaid amount (BT-113). */
+  prepayments?: { number: string; issueDate: string; issueTime: string; net: string; vat: string; vatCode: VatCode; vatRate: string }[];
   /** Why a line has no VAT (ZATCA exemption reason codes VATEX-SA-...). */
   exemption: Record<Exclude<VatCode, 'standard'>, { code: string; text: string }>;
 }

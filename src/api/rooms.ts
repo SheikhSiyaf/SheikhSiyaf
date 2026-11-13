@@ -38,6 +38,12 @@ export function registerRoomRoutes(app: FastifyInstance, { as }: Ctx) {
   app.post<{ Params: P }>('/api/bookings/:id/no-show', async (req) => as(req, async (db) => { await R.noShow(db, id(req)); return ok; }));
   app.post<{ Params: P; Body: R.ExtraInput }>('/api/bookings/:id/extras', async (req) => as(req, async (db) => ({ id: await R.addExtra(db, id(req), req.body ?? {}) })));
   app.post<{ Params: P }>('/api/booking-extras/:id/delete', async (req) => as(req, async (db) => { await R.deleteExtra(db, id(req)); return ok; }));
+  // advance payments: an advance-payment invoice (ZATCA 386), issued and paid, deducted from the guest bill
+  app.post<{ Params: P; Body: { amount?: string; date?: string; accountId?: string; method?: string; reference?: string } }>('/api/bookings/:id/advance', async (req) => {
+    const documentId = await as(req, (db) => R.takeAdvance(db, id(req), req.body ?? {}));
+    await sendAfterIssue(as, req, documentId);
+    return { documentId };
+  });
   // refundable security deposits: taken, returned, or used to pay the guest's invoice
   app.post<{ Params: P; Body: R.DepositInput }>('/api/bookings/:id/deposit/take', async (req) => as(req, async (db) => ({ id: await R.takeDeposit(db, id(req), req.body ?? {}) })));
   app.post<{ Params: P; Body: R.DepositInput }>('/api/bookings/:id/deposit/return', async (req) => as(req, async (db) => ({ id: await R.returnDeposit(db, id(req), req.body ?? {}) })));

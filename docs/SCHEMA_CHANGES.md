@@ -400,3 +400,13 @@ Every change below is covered by a test in `test/`.
 |---|---|
 | Account 2150 Guest deposits held (liability) for every company | A refundable security deposit is money held for the guest, not payment for the stay: no VAT, no invoice. |
 | `booking_deposits` (taken, returned or applied; amount; bank or cash account; method; for applied, the invoice and the receipt; its journal entry; never changed or deleted) and `booking_deposit_held()` | Taken: Dr bank / Cr 2150. Returned: Dr 2150 / Cr bank. Applied to the guest's invoice: Dr 2150 / Cr bank together with an ordinary receipt Dr bank / Cr Receivables allocated to the invoice, so the invoice shows as paid. A booking never returns or applies more than it holds; a deposit pays only an issued invoice of the same guest; deposits are taken before or during the stay. Keeping part for damage is an extra on the guest bill (income, with VAT) paid from the deposit. |
+
+## 0046_advance_invoices.sql
+| Change | Why |
+|---|---|
+| Account 2160 Customer advances (liability) for every company; `documents.is_advance` (invoices only); invoice lines may use 2160, and only an advance invoice is issued with it (one VAT rate) | An advance payment is a supply paid before it happens: its own tax invoice with VAT (ZATCA type 386), posted Dr Receivables / Cr 2160 (net) / Cr Output VAT. |
+| `advance_deductions` (final invoice, advance invoice, net and VAT taken off; VAT = net x the advance's rate, BR-KSA-79; only on drafts, never changed after issue) and `advance_left()` | The final invoice shows the whole supply and its VAT, less the advance (ZATCA XML 1.2 section 9.5, BR-KSA-73 to 80). Only a fully paid advance of the same customer, without a credit note, is deducted, never beyond what is left of it. |
+| Issuing a final invoice: its entry must clear the advances from 2160; the prepaid amount cannot exceed the invoice; an advance already deducted is not credited | The final invoice's entry also posts Dr 2160 (net) / Dr Output VAT (advance VAT) / Cr Receivables, so VAT is counted once. |
+| `document_amount_due()` subtracts the advances deducted | The amount due is the gross less payments, credit notes and advances. |
+| `booking_advances` (Rooms: advances taken for a booking) | Advances come off the guest bill automatically. |
+| The VAT treatment of advances on the Saudi VAT return is to be confirmed by a qualified accountant before real use | The VAT return worksheet takes the advance's net and VAT off the final invoice's sales so it agrees with the books. |

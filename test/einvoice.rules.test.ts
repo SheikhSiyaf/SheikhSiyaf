@@ -86,6 +86,55 @@ describe('Invoice XML', () => {
   });
 });
 
+describe('Advance payments (XML Implementation Standard 1.2, section 9.5)', () => {
+  const advance = data({ number: 'INV-0005', advance: true, buyer: null,
+    lines: [{ no: 1, description: 'Advance for booking BKG-0001', quantity: '1.000', unitPrice: '1000.00', net: '1000.00', vat: '150.00', vatCode: 'standard', vatRate: '15.00' }],
+    netTotal: '1000.00', vatTotal: '150.00', grossTotal: '1150.00' });
+  const final = data({ number: 'INV-0009', buyer: null,
+    lines: [{ no: 1, description: 'Room 202, 4 nights', quantity: '4.000', unitPrice: '500.00', net: '2000.00', vat: '300.00', vatCode: 'standard', vatRate: '15.00' }],
+    netTotal: '2000.00', vatTotal: '300.00', grossTotal: '2300.00',
+    prepayments: [{ number: 'INV-0005', issueDate: '2026-11-01', issueTime: '09:15:00', net: '1000.00', vat: '150.00', vatCode: 'standard', vatRate: '15.00' }] });
+
+  it('an advance invoice is type 386 (simplified 0200000, standard 0100000), with nothing prepaid', () => {
+    expect(X.invoiceXml(advance, { icv: 9, pih: X.FIRST_PIH })).toContain('<cbc:InvoiceTypeCode name="0200000">386</cbc:InvoiceTypeCode>');
+    expect(X.invoiceXml({ ...advance, buyer }, { icv: 9, pih: X.FIRST_PIH })).toContain('<cbc:InvoiceTypeCode name="0100000">386</cbc:InvoiceTypeCode>');
+    expect(X.invoiceXml(advance, { icv: 9, pih: X.FIRST_PIH })).toContain('<cbc:PrepaidAmount currencyID="SAR">0.00</cbc:PrepaidAmount><cbc:PayableAmount currencyID="SAR">1150.00</cbc:PayableAmount>');
+  });
+
+  it('the final invoice: the whole supply and its VAT, prepaid = advance net + VAT (BT-113), payable = gross - prepaid (BR-CO-16)', () => {
+    const xml = X.invoiceXml(final, { icv: 10, pih: X.FIRST_PIH });
+    expect(xml).toContain('<cbc:InvoiceTypeCode name="0200000">388</cbc:InvoiceTypeCode>');
+    expect(xml).toContain('<cbc:TaxInclusiveAmount currencyID="SAR">2300.00</cbc:TaxInclusiveAmount>');
+    expect(xml).toContain('<cbc:PrepaidAmount currencyID="SAR">1150.00</cbc:PrepaidAmount><cbc:PayableAmount currencyID="SAR">1150.00</cbc:PayableAmount>');
+    // The document VAT is the whole supply's (300), as in ZATCA's example.
+    expect(xml).toMatch(/<cac:TaxTotal><cbc:TaxAmount currencyID="SAR">300.00<\/cbc:TaxAmount><\/cac:TaxTotal>/);
+  });
+
+  it('one zero-value line per advance with its number, date, time and type 386, and the net and VAT taken off (BR-KSA-73 to 80)', () => {
+    const xml = X.invoiceXml(final, { icv: 10, pih: X.FIRST_PIH });
+    const line = xml.slice(xml.lastIndexOf('<cac:InvoiceLine>'));
+    expect(line).toContain('<cbc:ID>2</cbc:ID><cbc:InvoicedQuantity unitCode="PCE">0.00</cbc:InvoicedQuantity><cbc:LineExtensionAmount currencyID="SAR">0.00</cbc:LineExtensionAmount>');
+    expect(line).toContain('<cac:DocumentReference><cbc:ID>INV-0005</cbc:ID><cbc:IssueDate>2026-11-01</cbc:IssueDate><cbc:IssueTime>09:15:00</cbc:IssueTime><cbc:DocumentTypeCode>386</cbc:DocumentTypeCode></cac:DocumentReference>');
+    expect(line).toMatch(/<cac:TaxTotal><cbc:TaxAmount currencyID="SAR">0.00<\/cbc:TaxAmount><cbc:RoundingAmount currencyID="SAR">0.00<\/cbc:RoundingAmount><cac:TaxSubtotal><cbc:TaxableAmount currencyID="SAR">1000.00<\/cbc:TaxableAmount><cbc:TaxAmount currencyID="SAR">150.00<\/cbc:TaxAmount><cac:TaxCategory>/);
+    expect(line).toContain('<cbc:Name>Prepayment adjustment</cbc:Name>');
+    expect(line).toContain('<cbc:PriceAmount currencyID="SAR">0.00</cbc:PriceAmount>');
+    expect(execFileSync('xmllint', ['--noout', '-'], { input: xml }).toString()).toBe('');   // well formed
+  });
+
+  it('the stamp and QR still work: QR tag 4 is the amount due after the advance (BT-115), as ZATCA asks', () => {
+    const st = X.stampInvoice(final, { icv: 10, pih: X.FIRST_PIH }, Z.keyFrom(key), cert, '2026-11-05T10:00:00');
+    expect(X.readQr(st.qr)[4]!.toString()).toBe('1150.00');
+    expect(st.xml).toContain('<cbc:PrepaidAmount currencyID="SAR">1150.00</cbc:PrepaidAmount>');
+  });
+
+  it('UAE (PINT AE): an advance is 386; a final invoice carries the prepaid amount and the amount due', () => {
+    const ae = { currency: 'AED', seller: { name: 'Marina Café LLC', vatNumber: '100234567800003', city: 'Dubai', country: 'AE' }, buyer: { name: 'Jumeirah Hotels', vatNumber: '100998877600003', city: 'Dubai', country: 'AE' } };
+    expect(A.pintAeXml({ ...advance, ...ae })).toContain('<cbc:InvoiceTypeCode>386</cbc:InvoiceTypeCode>');
+    const xml = A.pintAeXml({ ...final, ...ae, prepayments: [{ ...final.prepayments![0]!, vat: '50.00', vatRate: '5.00' }] });
+    expect(xml).toContain('<cbc:PrepaidAmount currencyID="AED">1050.00</cbc:PrepaidAmount><cbc:PayableAmount currencyID="AED">1250.00</cbc:PayableAmount>');
+  });
+});
+
 describe('Hash, stamp and QR', () => {
   it('the hash input is the canonical invoice without the stamp, the signature reference and the QR (checked with xmllint)', () => {
     const s = X.stampInvoice(data(), { icv: 1, pih: X.FIRST_PIH }, Z.keyFrom(key), cert, '2026-11-03T14:40:41');

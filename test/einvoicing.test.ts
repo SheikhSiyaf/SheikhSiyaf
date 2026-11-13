@@ -9,6 +9,7 @@ import path from 'node:path';
 import { as, owner, seed, type Fixture, type Company } from './helpers.js';
 import * as S from '../src/books/documentsService.js';
 import * as E from '../src/books/einvoiceService.js';
+import * as Adv from '../src/books/advanceService.js';
 import * as X from '../src/einvoice/zatca/xml.js';
 import type { Fetch } from '../src/einvoice/zatca/api.js';
 
@@ -221,5 +222,31 @@ describe('UAE: PINT AE for the accredited service provider', () => {
     expect(e.xml).toContain('urn:peppol:pint:billing-1@ae-1');
     expect(await einvoiceOf(await invoice(f.b, walk))).toBeUndefined();
     expect((await as(f.partner, (db) => E.xmlOf(db, e.id))).fileName).toMatch(/-pint-ae\.xml$/);
+  });
+});
+
+describe('Advance payments on ZATCA e-invoices (0046)', () => {
+  it('the advance is e-invoiced as 386; the final invoice carries the prepaid amount and the reference line; both go through', async () => {
+    for (const [code, name] of [['2160', 'Customer advances']]) {
+      if (!(await owner.query('SELECT 1 FROM accounts WHERE company_id = $1 AND code = $2', [f.a.id, code])).rows[0])
+        await owner.query(`INSERT INTO accounts (company_id, code, name, type) VALUES ($1, $2, $3, 'liability')`, [f.a.id, code, name]);
+    }
+    await owner.query('UPDATE accounts SET is_bank = true WHERE id = $1', [f.a.cash]);
+    const adv = await as(f.staff, (db) => Adv.createAdvance(db, f.a.id, { contactId: b2c, amount: '575.00', date: '2026-11-03', payment: { accountId: f.a.cash } }));
+    const ea = await einvoiceOf(adv);
+    expect(ea.kind).toBe('simplified');
+    expect(ea.xml).toContain('<cbc:InvoiceTypeCode name="0200000">386</cbc:InvoiceTypeCode>');
+    expect((await as(f.staff, (db) => E.submit(db, ea.id))).status).toBe('reported');
+    const fin = await as(f.staff, (db) => S.saveDraft(db, f.a.id, { type: 'invoice', contactId: b2c, issueDate: '2026-11-03',
+      lines: [{ description: 'Room 101, 2 nights', quantity: '2', unitPrice: '500.00', accountId: f.a.sales, vatCode: 'standard' }] }));
+    await as(f.staff, (db) => Adv.deduct(db, fin, adv));
+    await as(f.staff, (db) => S.issueDocument(db, fin));
+    const ef = await einvoiceOf(fin);
+    expect(ef.xml).toContain('<cbc:PrepaidAmount currencyID="SAR">575.00</cbc:PrepaidAmount><cbc:PayableAmount currencyID="SAR">575.00</cbc:PayableAmount>');
+    const num = (await owner.query('SELECT number FROM documents WHERE id = $1', [adv])).rows[0].number;
+    expect(ef.xml).toContain(`<cac:DocumentReference><cbc:ID>${num}</cbc:ID><cbc:IssueDate>2026-11-03</cbc:IssueDate>`);
+    expect(Number(ef.icv)).toBe(Number(ea.icv) + 1);
+    expect(ef.pih).toBe(ea.invoice_hash);
+    expect((await as(f.staff, (db) => E.submit(db, ef.id))).status).toBe('reported');
   });
 });

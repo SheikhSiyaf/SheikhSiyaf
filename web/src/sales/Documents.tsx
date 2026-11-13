@@ -362,7 +362,7 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
   );
 }
 
-function Totals({ net, vat, gross, cur, due }: { net: string; vat: string; gross: string; cur: string; due?: string }) {
+function Totals({ net, vat, gross, cur, due, advances }: { net: string; vat: string; gross: string; cur: string; due?: string; advances?: { number: string; total: string }[] }) {
   const { t } = useI18n();
   return (
     <table className="totals">
@@ -370,6 +370,7 @@ function Totals({ net, vat, gross, cur, due }: { net: string; vat: string; gross
         <tr><td>{t('doc.subtotal')}</td><td className="num ltr">{fmt(net)}</td></tr>
         <tr><td>{t('doc.vatTotal')}</td><td className="num ltr">{fmt(vat)}</td></tr>
         <tr className="total"><td>{t('doc.total')} ({cur})</td><td className="num ltr">{fmt(gross)}</td></tr>
+        {(advances ?? []).map((a) => <tr key={a.number}><td>{t('doc.lessAdvance', { n: a.number })}</td><td className="num ltr">−{fmt(a.total)}</td></tr>)}
         {due !== undefined && <tr className="total"><td>{t('doc.amountDue')}</td><td className="num ltr">{fmt(due)}</td></tr>}
       </tbody>
     </table>
@@ -405,7 +406,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
   };
   const due = x.status === 'issued' && (x.type === 'invoice' || x.type === 'bill' || x.type === 'debit_note');
   const canPay = books.canPost && due && toMinor(x.amountDue) > 0n;
-  const title = t(`doc.title.${x.type}` as Key);
+  const title = t(x.isAdvance ? 'doc.title.advance' : `doc.title.${x.type}` as Key);
   return (
     <>
       <div className="actions" style={{ marginBottom: 10 }}>
@@ -563,7 +564,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
             </tbody>
           </table>
         </div>
-        <Totals net={x.netTotal} vat={x.vatTotal} gross={x.grossTotal} cur={cur} due={due || (isClaim && x.status === 'issued') ? x.amountDue : undefined} />
+        <Totals net={x.netTotal} vat={x.vatTotal} gross={x.grossTotal} cur={cur} due={due || (isClaim && x.status === 'issued') ? x.amountDue : undefined} advances={x.advances} />
         {x.notes && <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{x.notes}</p>}
         {x.status === 'issued' && <p className="mut small">{t('doc.postedNote')}</p>}
         {x.type === 'invoice' && x.status === 'issued' && books.company.country === 'OM' && <p className="mut small">{t('doc.einvoiceLater', { einv: t(`einv.${books.company.country}`) })}</p>}

@@ -25,6 +25,7 @@ interface Booking extends BookingRow {
   extras: { id: string; date: string; description: string; quantity: string; unitPrice: string; billed: boolean }[];
   bills: { id: string; documentId: string; nightsFrom: string; nightsTo: string; number: string | null; status: string; total: string }[];
   unbilled: { lines: Charge[]; quoted: string; total: string; difference: string } | null;
+  advances: { documentId: string; number: string; date: string; total: string; left: string; due: string }[];
   deposit: { held: string; movements: { id: string; kind: 'taken' | 'returned' | 'applied'; amount: string; date: string; accountName: string; method: string; reference: string | null;
     documentId: string | null; documentNumber: string | null }[] };
 }
@@ -289,6 +290,7 @@ function BookingPage({ books, id, canEdit }: { books: CompanyBooks; id: string; 
   const [extra, setExtra] = useState<{ date: string; description: string; quantity: string; unitPrice: string }>();
   const [edit, setEdit] = useState<{ roomId: string; arrival: string; departure: string; adults: string; children: string }>();
   const [upTo, setUpTo] = useState(today());
+  const [advF, setAdvF] = useState<{ amount: string; accountId: string; method: string }>();
   const [dep, setDep] = useState<{ kind: 'take' | 'return' | 'apply'; amount: string; accountId: string; method: string; documentId: string }>();
   if (d.error) return <ErrorNote error={d.error} onRetry={d.reload} />;
   if (!d.data) return <Loading />;
@@ -360,6 +362,33 @@ function BookingPage({ books, id, canEdit }: { books: CompanyBooks; id: string; 
       </div>
 
       <div className="card">
+        <div className="actions"><h2 style={{ margin: 0 }}>{t('adv.title')}</h2><span className="spacer" />
+          {open && canSales && !advF && <button className="b small" id="adv-take" onClick={() => setAdvF({ amount: '', accountId: banks[0]?.id ?? '', method: 'card' })}>{t('adv.take')}</button>}</div>
+        <div className="small mut">{t('adv.hint')}</div>
+        {advF && (
+          <form className="inset" style={{ marginTop: 8 }} onSubmit={(e) => { e.preventDefault(); post(`/api/bookings/${id}/advance`, advF, t('adv.done'), () => setAdvF(undefined)); }}>
+            <div className="row">
+              <label className="f">{t('adv.amount')}<input id="adv-amount" inputMode="decimal" className="num" value={advF.amount} onChange={(e) => setAdvF({ ...advF, amount: e.target.value })} /></label>
+              <label className="f">{t('dep.account')}<select value={advF.accountId} onChange={(e) => setAdvF({ ...advF, accountId: e.target.value })}>
+                {banks.map((a) => <option key={a.id} value={a.id}>{a.code} · {local(a.name, a.nameAr)}</option>)}</select></label>
+              <label className="f">{t('dep.method')}<select value={advF.method} onChange={(e) => setAdvF({ ...advF, method: e.target.value })}>
+                {['cash', 'card', 'bank_transfer', 'cheque', 'other'].map((m) => <option key={m} value={m}>{t(`method.${m}` as Key)}</option>)}</select></label>
+            </div>
+            <div className="small mut">{t('adv.formHint')}</div>
+            <div className="actions"><button className="b p" id="adv-save" disabled={busy || !advF.amount || !advF.accountId}>{t('adv.take')}</button>
+              <button type="button" className="b" onClick={() => setAdvF(undefined)}>{t('cancel')}</button></div>
+          </form>
+        )}
+        {b.advances.length > 0 && (
+          <table className="stack" style={{ marginTop: 6 }}><tbody>{b.advances.map((a) => (
+            <tr key={a.documentId}><td className="ltr small">{a.date}</td>
+              <td><button className="link" onClick={() => go('Sales', 'invoices', a.documentId)}>{a.number}</button></td>
+              <td className="num">{fmt(a.total)}</td>
+              <td className="small mut">{Number(a.left) > 0 ? t('adv.leftN', { amount: fmt(a.left) }) : t('adv.used')}</td></tr>))}</tbody></table>
+        )}
+      </div>
+
+      <div className="card">
         <div className="actions"><h2 style={{ margin: 0 }}>{t('dep.title')}</h2><span className="spacer" />
           {canEdit && !dep && open && <button className="b small" id="dep-take" onClick={() => setDep({ kind: 'take', amount: '', accountId: banks[0]?.id ?? '', method: 'card', documentId: '' })}>{t('dep.take')}</button>}
           {canEdit && !dep && held && <button className="b small" id="dep-return" onClick={() => setDep({ kind: 'return', amount: b.deposit.held, accountId: banks[0]?.id ?? '', method: 'cash', documentId: '' })}>{t('dep.return')}</button>}
@@ -398,6 +427,7 @@ function BookingPage({ books, id, canEdit }: { books: CompanyBooks; id: string; 
               <table className="stack"><tbody>{b.unbilled.lines.map((l, i) => (
                 <tr key={i}><td className="small">{l.description}</td><td className="num">{fmt(l.total)}</td></tr>))}</tbody></table>
               <div style={{ marginTop: 6 }}><b>{t('room.billTotal', { total: fmt(b.unbilled.total), cur: books.company.currency })}</b>
+                {b.advances.some((a) => Number(a.left) > 0) && <div className="small" id="bk-adv">{t('adv.willDeduct', { amount: fmt((b.advances.reduce((s2, a) => s2 + Math.round(Number(a.left) * 100), 0) / 100).toFixed(2)), cur: books.company.currency })}</div>}
                 {b.unbilled.difference !== '0.00' && <div className="small mut" id="bk-diff">{t('room.billDiff', { quoted: fmt(b.unbilled.quoted), diff: b.unbilled.difference })}</div>}</div>
               {open && canSales && (
                 <div className="actions" style={{ marginTop: 8 }}>

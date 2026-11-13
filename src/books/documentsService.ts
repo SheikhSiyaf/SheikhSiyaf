@@ -194,6 +194,19 @@ async function storedLines(db: Db, docId: string): Promise<PricedLine[]> {
 }
 
 /** Gives the document its number, posts its journal entry and marks it issued. Never changes afterwards. */
+/** Advances deducted on a final invoice (0046): Dr 2160 Customer advances (net) / Dr Output VAT (the advance's VAT) /
+ *  Cr Receivables (prepaid amount), in the invoice's own entry. Nothing for other documents. */
+async function advancePosting(db: Db, companyId: string, documentId: string) {
+  const x = (await db.query(`SELECT coalesce(sum(net_amount), 0)::text AS net, coalesce(sum(vat_amount), 0)::text AS vat FROM advance_deductions WHERE document_id = $1`, [documentId])).rows[0];
+  if (toMinor(x.net) === 0n) return [];
+  const sys = await systemAccounts(db, companyId);
+  const adv = (await db.query(`SELECT id FROM accounts WHERE company_id = $1 AND code = '2160'`, [companyId])).rows[0]?.id
+    ?? bad("This client's chart of accounts has no account 2160 Customer advances.", 'err.chart');
+  const out = [{ accountId: adv as string, debit: x.net as string }];
+  if (toMinor(x.vat) > 0n) out.push({ accountId: sys.outputVat, debit: x.vat });
+  return [...out, { accountId: sys.receivables, credit: fromMinor(toMinor(x.net) + toMinor(x.vat)) }];
+}
+
 export async function issueDocument(db: Db, id: string): Promise<void> {
   const d = await lockDoc(db, id);
   if (d.status !== 'draft') bad('This document has already been issued.', 'err.alreadyIssued');
@@ -209,7 +222,7 @@ export async function issueDocument(db: Db, id: string): Promise<void> {
   const entryId = await postEntry(db, {
     companyId: d.company_id, entryDate: d.issue_day,
     memo: `${number} · ${d.contact_name}`, sourceType: d.type, sourceId: d.id,
-    lines: postingFor(d.type, lines, await systemAccounts(db, d.company_id), d.paid_from_account_id ?? undefined),
+    lines: [...postingFor(d.type, lines, await systemAccounts(db, d.company_id), d.paid_from_account_id ?? undefined), ...(await advancePosting(db, d.company_id, id))],
   });
   await db.query(`UPDATE documents SET status = 'issued', number = $2, journal_entry_id = $3 WHERE id = $1`, [id, number, entryId]);
   await afterIssue(db, id);   // e-invoicing (ZATCA, PINT AE) when the company has it on
@@ -290,7 +303,7 @@ export async function deleteDraft(db: Db, id: string): Promise<void> {
   if (!rowCount) bad('Only drafts can be deleted.', 'err.notDraft');
 }
 
-const DOC_COLS = `d.id, d.company_id AS "companyId", d.type, d.status, d.number, d.contact_id AS "contactId", coalesce(c.name, d.payee) AS "contactName",
+const DOC_COLS = `d.id, d.company_id AS "companyId", d.type, d.status, d.number, d.is_advance AS "isAdvance", d.contact_id AS "contactId", coalesce(c.name, d.payee) AS "contactName",
   c.name_ar AS "contactNameAr", d.payee, d.paid_from_account_id AS "paidFromAccountId", pa.name AS "paidFromName", pa.name_ar AS "paidFromNameAr",
   d.recurring_id AS "recurringId", d.voided_at AS "voidedAt", d.submitted_by AS "submittedBy", d.submitted_at AS "submittedAt",
   d.decided_by AS "decidedBy", d.decided_at AS "decidedAt", d.rejection_reason AS "rejectionReason",
@@ -347,7 +360,10 @@ export async function getDocument(db: Db, id: string) {
                                          ORDER BY created_at LIMIT 1) b ON true
      WHERE c.id = $1`, [d.companyId, d.originalId]);
   const counter = (await db.query(`SELECT n.id, n.type, n.number FROM counter_links k JOIN stock_notes n ON n.id = k.stock_note_id WHERE k.document_id = $1`, [id])).rows[0] ?? null;
-  return { ...d, state: stateOf(d, today()), lines: lines.rows, payments: payments.rows, related: related.rows, contact, seller: seller.rows[0], counter };
+  // Advances deducted on this invoice (0046): each advance invoice and the amount (with VAT) taken off.
+  const advances = (await db.query(`SELECT x.advance_id AS "advanceId", a.number, a.issue_date::text AS "issueDate", (x.net_amount + x.vat_amount)::text AS total
+    FROM advance_deductions x JOIN documents a ON a.id = x.advance_id WHERE x.document_id = $1 ORDER BY a.issue_date, a.number`, [id])).rows;
+  return { ...d, state: stateOf(d, today()), lines: lines.rows, payments: payments.rows, related: related.rows, contact, seller: seller.rows[0], counter, advances };
 }
 
 // ------------------------------------------------------------------ employee claims

@@ -7,6 +7,7 @@ import { fromMinor, toMinor } from '../money.js';
 import { addDays as addDaysDoc } from './documents.js';
 import { issueDocument, nextNumber, recordPayment, saveContact, saveDraft } from './documentsService.js';
 import { postEntry } from '../ledger/ledger.js';
+import * as Adv from './advanceService.js';
 import { addDays, extraLine, groupNights, nights, nightsLine, type Season } from './rooms.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
@@ -204,6 +205,14 @@ export async function bill(db: Db, bookingId: string, o: { upTo?: string; issueD
   const billId = (await db.query(`INSERT INTO booking_bills (company_id, booking_id, document_id, nights_from, nights_to) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
     [b.company_id, bookingId, documentId, c.from, c.to])).rows[0].id;
   if (c.extraIds.length) await db.query('UPDATE booking_extras SET bill_id = $1 WHERE id = ANY ($2)', [billId, c.extraIds]);
+  // Advances paid for this booking come off the bill (0046), oldest first, as far as the bill goes.
+  for (const a of await bookingAdvances(db, bookingId)) {
+    if (toMinor(a.leftNet) <= 0n) continue;
+    const room = (await db.query(`SELECT gross_total - coalesce((SELECT sum(net_amount + vat_amount) FROM advance_deductions WHERE document_id = $1), 0) AS r FROM documents WHERE id = $1`,
+      [documentId])).rows[0].r;
+    if (Number(room) <= 0) break;
+    await Adv.deduct(db, documentId, a.documentId);
+  }
   if (o.issue) await issueDocument(db, documentId);
   return documentId;
 }
@@ -247,7 +256,7 @@ export async function getBooking(db: Db, id: string) {
   const open = ['reserved', 'in_house'].includes(b.status);
   const next = open ? await charges(db, id) : null;
   const sum = (k: 'quoted' | 'total' | 'difference') => fromMinor((next?.charges ?? []).reduce((s, x) => s + toMinor(x[k]), 0n));
-  return { ...b, extras, bills, deposit: await deposits(db, id), unbilled: next ? { lines: next.charges, quoted: sum('quoted'), total: sum('total'), difference: sum('difference') } : null };
+  return { ...b, extras, bills, deposit: await deposits(db, id), advances: await bookingAdvances(db, id), unbilled: next ? { lines: next.charges, quoted: sum('quoted'), total: sum('total'), difference: sum('difference') } : null };
 }
 
 /** The front desk on a day: arrivals, departures, guests in house, and how full the hotel is. */
@@ -357,4 +366,26 @@ export async function deposits(db: Db, bookingId: string) {
     WHERE k.booking_id = $1 ORDER BY k.created_at`, [bookingId])).rows;
   const held = (await db.query('SELECT booking_deposit_held($1)::text AS h', [bookingId])).rows[0].h as string;
   return { held, movements: rows };
+}
+
+// ------------------------------------------------------------------ advance payments (0046)
+/** The guest pays part of the stay in advance: an advance-payment invoice (ZATCA 386, with VAT, on 2160 Customer
+ *  advances) issued and paid at once. It comes off the guest bill when the stay is billed. Returns the invoice. */
+export async function takeAdvance(db: Db, bookingId: string, x: { amount?: string; date?: string; accountId?: string; method?: string; reference?: string | null }): Promise<string> {
+  const b = (await db.query(`SELECT b.company_id, b.contact_id, b.number, b.status, b.arrival::text AS arrival, b.departure::text AS departure, r.number AS room
+    FROM bookings b JOIN rooms r ON r.id = b.room_id WHERE b.id = $1`, [bookingId])).rows[0] ?? notFound();
+  if (!['reserved', 'in_house'].includes(b.status)) bad('This booking is finished and no longer changes.', 'err.roomFinished');
+  if (!x.accountId) bad('Choose the bank or cash account.', 'err.bankAccount');
+  const doc = await Adv.createAdvance(db, b.company_id, { contactId: b.contact_id, amount: x.amount, date: x.date,
+    description: `Advance for booking ${b.number}, room ${b.room}, ${b.arrival} to ${b.departure}`,
+    payment: { accountId: x.accountId, method: x.method, reference: x.reference ?? `Advance ${b.number}` } });
+  await db.query('INSERT INTO booking_advances (booking_id, document_id, company_id) VALUES ($1, $2, $3)', [bookingId, doc, b.company_id]);
+  return doc;
+}
+/** The booking's advances: each advance invoice, its total with VAT, and what is left to deduct (with VAT). */
+export async function bookingAdvances(db: Db, bookingId: string) {
+  return (await db.query(`SELECT d.id AS "documentId", d.number, d.issue_date::text AS date, d.gross_total::text AS total, l.net::text AS "leftNet",
+      (l.net + l.vat)::text AS "left", document_amount_due(d.id)::text AS due
+    FROM booking_advances k JOIN documents d ON d.id = k.document_id CROSS JOIN LATERAL advance_left(d.id) l
+    WHERE k.booking_id = $1 ORDER BY d.issue_date, d.number`, [bookingId])).rows as { documentId: string; number: string; date: string; total: string; leftNet: string; left: string; due: string }[];
 }

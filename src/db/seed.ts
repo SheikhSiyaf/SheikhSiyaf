@@ -178,7 +178,8 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
         const leaving = await Room.createBooking(db, id, { guest: guest('Peter Lindqvist', '+46701234567'), roomId: room['101'], arrival: daysAgo(3), departure: daysAgo(0), source: 'Travel agent', reference: 'TA-55120' });
         await Room.checkIn(db, leaving, daysAgo(3));
         await Room.createBooking(db, id, { guest: guest('Sami Haddad', '0533334444'), roomId: room['102'], arrival: daysAgo(0), departure: daysAgo(-2), adults: 1, source: 'Walk-in' });
-        await Room.createBooking(db, id, { contactId: faisal, roomId: room['301'], arrival: daysAgo(-5), departure: daysAgo(-8), adults: 4, agreedRate: '1000.00', source: 'Email', notes: 'Company booking for the site team' });
+        const team = await Room.createBooking(db, id, { contactId: faisal, roomId: room['301'], arrival: daysAgo(-5), departure: daysAgo(-8), adults: 4, agreedRate: '1000.00', source: 'Email', notes: 'Company booking for the site team' });
+        await Room.takeAdvance(db, team, { amount: '1500.00', date: daysAgo(1), accountId: acct['1000'], method: 'bank_transfer', reference: 'TT-55821' });
         const off = await Room.createBooking(db, id, { guest: guest('Reem Al Qahtani', '0545556666'), roomId: room['203'], arrival: daysAgo(-1), departure: daysAgo(-4), source: 'Website' });
         await Room.cancel(db, off);
       }

@@ -10,7 +10,7 @@
 import { createHash, createPublicKey, sign, type KeyObject } from 'node:crypto';
 import { DOMParser } from '@xmldom/xmldom';
 import { C14nCanonicalization, ExclusiveCanonicalization } from 'xml-crypto';
-import type { EInvoiceData } from '../invoiceData.js';
+import { fromCents, toCents, type EInvoiceData } from '../invoiceData.js';
 import type { CertInfo } from './crypto.js';
 
 import { FIRST_PIH, NS, el, esc, invoiceXml, kindFor, text, type Chain, type ZatcaKind } from './ubl.js';
@@ -104,6 +104,9 @@ export function signedPropertiesDigest(signingTime: string, cert: CertInfo): str
   return hexB64(canonical);
 }
 
+/** QR tag 4: the amount due (BT-115), i.e. the total with VAT less any advances deducted (ZATCA warns otherwise). */
+const payable = (d: EInvoiceData) => fromCents(toCents(d.grossTotal) - (d.prepayments ?? []).reduce((t, p) => t + toCents(p.net) + toCents(p.vat), 0n));
+
 export interface Stamped { xml: string; hash: string; signature: string; qr: string; kind: ZatcaKind }
 /** Builds, hashes, signs and stamps an invoice. `signingTime` is local time yyyy-MM-ddTHH:mm:ss. */
 export function stampInvoice(d: EInvoiceData, chain: Chain, key: KeyObject, cert: CertInfo, signingTime: string): Stamped {
@@ -111,7 +114,7 @@ export function stampInvoice(d: EInvoiceData, chain: Chain, key: KeyObject, cert
   const { hash, base64: hashB64 } = invoiceHash(invoiceXml(d, chain));
   const signature = sign('sha256', hash, key).toString('base64');
   const publicKey = createPublicKey(key).export({ type: 'spki', format: 'der' });
-  const qr = qrCode({ sellerName: d.seller.name, vatNumber: d.seller.vatNumber ?? '', timestamp: `${d.issueDate}T${d.issueTime}`, total: d.grossTotal, vatTotal: d.vatTotal,
+  const qr = qrCode({ sellerName: d.seller.name, vatNumber: d.seller.vatNumber ?? '', timestamp: `${d.issueDate}T${d.issueTime}`, total: payable(d), vatTotal: d.vatTotal,
     hash: hashB64, signature, publicKey, certSignature: kind === 'simplified' ? cert.signature : undefined });
   const block = signatureBlock(hashB64, signature, cert, signingTime, signedPropertiesDigest(signingTime, cert));
   return { xml: invoiceXml(d, chain, qr, block), hash: hashB64, signature, qr, kind };

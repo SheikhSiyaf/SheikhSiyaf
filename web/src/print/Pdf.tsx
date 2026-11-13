@@ -73,10 +73,10 @@ function Footer({ number, note }: { number: string | null; note?: ReactNode }) {
   );
 }
 
-function Totals({ rows, currency }: { rows: [Key, string, boolean?][]; currency: string }) {
+function Totals({ rows, currency }: { rows: [Key, string, boolean?, string?][]; currency: string }) {
   return (
-    <table className="pdf-totals"><tbody>{rows.map(([k, v, strong]) => (
-      <tr key={k} className={strong ? 'strong' : ''}><th><Bi k={k} /></th><td><Num v={v} /> <span className="cur">{currency}</span></td></tr>
+    <table className="pdf-totals"><tbody>{rows.map(([k, v, strong, note], i) => (
+      <tr key={`${k}${i}`} className={strong ? 'strong' : ''}><th><Bi k={k} />{note && <> <span className="ltr">{note}</span></>}</th><td><Num v={v} /> <span className="cur">{currency}</span></td></tr>
     ))}</tbody></table>
   );
 }
@@ -89,6 +89,8 @@ export interface SaleDoc {
   seller: Seller & { originalNumber?: string | null };
   lines: { lineNo: number; description: string; quantity: string; unitPrice: string; vatCode: string; vatRate: string; net: string; vat: string }[];
   payments: { voidedAt: string | null; amount: string }[];
+  /** An advance-payment invoice (ZATCA 386), and the advances deducted on a final invoice. */
+  isAdvance?: boolean; advances?: { number: string; total: string }[];
 }
 
 /** Standard tax invoice when the buyer is VAT registered, simplified tax invoice otherwise (Saudi Arabia). */
@@ -96,7 +98,9 @@ export function saleTitle(d: SaleDoc): Key {
   if (d.type === 'quotation') return 'pdf.quotation';
   if (d.type === 'credit_note') return 'pdf.creditNote';
   if (d.type === 'debit_note') return 'pdf.debitNote';
-  return d.seller.country === 'SA' && !d.contact?.vatNumber ? 'pdf.simplifiedInvoice' : 'pdf.taxInvoice';
+  const simplified = d.seller.country === 'SA' && !d.contact?.vatNumber;
+  if (d.isAdvance) return simplified ? 'pdf.simplifiedAdvanceInvoice' : 'pdf.advanceInvoice';
+  return simplified ? 'pdf.simplifiedInvoice' : 'pdf.taxInvoice';
 }
 
 export function SalePdf({ d, qr }: { d: SaleDoc; qr?: string | null }) {
@@ -135,6 +139,7 @@ export function SalePdf({ d, qr }: { d: SaleDoc; qr?: string | null }) {
         </div>
         <Totals currency={d.seller.currency} rows={[
           ['pdf.totalExVat', d.netTotal], ['pdf.totalVat', d.vatTotal], ['pdf.totalIncVat', d.grossTotal, true],
+          ...(d.advances ?? []).map((a) => ['pdf.lessAdvance', `-${a.total}`, false, a.number] as [Key, string, boolean, string]),
           ...(due ? [['pdf.amountDue', d.amountDue] as [Key, string]] : []),
         ]} />
       </div>

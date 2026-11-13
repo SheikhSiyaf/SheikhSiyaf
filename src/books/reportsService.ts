@@ -207,6 +207,15 @@ export async function vatReturn(db: Db, companyId: string, from: string, to: str
   const side = () => ({ standard: empty(), zero: empty(), exempt: empty(), out_of_scope: empty() } as Record<VatCodeKey, { net: string; vat: string; adjust: string }>);
   const sales = side(), purchases = side();
   for (const r of rows) (r.side === 'sales' ? sales : purchases)[r.code as VatCodeKey] = { net: r.net, vat: r.vat, adjust: r.adjust };
+  // Advances deducted on final invoices (0046): their net and VAT were reported with the advance invoice, so they come
+  // off the final invoice's sales here, as the final invoice's entry takes them off the books.
+  const taken = (await db.query(`SELECT x.vat_code AS code, sum(x.net_amount)::numeric(18,2)::text AS net, sum(x.vat_amount)::numeric(18,2)::text AS vat
+     FROM advance_deductions x JOIN documents d ON d.id = x.document_id
+     WHERE d.company_id = $1 AND d.status = 'issued' AND d.issue_date BETWEEN $2 AND $3 GROUP BY 1`, [companyId, from, to])).rows;
+  for (const t of taken) {
+    const k = t.code as VatCodeKey;
+    sales[k] = { net: fromMinor(toMinor(sales[k].net) - toMinor(t.net)), vat: fromMinor(toMinor(sales[k].vat) - toMinor(t.vat)), adjust: fromMinor(toMinor(sales[k].adjust) - toMinor(t.net)) };
+  }
   const books = async (code: string) => toMinor((await db.query(
     `SELECT coalesce(sum(l.credit - l.debit), 0)::numeric(18,2)::text AS v FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id JOIN accounts a ON a.id = l.account_id
      WHERE a.company_id = $1 AND a.code = $2 AND e.entry_date BETWEEN $3 AND $4`, [companyId, code, from, to])).rows[0].v);

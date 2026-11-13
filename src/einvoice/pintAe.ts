@@ -33,6 +33,7 @@ export function pintAeXml(d: EInvoiceData): string {
   const root = credit ? 'CreditNote' : 'Invoice';
   const cur = d.currency, amt = { currencyID: cur };
   const groups = new Map<string, { code: VatCode; rate: string; net: bigint; vat: bigint }>();
+  const prepaid = (d.prepayments ?? []).reduce((t, p) => t + toCents(p.net) + toCents(p.vat), 0n);
   for (const l of d.lines) {
     const k = `${l.vatCode}|${l.vatRate}`; const g = groups.get(k) ?? { code: l.vatCode, rate: l.vatRate, net: 0n, vat: 0n };
     g.net += toCents(l.net); g.vat += toCents(l.vat); groups.set(k, g);
@@ -46,7 +47,7 @@ export function pintAeXml(d: EInvoiceData): string {
     el('cbc:IssueDate', null, d.issueDate),
     el('cbc:IssueTime', null, d.issueTime),
     !credit && d.dueDate && el('cbc:DueDate', null, d.dueDate),
-    el(credit ? 'cbc:CreditNoteTypeCode' : 'cbc:InvoiceTypeCode', null, credit ? '381' : d.type === 'debit_note' ? '383' : '380'),
+    el(credit ? 'cbc:CreditNoteTypeCode' : 'cbc:InvoiceTypeCode', null, credit ? '381' : d.type === 'debit_note' ? '383' : d.advance ? '386' : '380'),
     credit && d.reason && el('cbc:Note', null, esc(d.reason)),
     el('cbc:DocumentCurrencyCode', null, cur),
     el('cbc:TaxCurrencyCode', null, 'AED'),
@@ -59,7 +60,9 @@ export function pintAeXml(d: EInvoiceData): string {
       ...[...groups.values()].map((g) => el('cac:TaxSubtotal', null, el('cbc:TaxableAmount', amt, fromCents(g.net)), el('cbc:TaxAmount', amt, fromCents(g.vat)),
         el('cac:TaxCategory', null, el('cbc:ID', null, CAT[g.code]), el('cbc:Percent', null, pct(g.rate)), el('cac:TaxScheme', null, el('cbc:ID', null, 'VAT')))))),
     el('cac:LegalMonetaryTotal', null, el('cbc:LineExtensionAmount', amt, d.netTotal), el('cbc:TaxExclusiveAmount', amt, d.netTotal),
-      el('cbc:TaxInclusiveAmount', amt, d.grossTotal), el('cbc:PayableAmount', amt, d.grossTotal)),
+      el('cbc:TaxInclusiveAmount', amt, d.grossTotal),
+      // Advances deducted on a final invoice (BT-113): the amount due is the gross less them.
+      prepaid > 0n && el('cbc:PrepaidAmount', amt, fromCents(prepaid)), el('cbc:PayableAmount', amt, fromCents(toCents(d.grossTotal) - prepaid))),
     ...d.lines.map((l) => el(credit ? 'cac:CreditNoteLine' : 'cac:InvoiceLine', null,
       el('cbc:ID', null, String(l.no)),
       el(credit ? 'cbc:CreditedQuantity' : 'cbc:InvoicedQuantity', { unitCode: 'C62' }, l.quantity),

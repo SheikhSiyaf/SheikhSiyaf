@@ -25,6 +25,8 @@ export interface DocLine {
 }
 export interface DocDetail extends DocRow {
   lines: DocLine[];
+  /** An advance-payment invoice (ZATCA 386), and the advances deducted on a final invoice (0046). */
+  isAdvance?: boolean; advances?: { advanceId: string; number: string; issueDate: string; total: string }[];
   payments: { id: string; number: string; date: string; amount: string; method: string; voidedAt: string | null }[];
   related: { id: string; type: DocType; status: string; number: string | null; issueDate: string; grossTotal: string }[];
   /** The goods note made with it at the warehouse counter. */

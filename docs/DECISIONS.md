@@ -34,8 +34,18 @@
 - The cash flow forecast is worked out from the books each time (nothing stored but people's own items and the minimum cash). Payroll repeats last month's net pay; social insurance repeats last month's contributions on the calendar's due date; VAT due is the VAT payable of each return period so far.
 - Bulk import goes through the same services as typing (rules, audit, separation). Customers, suppliers, items and accounts: new rows are added, existing ones (same name or VAT number, code, account code) are left as they are, rows with problems are left out with the reason. Opening balances: all or nothing, one entry. Files are read in the browser; only the rows are sent.
 - What is still to build is kept in docs/PENDING.md, by priority.
+- Hotels: VAT on advances, deposits and cancellations (the client's accountant, 2026-11-15).
+  - Advance payment: 15% output VAT in the VAT period the money is received, even when the stay is in a later period; an advance tax invoice (ZATCA 386) on receipt. The net is a liability (2160 Customer advances) and becomes room revenue when the stay is provided, without counting its VAT again. The final invoice deducting the advance does this.
+  - Refundable security deposit: a liability (2150), no VAT on receipt or refund. If part is kept, the VAT follows what it is: payment for a service (15%, including when applied to accommodation charges) or genuine compensation (outside VAT); this follows the hotel's booking terms.
+  - Cancellation: the hotel's policy is to keep 50% of the booking amount, with the terms disclosed to the guest before payment. The refunded part is a credit note on the advance invoice; the part kept is a fee with 15% VAT where it is payment for the booking.
+  - Early checkout: the unused part of the advance follows the booking terms, for example keep 50% of the unused night and refund the rest by a credit note on the advance. A balance the guest keeps for a later stay stays a liability until used; it never becomes income after a set time.
+  - Any later increase, reduction or refund of the price is documented by an invoice or credit note and goes on the VAT return accordingly.
+  - Operating procedure: payment is collected before the guest enters the room, with an advance invoice, so a stay across a month end is taxed in the period of payment.
+  - Extras (restaurant, laundry, spa, waterpark, banquets and events, other guest services) go to their own income accounts and cost centres, not room revenue; each is invoiced when supplied.
+  - Saudi hotel invoices carry no charge besides VAT (no municipality fee).
 
 ## Open
+- Hotels, from the accountant's answers: the exact boxes of the Saudi VAT return for an advance (sales in the month received, a reduction in the month it is used); the tax date for a stay across a month end that is not paid in full in advance (unpaid or part paid); whether a cancellation fee always carries 15% VAT under the 50% policy.
 - Restaurant POS integration (importing sales from the restaurant's own POS instead of entering them in Nusuh Books): which POS systems.
 - Direct bank feeds (transactions sent by the bank, no files): needs an open banking provider licensed by SAMA (Saudi) or under the UAE Central Bank open finance framework. Which provider, and the cost.
 - Selling a fixed asset with VAT: today the disposal records proceeds before VAT; how the VAT on the sale is invoiced is to be agreed with the reviewer.

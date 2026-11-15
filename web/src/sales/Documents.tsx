@@ -12,6 +12,7 @@ import { isLocked, lockedUpTo } from '../books/Workspace.tsx';
 import { moduleForType, pageForType } from '../books/nav.ts';
 import { documentTotals, priceLine, type VatCode } from '../../../src/books/documents.ts';
 import { AttachmentsCard, PdfButton, printDocument } from '../print/Attachments.tsx';
+import { docTitle } from '../print/Pdf.tsx';
 import { StateBadge, bankAccounts, lineAccounts, sideOf, useGo, type Contact, type DocDetail, type DocRow, type DocType } from './common.tsx';
 
 const FILTERS: Record<string, string[]> = {
@@ -406,7 +407,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
   };
   const due = x.status === 'issued' && (x.type === 'invoice' || x.type === 'bill' || x.type === 'debit_note');
   const canPay = books.canPost && due && toMinor(x.amountDue) > 0n;
-  const title = t(x.isAdvance ? 'doc.title.advance' : `doc.title.${x.type}` as Key);
+  const title = t(docTitle(x));
   return (
     <>
       <div className="actions" style={{ marginBottom: 10 }}>

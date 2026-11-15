@@ -10,6 +10,7 @@ import { decryptSecret, encryptSecret } from '../auth/secretBox.js';
 import type { EInvoiceData, EParty, VatCode } from '../einvoice/invoiceData.js';
 import * as Z from '../einvoice/zatca/crypto.js';
 import * as X from '../einvoice/zatca/xml.js';
+import { demoCertificate } from '../einvoice/zatca/demoCert.js';
 import { ZatcaClient, type Fetch, type Result } from '../einvoice/zatca/api.js';
 import { pintAeInScope, pintAeXml } from '../einvoice/pintAe.js';
 
@@ -243,6 +244,25 @@ export async function makeEInvoice(db: Db, documentId: string): Promise<string |
     `INSERT INTO einvoices (company_id, document_id, scheme, device_id, kind, uuid, icv, pih, invoice_hash, xml, qr, status, created_by)
      VALUES ($1, $2, 'zatca', $3, $4, $5, $6, $7, $8, $9, $10, 'pending', app_user_id()) RETURNING id`,
     [companyId, documentId, dev.id, st.kind, uuid, Number(dev.icv) + 1, dev.last_hash, st.hash, st.xml, st.qr])).rows[0].id;
+}
+
+/** Demo data only (src/db/seed.ts): a sandbox device labelled as not connected to ZATCA, with a self-signed demo
+ *  certificate, so the demo shows e-invoices made by the real code. It never reaches ZATCA (no ZATCA token). */
+export const DEMO_DEVICE_NAME = 'Demo device (not connected to ZATCA)';
+export async function demoDevice(db: Db, companyId: string): Promise<string> {
+  const co = await company(db, companyId);
+  const s = await getSettings(db, companyId);
+  const { privatePem } = Z.newKey();
+  const serial = randomUUID();
+  const csr = Z.makeCsr(privatePem, { env: 'sandbox', commonName: DEMO_DEVICE_NAME, serialNumber: `1-NusuhBooks|2-1.0|3-${serial}`, organisation: co.name, organisationUnit: co.city,
+    vatNumber: co.vatNumber, invoiceTypes: '1100', address: `${s.buildingNumber} ${s.street}, ${s.district}, ${co.city} ${s.postalCode}`, industry: co.industry ?? 'Trading' });
+  const cert = demoCertificate(privatePem, DEMO_DEVICE_NAME);
+  const id = (await db.query(
+    `INSERT INTO einvoice_devices (company_id, environment, name, serial, branch, invoice_types, private_key_enc, csr, cert_valid_to, created_by)
+     VALUES ($1, 'sandbox', $2, $3, $4, '1100', $5, $6, $7, app_user_id()) RETURNING id`,
+    [companyId, DEMO_DEVICE_NAME, serial, co.city, secret(privatePem), csr.pem, Z.certInfo(cert).validTo])).rows[0].id;
+  await db.query(`UPDATE einvoice_devices SET status = 'active', production_token = $2, production_secret_enc = $3 WHERE id = $1`, [id, cert, secret('demo: not connected to ZATCA')]);
+  return id;
 }
 
 /** Minutes before the next try after the 1st, 2nd, ... failed attempt to reach ZATCA; the last repeats. */

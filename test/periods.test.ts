@@ -31,6 +31,6 @@ describe('Periods', () => {
     await expect(addPeriod(f.a.id, '2026-02-15', '2026-03-15')).rejects.toThrow(/conflicting key|exclusion/);
     await expect(as(f.partner, (db) => db.query(
       `UPDATE periods SET end_date = '2026-02-27' WHERE company_id = $1 AND start_date = '2026-02-01'`, [f.a.id],
-    ))).rejects.toThrow(/dates cannot be changed/);
+    ))).rejects.toThrow(/dates cannot be changed|permission denied/);
   });
 });

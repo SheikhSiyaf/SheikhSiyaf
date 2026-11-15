@@ -415,3 +415,14 @@ Every change below is covered by a test in `test/`.
 | Change | Why |
 |---|---|
 | `before_document_line_change()` and `before_document_advance()`: a credit note whose original is an advance invoice may use and be issued with 2160 Customer advances (other sales lines still need an income account; other documents still cannot post to 2160) | Found in the Rooms Deep Check: a cancelled booking's paid advance could not be refunded, because the credit note's 2160 lines were refused. Crediting the unused advance reverses 2160 and its VAT; an advance already deducted on a final invoice still cannot be credited (0046). |
+
+## 0048_signoff_year_end_locks.sql
+| Change | Why |
+|---|---|
+| `is_year_end_posting()`; `before_entry_insert()` and `before_entry_signed_off()` allow, in a locked or signed-off month, only the partner's closing entry of the year being closed and the reversal that reopens it; constraint trigger `entries_year_end_owned` refuses at commit any 'year_end_close' entry no closed year names | Year-end closing unlocked the year-end month to post the closing entry, which a standing sign-off refuses, so a year whose last month was signed off could not be closed or reopened. The month is no longer unlocked at all. |
+| `periods.signoff_lock` (set only by the sign-off trigger; people may write only `locked_at`, by column grants); withdrawing a sign-off unlocks only periods with `signoff_lock`; a partner's lock or unlock clears it; closing a year clears it for the year's months | Withdrawing a sign-off unlocked every overlapping month, also months the partner had locked separately. Months locked before this migration count as the partner's. |
+
+## 0049_support_owner_email.sql
+| Change | Why |
+|---|---|
+| `support_open()` also queues a 'notice' email to every active owner account: the issue's subject and category and the number of conversations waiting, nothing else | The platform owner learns of new support issues without watching the console. No message text, names or accounting data leave in the email. |

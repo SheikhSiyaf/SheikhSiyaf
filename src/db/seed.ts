@@ -459,6 +459,18 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
 
       // E-invoicing: Saudi clients have their national address saved, ready to connect to ZATCA (Sales > E-invoicing).
       if (c.country === 'SA') await Einv.saveSettings(db, id, { street: c.address, buildingNumber: '2322', district: 'Al Murabba', postalCode: '23333' });
+      if (c.name === 'Al Noor Trading') {
+        // Demo e-invoicing, clearly labelled: a sandbox device named "not connected to ZATCA" with a self-signed demo
+        // certificate. The e-invoices are made by the real code; ZATCA's answers (cleared, reported) are stored as demo
+        // data. Nothing is sent to ZATCA.
+        await Einv.demoDevice(db, id);
+        await db.query('UPDATE einvoice_settings SET enabled = true WHERE company_id = $1', [id]);
+        const docs = (await db.query(`SELECT id FROM documents WHERE company_id = $1 AND status = 'issued' AND type IN ('invoice', 'credit_note', 'debit_note')
+          ORDER BY issue_date, number`, [id])).rows as { id: string }[];
+        for (const d of docs) await Einv.makeEInvoice(db, d.id);
+        await db.query(`UPDATE einvoices SET status = CASE kind WHEN 'standard' THEN 'cleared' ELSE 'reported' END, http_status = 200, attempts = 1,
+          submitted_at = created_at, next_attempt_at = NULL WHERE company_id = $1 AND status = 'pending'`, [id]);
+      }
 
       // Calendar: earlier deadlines filed (the latest left to do), and the client's own licence renewal.
       await asUser(poster);

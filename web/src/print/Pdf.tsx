@@ -103,6 +103,12 @@ export function saleTitle(d: SaleDoc): Key {
   return simplified ? 'pdf.simplifiedInvoice' : 'pdf.taxInvoice';
 }
 
+/** The heading of a document on screen: sales invoices are named as on the PDF (simplified or standard tax invoice). */
+export function docTitle(d: { type: string; isAdvance?: boolean; seller?: { country: string } | null; contact?: { vatNumber: string | null } | null }): Key {
+  if (d.type === 'invoice' && d.seller) return saleTitle(d as unknown as SaleDoc);
+  return (d.isAdvance ? 'doc.title.advance' : `doc.title.${d.type}`) as Key;
+}
+
 export function SalePdf({ d, qr }: { d: SaleDoc; qr?: string | null }) {
   const c = d.contact;
   const due = d.type === 'invoice' && d.status === 'issued';

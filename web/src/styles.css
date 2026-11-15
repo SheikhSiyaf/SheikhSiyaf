@@ -217,6 +217,8 @@ input.amount { min-width: 150px; }
   table.stack td:first-child { flex: 1 1 100%; }
   table.stack td[data-label]::before { content: attr(data-label) ": "; color: var(--mut); font-size: 12px; }
   table.stack td.num { text-align: start; }
+  table.stack td.open-client { flex: 1 1 100%; }
+  table.stack td.open-client .b { width: 100%; }
   table.totals { min-width: 0; width: 100%; }
 }
 

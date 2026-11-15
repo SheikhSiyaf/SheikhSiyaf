@@ -70,8 +70,7 @@ export async function close(db: Db, companyId: string, endDate: string): Promise
   if (!role) throw new HttpError(403, 'Only the Firm partner closes or reopens a year.', 'err.yearPartner');
   const p = await preview(db, companyId, endDate);
   const id = randomUUID();
-  // The year-end month is opened for the closing entry, then every month of the year is locked.
-  await db.query(`UPDATE periods SET locked_at = NULL WHERE company_id = $1 AND $2::date BETWEEN start_date AND end_date AND locked_at IS NOT NULL`, [companyId, endDate]);
+  // The closing entry is allowed in a locked or signed-off year-end month (db/migrations/0048); then every month is locked.
   let entryId: string | null = null;
   if (p.lines.length) {
     const re = await retainedAccount(db, companyId);
@@ -97,9 +96,7 @@ export async function reopen(db: Db, id: string, reason: string): Promise<void> 
   if (!String(reason ?? '').trim()) bad('Say why the year is reopened.', 'err.reopenReason');
   await db.query(`UPDATE fiscal_years SET status = 'reopened', reopen_reason = $2 WHERE id = $1`, [id, reason.trim()]);
   if (y.entry_id) {
-    await db.query(`UPDATE periods SET locked_at = NULL WHERE company_id = $1 AND $2::date BETWEEN start_date AND end_date`, [y.company_id, y.e]);
     const rev = (await db.query('SELECT reverse_entry($1, $2, $3) AS id', [y.entry_id, y.e, `Reopening: reversal of year-end closing ${y.e}`])).rows[0].id;
-    await db.query(`UPDATE periods SET locked_at = now() WHERE company_id = $1 AND $2::date BETWEEN start_date AND end_date`, [y.company_id, y.e]);
     await db.query(`UPDATE fiscal_years SET reopen_entry_id = $2 WHERE id = $1`, [id, rev]);
   }
 }

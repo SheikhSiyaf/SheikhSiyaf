@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-15 (known issues batch 1: B, C, E, F done; A and D awaiting approval).
+Last updated: 2026-11-15 (known issues batch 1 done, with its Deep Check and sweep).
 
 ---
 
@@ -84,7 +84,7 @@ console: creates customers and companies, bills them, answers support messages, 
 - **Quality**: 500+ automated tests (accounting rules, data separation, API); every change is tested first.
 - **Demo**: the real app now runs as a free demo site (Render web service + Neon PostgreSQL 16, Frankfurt), demo data only, every background job and outside connection switched off, sign-in with the demo users (password demo1234, so share the address only with trusted people). It sleeps after 15 minutes and takes up to a minute to wake; Neon keeps only 6 hours of restore history. Every push to the branch redeploys it. Not for real data: the paid hosting, backups and security review below are still needed. A browser-only demo also exists as a claude.ai artifact.
 - **Marketing screenshots**: 46 real screenshots with demo data in `marketing-screens/` (English and Arabic at 1440x900, phone layouts of the dashboard, sales and firm client list). Al Noor Trading has a labelled demo e-invoicing device ("Demo device (not connected to ZATCA)", self-signed demo certificate): its e-invoices are made by the real code and ZATCA's answers are stored as demo data; nothing is sent. The firm client list shows as cards on phones.
-- **Known issues batch 1 (partly done)**: a year closes and reopens when its last month is signed off; withdrawing a sign-off unlocks only what the sign-off locked (partner locks stay); simplified invoices say "Simplified tax invoice" on screen; a new support issue emails the owner (subject and counts only). Migrations 0048 and 0049. Still to do after approval: A (ZATCA sender and payment confirmation run as a system identity) and D (retry standard invoices; "Not cleared by ZATCA yet").
+- **Known issues batch 1 (done)**: a year closes and reopens when its last month is signed off; withdrawing a sign-off unlocks only what the sign-off locked; simplified invoices say "Simplified tax invoice" (lists say "Invoice"); a new support issue emails the owner (subject and counts only). The built-in "Nusuh Books automatic sender" (cannot sign in, one company and one job at a time) now runs the ZATCA sender, online-payment confirmation, recurring invoices, automatic reminders, month-end revaluation and bank feed syncs, so they keep working when the person who set them up leaves; who set them up is still recorded. Standard invoices ZATCA cannot clear at once are retried automatically, marked "Not cleared by ZATCA yet", may go to the buyer after 5 minutes (ZATCA Detailed Guidelines v2, p.46), and the cleared invoice is offered when it arrives; ZATCA's 303 "clearance switched off" is reported instead. Migrations 0048 to 0052.
 - **Demo-site switches**: `OUTSIDE_CALLS=off` stops every call to an outside service (ZATCA, online payment, exchange rates, email), and `AUTH_PURGE_JOBS=off` joins the other job switches, so a free demo (Render + Neon) can run with no background work and no outside contact.
 
 Technology (for vendor conversations): PostgreSQL database, Node.js (TypeScript) server, React web front end. One

@@ -426,3 +426,23 @@ Every change below is covered by a test in `test/`.
 | Change | Why |
 |---|---|
 | `support_open()` also queues a 'notice' email to every active owner account: the issue's subject and category and the number of conversations waiting, nothing else | The platform owner learns of new support issues without watching the console. No message text, names or accounting data leave in the email. |
+
+## 0050_system_user_kind.sql
+| Change | Why |
+|---|---|
+| `user_kind` gains 'system' | For the built-in automatic sender (0051); a new enum value needs its own transaction. |
+
+## 0051_automatic_sender.sql
+| Change | Why |
+|---|---|
+| One user "Nusuh Books automatic sender" (kind 'system', platform firm, never a password or two-factor secret, never a member of a company); `system_user_id()`, `app_system_company()`; `app_company_ids()` and `app_has_role()` let it act for the one company named for the transaction (`app.system_company`) and one job (`app.system_job`): 'einvoice' while the company is active with a connected or retired device, 'online_payment' while online payments are on | The ZATCA sender and the online-payment confirmation worked as the person who connected the device or switched payments on, and stopped when that person was suspended or left. |
+| `before_system_write()` on the ledger, documents, contacts, accounts, periods, payments, e-invoicing, memberships, users, sign-offs and fiscal years: the automatic sender writes only ZATCA's answers ('einvoice') and customer receipts ('online_payment') | It can do nothing else, whatever code runs as it. Every write is audited under it; devices keep `created_by` and payment settings `enabled_by`. |
+| `einvoices_to_send()` includes standard invoices and no longer depends on who connected the device; `online_pay_get()` runs as the automatic sender while payments are on | Standard invoices ZATCA could not clear at once are retried automatically (ZATCA Detailed Guidelines for E-Invoicing v2, May 2023, p.46). |
+| `einvoice_warnings` stages c1, c4, c24; `einvoice_warnings_due()` returns `kind` and includes standard invoices pending for an hour | Administrators are warned when a standard invoice is not cleared after 1, 4 and 24 hours. |
+| `document_public()`: `notCleared`, and the QR from ZATCA's cleared invoice when there is one | The customer's page says when an invoice is not cleared by ZATCA yet, and shows ZATCA's QR once it is cleared (it showed our own stamp's QR before). |
+
+## 0052_automatic_jobs.sql
+| Change | Why |
+|---|---|
+| `app_system_company()` and `before_system_write()` add the jobs 'recurring' (make and issue the due invoice, its entry and e-invoice), 'reminders' (email reminders), 'fx' (post the month-end revaluation, add the exchange gains and losses accounts if missing) and 'bank_feed' (import lines, book those a bank rule matches), each only while it is switched on for the company | Found in the batch 1 sweep: recurring invoices, automatic reminders and bank feed syncs stopped without a word when the person who set them up was suspended or left, and the automatic revaluation failed. |
+| `recurring_invoices_due()`, `reminders_auto()`, `bank_feeds_due()` no longer require that person to be active, and return the automatic sender | Who set them up stays recorded (`created_by`, `enabled_by`). |

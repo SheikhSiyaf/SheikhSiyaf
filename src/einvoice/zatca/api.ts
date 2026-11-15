@@ -7,13 +7,13 @@ export const BASE: Record<ZatcaEnv, string> = {
   simulation: 'https://gw-fatoora.zatca.gov.sa/e-invoicing/simulation',
   production: 'https://gw-fatoora.zatca.gov.sa/e-invoicing/core',
 };
-export type Fetch = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<{ status: number; text(): Promise<string> }>;
+export type Fetch = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal; redirect?: 'manual' }) => Promise<{ status: number; text(): Promise<string> }>;
 
 export interface Messages { type?: string; code?: string; category?: string; message?: string; status?: string }
 export interface Validation { status?: string; infoMessages?: Messages[] | Messages; warningMessages?: Messages[]; errorMessages?: Messages[] }
 export interface Result {
   /** What happened: accepted (with or without warnings), rejected by the rules, or not reached (network, outage, login). */
-  outcome: 'accepted' | 'rejected' | 'unreachable';
+  outcome: 'accepted' | 'rejected' | 'unreachable' | 'clearance_off';
   httpStatus: number;
   clearedXml?: string;
   warnings: string[]; errors: string[];
@@ -32,7 +32,7 @@ export class ZatcaClient {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), this.timeoutMs);
     try {
       const r = await this.fetchFn(`${BASE[this.env]}${path}`, {
-        method: 'POST', signal: ctl.signal,
+        method: 'POST', signal: ctl.signal, redirect: 'manual',   // ZATCA's 303 (clearance switched off) is an answer, not a redirect
         headers: { 'Accept-Version': 'V2', 'Accept-Language': 'en', Accept: 'application/json', 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify(body),
       });
@@ -76,7 +76,9 @@ export class ZatcaClient {
     const warnings = list(v.warningMessages), errors = list(v.errorMessages);
     const passed = (j.clearanceStatus === 'CLEARED' || j.reportingStatus === 'REPORTED' || v.status === 'PASS' || v.status === 'WARNING') && !errors.length;
     // 200 accepted; 202 accepted with warnings; 400 rejected; 401 credentials; 5xx and 0 not reached (send again later).
-    const outcome = (r.status === 200 || r.status === 202) && passed ? 'accepted' : r.status === 400 || ((r.status === 200 || r.status === 202) && !passed) ? 'rejected' : 'unreachable';
+    // 303: ZATCA has switched clearance off; the invoice is to be reported instead (Detailed Guidelines v2, error codes).
+    const outcome = r.status === 303 ? 'clearance_off'
+      : (r.status === 200 || r.status === 202) && passed ? 'accepted' : r.status === 400 || ((r.status === 200 || r.status === 202) && !passed) ? 'rejected' : 'unreachable';
     return { outcome, httpStatus: r.status, clearedXml: j.clearedInvoice ? Buffer.from(j.clearedInvoice, 'base64').toString('utf8') : undefined,
       warnings, errors: errors.length || outcome !== 'unreachable' ? errors : [`HTTP ${r.status}`], raw: r.json ?? r.text.slice(0, 2000) };
   }

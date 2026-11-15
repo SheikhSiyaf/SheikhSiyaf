@@ -2,7 +2,7 @@
 // transactions in as statement lines, through the same import as a statement file (duplicates skipped), then the
 // bank rules book what they recognise. Synced on connecting, by Sync now, and every six hours by the server.
 import type pg from 'pg';
-import { withUser, type Db } from '../db/session.js';
+import { withSystem, type Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
 import { FEED_PROVIDERS } from '../bankfeeds/providers.js';
 import { applyRules, getBankAccount, importStatement } from './bankService.js';
@@ -67,10 +67,10 @@ export async function disconnect(db: Db, bankAccountId: string) {
 
 /** The server's job: syncs each live feed not synced in the last six hours, as the person who connected it. */
 export async function runBankFeeds(pool: pg.Pool, day = today()) {
-  const due = (await pool.query('SELECT id, run_as FROM bank_feeds_due(6)')).rows as { id: string; run_as: string }[];
+  const due = (await pool.query('SELECT id, company_id FROM bank_feeds_due(6)')).rows as { id: string; company_id: string }[];
   const out: { id: string; imported: number; problem: string | null }[] = [];
   for (const d of due) {
-    try { out.push({ id: d.id, imported: (await withUser(pool, d.run_as, (db) => sync(db, d.id, day))).imported, problem: null }); }
+    try { out.push({ id: d.id, imported: (await withSystem(pool, d.company_id, 'bank_feed', (db) => sync(db, d.id, day))).imported, problem: null }); }
     catch (e) { await pool.query('SELECT bank_feed_note($1, $2)', [d.id, (e as Error).message]); out.push({ id: d.id, imported: 0, problem: (e as Error).message }); }
   }
   return out;

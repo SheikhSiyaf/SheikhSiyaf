@@ -11,7 +11,7 @@ import { zatcaQrPayload, zatcaTimestamp } from '../../../src/einvoice/zatcaQr.ts
 import { fmt, toMinor } from '../money.ts';
 
 interface PublicDoc { id: string; type: string; status: string; issuedAt: string | null; number: string | null; issueDate: string; dueDate: string | null; reference: string | null;
-  notes: string | null; netTotal: string; vatTotal: string; grossTotal: string; amountDue: string; qr: string | null; payOnline?: boolean;
+  notes: string | null; netTotal: string; vatTotal: string; grossTotal: string; amountDue: string; qr: string | null; payOnline?: boolean; notCleared?: boolean;
   seller: { name: string; nameAr: string | null; vatNumber: string | null; crNumber: string; address: string; city: string; country: string; currency: string };
   buyer: { name: string; nameAr: string | null; vatNumber: string | null; address: string | null; city: string | null };
   lines: { description: string; quantity: string; unitPrice: string; vatRate: string; netAmount: string; vatAmount: string }[] }
@@ -56,7 +56,7 @@ export function PublicDocument({ token, paid, extra }: { token: string; paid?: s
   if (!d) return <main className="public-doc"><Loading /></main>;
   const sale: SaleDoc = {
     type: d.type, status: d.status, number: d.number, issueDate: d.issueDate, dueDate: d.dueDate, reference: d.reference, notes: d.notes,
-    netTotal: d.netTotal, vatTotal: d.vatTotal, grossTotal: d.grossTotal, amountDue: d.amountDue,
+    netTotal: d.netTotal, vatTotal: d.vatTotal, grossTotal: d.grossTotal, amountDue: d.amountDue, notCleared: d.notCleared,
     contact: { name: d.buyer.name, nameAr: d.buyer.nameAr, vatNumber: d.buyer.vatNumber, crNumber: null, address: d.buyer.address, city: d.buyer.city },
     seller: d.seller, payments: [],
     lines: d.lines.map((l, i) => ({ lineNo: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, vatCode: toMinor(l.vatRate) > 0n ? 'standard' : 'zero',

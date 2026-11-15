@@ -29,3 +29,24 @@ export async function withUser<T>(pool: pg.Pool, userId: string, fn: (db: Db) =>
     client.release();
   }
 }
+
+/** The automatic jobs (db/migrations/0051, 0052): ZATCA's answers, paid online payments, recurring invoices, automatic
+ *  reminders, the month-end exchange-rate revaluation and bank feed syncs. */
+export type SystemJob = 'einvoice' | 'online_payment' | 'recurring' | 'reminders' | 'fx' | 'bank_feed';
+/** Runs `fn` as the built-in automatic sender, for one company and one job. The database allows nothing else. */
+export async function withSystem<T>(pool: pg.Pool, companyId: string, job: SystemJob, fn: (db: Db) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT set_config('app.user_id', (SELECT system_user_id())::text, true), set_config('app.system_company', $1, true), set_config('app.system_job', $2, true)`,
+      [companyId, job]);
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw err;
+  } finally {
+    client.release();
+  }
+}

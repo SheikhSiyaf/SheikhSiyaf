@@ -314,6 +314,7 @@ label.chip.on { border-color: var(--teal); background: var(--tealbg); color: var
 .pdf-title-ar { font-size: 13pt; font-weight: 700; color: var(--pc); }
 .pdf-number { font-size: 13pt; font-weight: 700; color: var(--pc); font-variant-numeric: tabular-nums; }
 .pdf-row { display: flex; gap: 14px; align-items: stretch; margin-bottom: 12px; }
+.pdf-notcleared { border: 1px solid #b45309; background: #fffbeb; color: #78350f; padding: 6px 10px; border-radius: 6px; margin-bottom: 10px; font-size: 12px; }
 .pdf-row > * { flex: 1 1 0; }
 .pdf-row.bottom { align-items: flex-start; margin-top: 10px; }
 .pdf-left { display: flex; flex-direction: column; gap: 8px; }

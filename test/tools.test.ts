@@ -31,13 +31,16 @@ describe('Recurring sales invoices', () => {
     await expect(as(f.staff, (db) => T.saveRecurringInvoice(db, f.a.id, { name: 'x', contactId: customer, frequency: 'daily', nextDate: '2026-01-01', lines: [line()] }))).rejects.toThrow(/how often/);
   });
 
-  it('the hourly job issues and emails as the person who set it up; customers without email are still invoiced', async () => {
+  it('the hourly job issues and emails as the automatic sender, also when the person who set it up is suspended; customers without email are still invoiced', async () => {
     const a = await as(f.staff, (db) => T.saveRecurringInvoice(db, f.a.id, { name: 'Retainer', contactId: customer, frequency: 'monthly', nextDate: '2026-04-01', mode: 'issue_and_email', lines: [line()] }));
     const b = await as(f.staff, (db) => T.saveRecurringInvoice(db, f.a.id, { name: 'Support', contactId: quiet, frequency: 'monthly', nextDate: '2026-04-01', mode: 'issue_and_email', lines: [line()] }));
-    const out = await runRecurringInvoices(app, '2026-04-02', 'https://books.example');
+    await owner.query(`UPDATE users SET status = 'suspended' WHERE id = $1`, [f.staff]);
+    let out;
+    try { out = await runRecurringInvoices(app, '2026-04-02', 'https://books.example'); } finally { await owner.query(`UPDATE users SET status = 'active' WHERE id = $1`, [f.staff]); }
     expect(out.filter((x) => [a, b].includes(x.id))).toEqual(expect.arrayContaining([{ id: a, created: 1, problem: null }, { id: b, created: 1, problem: null }]));
     const doc = (await owner.query(`SELECT id, status, created_by FROM documents WHERE recurring_invoice_id = $1`, [a])).rows[0];
-    expect(doc).toMatchObject({ status: 'issued', created_by: f.staff });
+    expect(doc).toMatchObject({ status: 'issued', created_by: (await owner.query(`SELECT id FROM users WHERE kind = 'system'`)).rows[0].id });
+    expect((await owner.query('SELECT created_by FROM recurring_invoices WHERE id = $1', [a])).rows[0].created_by).toBe(f.staff);   // who set it up
     expect((await owner.query(`SELECT count(*)::int AS n FROM email_outbox WHERE document_id = $1`, [doc.id])).rows[0].n).toBe(1);
     expect((await owner.query(`SELECT count(*)::int AS n FROM email_outbox e JOIN documents d ON d.id = e.document_id WHERE d.recurring_invoice_id = $1`, [b])).rows[0].n).toBe(0);
     expect((await runRecurringInvoices(app, '2026-04-02')).filter((x) => [a, b].includes(x.id))).toEqual([]);   // next is May
@@ -59,11 +62,13 @@ describe('Statements and reminders', () => {
     expect(e.body_html).toContain('<table');
   });
 
-  it('reminders: by hand any time; automatically once per level reached, as the person who turned them on', async () => {
+  it('reminders: by hand any time; automatically once per level reached, also when the person who turned them on is suspended', async () => {
     await as(f.staff, (db) => T.sendReminder(db, inv, 'https://b.example'));
     await as(f.staff, (db) => T.saveReminderSettings(db, f.a.id, { auto: true, days: [7, 30] }));
     expect(await runAutoReminders(app, '2026-06-30', '')).toEqual([]);   // no PUBLIC_URL: nothing goes out
-    const first = await runAutoReminders(app, '2026-06-30', 'https://b.example');
+    await owner.query(`UPDATE users SET status = 'suspended' WHERE id = $1`, [f.staff]);
+    let first;
+    try { first = await runAutoReminders(app, '2026-06-30', 'https://b.example'); } finally { await owner.query(`UPDATE users SET status = 'active' WHERE id = $1`, [f.staff]); }
     expect(first.find((r) => r.companyId === f.a.id)?.sent).toBe(2);   // the May invoice (46 days: level 30) and April retainer (75 days: level 30)
     expect((await runAutoReminders(app, '2026-07-01', 'https://b.example')).find((r) => r.companyId === f.a.id)?.sent).toBe(0);
     expect((await owner.query(`SELECT level_days FROM reminder_log WHERE document_id = $1 ORDER BY level_days`, [inv])).rows.map((r) => r.level_days)).toEqual([0, 30]);

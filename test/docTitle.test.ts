@@ -22,4 +22,8 @@ describe('The invoice heading on screen', () => {
     expect(translate('en', docTitle({ type: 'invoice', isAdvance: true, seller: sa, contact: null }))).toBe('Simplified advance payment tax invoice');
     expect(translate('en', docTitle({ type: 'bill', seller: sa, contact: null }))).toBe(translate('en', 'doc.title.bill'));
   });
+  it('lists name every sales invoice "Invoice", never "Tax invoice" for a simplified one', () => {
+    expect(translate('en', 'doc.title.invoice')).toBe('Invoice');
+    expect(translate('ar', 'doc.title.invoice')).toBe('فاتورة');
+  });
 });

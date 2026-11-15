@@ -7,7 +7,7 @@
 //   * Each answer is saved in its own transaction, so a crash loses nothing: what was not answered is sent again.
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import { withUser } from '../db/session.js';
+import { withSystem } from '../db/session.js';
 import { bilingual } from '../email/templates.js';
 import { queue } from './emailService.js';
 import { submit } from './einvoiceService.js';
@@ -30,7 +30,7 @@ export async function runEInvoiceSender(pool: pg.Pool, o: { now?: Date; all?: bo
     for (const d of devices) {
       const lease = randomUUID();
       if (!(await pool.query('SELECT einvoice_lease($1, $2, $3) AS ok', [d.device_id, lease, LEASE_SECONDS])).rows[0].ok) { out.skippedDevices++; continue; }
-      try { await sendDevice(pool, d.device_id, d.run_as, now, !!o.all, out); }
+      try { await sendDevice(pool, d.device_id, d.company_id, now, !!o.all, out); }
       catch (e) { problem = `device ${d.device_id}: ${(e as Error).message}`; }
       finally { await pool.query('SELECT einvoice_release($1, $2)', [d.device_id, lease]); }
     }
@@ -41,27 +41,31 @@ export async function runEInvoiceSender(pool: pg.Pool, o: { now?: Date; all?: bo
   return out;
 }
 
-async function sendDevice(pool: pg.Pool, deviceId: string, runAs: string, now: Date, all: boolean, out: SenderResult) {
-  const waiting = await withUser(pool, runAs, async (db) => (await db.query(
-    `SELECT id, next_attempt_at FROM einvoices WHERE device_id = $1 AND status = 'pending' AND kind = 'simplified' ORDER BY icv`, [deviceId])).rows) as { id: string; next_attempt_at: Date | null }[];
+/** A device's waiting e-invoices (standard and simplified), in counter order, sent as the automatic sender. */
+async function sendDevice(pool: pg.Pool, deviceId: string, companyId: string, now: Date, all: boolean, out: SenderResult) {
+  const waiting = await withSystem(pool, companyId, 'einvoice', async (db) => (await db.query(
+    `SELECT id, next_attempt_at FROM einvoices WHERE device_id = $1 AND status = 'pending' ORDER BY icv`, [deviceId])).rows) as { id: string; next_attempt_at: Date | null }[];
   for (const [i, e] of waiting.entries()) {
     if (!all && e.next_attempt_at && e.next_attempt_at > now) { out.waiting += waiting.length - i; return; }   // keep the order: wait for this one
-    const r = await withUser(pool, runAs, (db) => submit(db, e.id));
-    if (r.status === 'reported') out.reported++;
+    const r = await withSystem(pool, companyId, 'einvoice', (db) => submit(db, e.id));
+    if (r.status === 'reported' || r.status === 'cleared') out.reported++;
     else if (r.status === 'rejected') out.rejected++;                           // its own warning; the next ones go on
     else if (r.status === 'pending') { out.waiting += waiting.length - i; return; }   // ZATCA not reached: try again later, in order
   }
 }
 
 // ------------------------------------------------------------------ warnings
-type Stage = 'h12' | 'h20' | 'h24' | 'rejected' | 'login';
-interface Due { einvoice_id: string; company_id: string; company: string; number: string; created_at: Date; status: string; http_status: number | null; warned: Stage[] }
+type Stage = 'h12' | 'h20' | 'h24' | 'c1' | 'c4' | 'c24' | 'rejected' | 'login';
+interface Due { einvoice_id: string; company_id: string; company: string; number: string; created_at: Date; status: string; http_status: number | null; warned: Stage[]; kind?: string }
 
 /** The warning an e-invoice needs now (the highest time stage it reached), if it has not had it. */
-export function stageFor(e: Pick<Due, 'created_at' | 'status' | 'http_status' | 'warned'>, now: Date): { stage: Stage; mark: Stage[] } | null {
+export function stageFor(e: Pick<Due, 'created_at' | 'status' | 'http_status' | 'warned' | 'kind'>, now: Date): { stage: Stage; mark: Stage[] } | null {
   if (e.status === 'rejected') return e.warned.includes('rejected') ? null : { stage: 'rejected', mark: ['rejected'] };
   const hours = (now.getTime() - new Date(e.created_at).getTime()) / 3_600_000;
-  const reached: Stage[] = hours >= 24 ? ['h12', 'h20', 'h24'] : hours >= 20 ? ['h12', 'h20'] : hours >= 12 ? ['h12'] : [];
+  // Simplified: ZATCA allows 24 hours to report. Standard: not cleared yet, so the buyer has an uncleared invoice.
+  const reached: Stage[] = e.kind === 'standard'
+    ? (hours >= 24 ? ['c1', 'c4', 'c24'] : hours >= 4 ? ['c1', 'c4'] : hours >= 1 ? ['c1'] : [])
+    : (hours >= 24 ? ['h12', 'h20', 'h24'] : hours >= 20 ? ['h12', 'h20'] : hours >= 12 ? ['h12'] : []);
   const top = reached[reached.length - 1];
   if (top && !e.warned.includes(top)) return { stage: top, mark: reached };
   if ((e.http_status === 401 || e.http_status === 403) && !e.warned.includes('login')) return { stage: 'login', mark: ['login'] };
@@ -84,12 +88,19 @@ function warningMail(stage: Stage, company: string, numbers: string[], oldestHou
     case 'h24': return bilingual(`Overdue: ${n} invoice(s) not reported to ZATCA within 24 hours · متأخرة: ${n} فاتورة لم تُبلَّغ خلال 24 ساعة`,
       [`${company}: ${n} simplified invoice(s) were not reported to ZATCA within 24 hours: ${list(numbers)}.`, 'ZATCA asks you to notify them through the form on its website. Nusuh Books keeps trying to send them.', ...where],
       [`${company}: لم تُبلَّغ الهيئة خلال 24 ساعة عن ${n} فاتورة مبسطة: ${list(numbers)}.`, 'تطلب الهيئة إشعارها عبر النموذج المخصص في موقعها. يواصل نُصح محاولة الإرسال.', ...whereAr], 'Nusuh Books');
-    case 'rejected': return bilingual(`ZATCA rejected ${n} simplified invoice(s) · رفضت الهيئة ${n} فاتورة مبسطة`,
-      [`${company}: ZATCA rejected ${n} simplified invoice(s): ${list(numbers)}.`, 'Correct the problem and prepare the e-invoice again.', ...where],
-      [`${company}: رفضت الهيئة ${n} فاتورة مبسطة: ${list(numbers)}.`, 'صحّح المشكلة ثم أعد إعداد الفاتورة الإلكترونية.', ...whereAr], 'Nusuh Books');
+    case 'c1': case 'c4': case 'c24': return bilingual(`ZATCA: ${n} business invoice(s) not cleared yet · ${n} فاتورة ضريبية لم تُعتمد بعد`,
+      [`${company}: ZATCA has not cleared ${n} tax invoice(s) to business customers yet: ${list(numbers)}.`,
+        `The oldest was issued ${oldestHours} hour(s) ago. Nusuh Books keeps trying. Until ZATCA clears it, an invoice is marked "Not cleared by ZATCA yet"; send the cleared invoice to the customer when it is cleared.`,
+        ...(stage === 'c24' ? ['If the problem is your own internet connection, ZATCA asks you to tell them through the form on its website.'] : []), ...where],
+      [`${company}: لم تعتمد الهيئة بعد ${n} فاتورة ضريبية لعملاء من الشركات: ${list(numbers)}.`,
+        `أقدمها صدرت قبل ${oldestHours} ساعة. يواصل نُصح المحاولة. حتى تعتمدها الهيئة تظهر الفاتورة بعبارة "لم تعتمدها الهيئة بعد"؛ أرسل الفاتورة المعتمدة إلى العميل عند اعتمادها.`,
+        ...(stage === 'c24' ? ['إذا كانت المشكلة في اتصالك بالإنترنت فالهيئة تطلب إشعارها عبر النموذج المخصص في موقعها.'] : []), ...whereAr], 'Nusuh Books');
+    case 'rejected': return bilingual(`ZATCA rejected ${n} invoice(s) · رفضت الهيئة ${n} فاتورة`,
+      [`${company}: ZATCA rejected ${n} invoice(s): ${list(numbers)}.`, 'Correct the problem and prepare the e-invoice again.', ...where],
+      [`${company}: رفضت الهيئة ${n} فاتورة: ${list(numbers)}.`, 'صحّح المشكلة ثم أعد إعداد الفاتورة الإلكترونية.', ...whereAr], 'Nusuh Books');
     case 'login': return bilingual(`ZATCA refused the e-invoicing device's login · رفضت الهيئة دخول جهاز الفوترة`,
-      [`${company}: ZATCA refused the login of the e-invoicing device, so ${n} simplified invoice(s) are waiting: ${list(numbers)}.`, 'Connect the device again in Sales > E-invoicing. Nusuh Books keeps trying.', ...where],
-      [`${company}: رفضت الهيئة دخول جهاز الفوترة، لذلك تنتظر ${n} فاتورة مبسطة: ${list(numbers)}.`, 'اربط الجهاز من جديد من المبيعات > الفوترة الإلكترونية. يواصل نُصح المحاولة.', ...whereAr], 'Nusuh Books');
+      [`${company}: ZATCA refused the login of the e-invoicing device, so ${n} invoice(s) are waiting: ${list(numbers)}.`, 'Connect the device again in Sales > E-invoicing. Nusuh Books keeps trying.', ...where],
+      [`${company}: رفضت الهيئة دخول جهاز الفوترة، لذلك تنتظر ${n} فاتورة: ${list(numbers)}.`, 'اربط الجهاز من جديد من المبيعات > الفوترة الإلكترونية. يواصل نُصح المحاولة.', ...whereAr], 'Nusuh Books');
   }
 }
 

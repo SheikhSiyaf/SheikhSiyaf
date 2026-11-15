@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
 import { approvalMail, documentMail, type Mail } from '../email/templates.js';
+import { assertShareable } from './einvoiceService.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
 const notFound = (): never => { throw new HttpError(404, 'Not found.', 'err.notFound'); };
@@ -24,6 +25,7 @@ export async function documentLink(db: Db, documentId: string): Promise<string> 
   const d = (await db.query(`SELECT company_id, status, type FROM documents WHERE id = $1`, [documentId])).rows[0] ?? notFound();
   if (d.status === 'draft') bad('Issue the document first.', 'err.docDraft');
   if (!['invoice', 'credit_note', 'quotation'].includes(d.type)) bad('Only sales documents are sent to customers.', 'err.docKind');
+  await assertShareable(db, documentId);   // a standard invoice: not while ZATCA is still being tried, never when rejected
   const token = randomBytes(24).toString('base64url');
   await db.query(`INSERT INTO document_links (token_hash, company_id, document_id, created_by) VALUES ($1, $2, $3, app_user_id())`, [hashLinkToken(token), d.company_id, documentId]);
   return token;

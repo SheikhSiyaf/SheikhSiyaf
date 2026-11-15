@@ -2,7 +2,7 @@
 // who set it up: recurring sales invoices that are due, and automatic payment reminders. Links in emails start with
 // PUBLIC_URL; without it, invoices are still made and issued but not emailed.
 import type pg from 'pg';
-import { withUser } from '../db/session.js';
+import { withSystem } from '../db/session.js';
 import * as T from './toolsService.js';
 import * as EI from './einvoiceService.js';
 
@@ -11,10 +11,10 @@ export async function runRecurringInvoices(pool: pg.Pool, day = new Date().toISO
   const out: { id: string; created: number; problem: string | null }[] = [];
   for (const d of due) {
     try {
-      const r = await withUser(pool, d.run_as, (db) => T.generateRecurringInvoices(db, d.company_id, { onlyId: d.id, upTo: day, base: base.replace(/\/+$/, '') || undefined }));
+      const r = await withSystem(pool, d.company_id, 'recurring', (db) => T.generateRecurringInvoices(db, d.company_id, { onlyId: d.id, upTo: day, base: base.replace(/\/+$/, '') || undefined }));
       // Issued invoices go to ZATCA as usual (reported or cleared); a problem there shows on the invoice.
       for (const id of r.issued) {
-        await withUser(pool, d.run_as, async (db) => {
+        await withSystem(pool, d.company_id, 'recurring', async (db) => {
           const e = (await db.query(`SELECT id FROM einvoices WHERE document_id = $1 AND scheme = 'zatca' AND status = 'pending'`, [id])).rows[0];
           if (e) await EI.submit(db, e.id);
         }).catch(() => undefined);
@@ -33,7 +33,7 @@ export async function runAutoReminders(pool: pg.Pool, day = new Date().toISOStri
   const rows = (await pool.query('SELECT company_id, run_as FROM reminders_auto()')).rows as { company_id: string; run_as: string }[];
   const out: { companyId: string; sent: number; problem: string | null }[] = [];
   for (const r of rows) {
-    try { out.push({ companyId: r.company_id, sent: (await withUser(pool, r.run_as, (db) => T.runReminders(db, r.company_id, base.replace(/\/+$/, ''), day))).length, problem: null }); }
+    try { out.push({ companyId: r.company_id, sent: (await withSystem(pool, r.company_id, 'reminders', (db) => T.runReminders(db, r.company_id, base.replace(/\/+$/, ''), day))).length, problem: null }); }
     catch (e) { out.push({ companyId: r.company_id, sent: 0, problem: (e as Error).message }); }
   }
   return out;

@@ -303,7 +303,9 @@ export async function deleteDraft(db: Db, id: string): Promise<void> {
   if (!rowCount) bad('Only drafts can be deleted.', 'err.notDraft');
 }
 
-const DOC_COLS = `d.id, d.company_id AS "companyId", d.type, d.status, d.number, d.is_advance AS "isAdvance", d.contact_id AS "contactId", coalesce(c.name, d.payee) AS "contactName",
+const DOC_COLS = `d.id, d.company_id AS "companyId", d.type, d.status, d.number,
+  (SELECT CASE WHEN e.kind = 'standard' AND e.status = 'pending' THEN 'not_cleared' WHEN e.status = 'rejected' THEN 'rejected' END FROM einvoices e
+    WHERE e.document_id = d.id AND e.scheme = 'zatca' ORDER BY e.created_at DESC LIMIT 1) AS "einvoiceFlag", d.is_advance AS "isAdvance", d.contact_id AS "contactId", coalesce(c.name, d.payee) AS "contactName",
   c.name_ar AS "contactNameAr", d.payee, d.paid_from_account_id AS "paidFromAccountId", pa.name AS "paidFromName", pa.name_ar AS "paidFromNameAr",
   d.recurring_id AS "recurringId", d.voided_at AS "voidedAt", d.submitted_by AS "submittedBy", d.submitted_at AS "submittedAt",
   d.decided_by AS "decidedBy", d.decided_at AS "decidedAt", d.rejection_reason AS "rejectionReason",

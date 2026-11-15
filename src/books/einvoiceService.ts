@@ -275,8 +275,10 @@ export async function submit(db: Db, id: string): Promise<{ status: string; warn
   const creds = { token: e.production_token, secret: unbox(e.production_secret_enc) };
   const c = client(e.environment);
   const sub = { invoiceHash: e.invoice_hash, uuid: e.uuid, xml: e.xml };
-  const r: Result = e.kind === 'standard' ? await c.clearance(creds, sub) : await c.reporting(creds, sub);
-  const status = r.outcome === 'accepted' ? (e.kind === 'standard' ? 'cleared' : 'reported') : r.outcome === 'rejected' ? 'rejected' : 'pending';
+  let r: Result = e.kind === 'standard' ? await c.clearance(creds, sub) : await c.reporting(creds, sub);
+  let reportedInstead = false;
+  if (r.outcome === 'clearance_off') { r = await c.reporting(creds, sub); reportedInstead = true; }   // ZATCA: "Clearance switched off, submit via reporting"
+  const status = r.outcome === 'accepted' ? (e.kind === 'standard' && !reportedInstead ? 'cleared' : 'reported') : r.outcome === 'rejected' ? 'rejected' : 'pending';
   // Still waiting (ZATCA not reached, or its login refused): the next try after 2, 5, 10, 15, then every 30 minutes.
   const wait = RETRY_MINUTES[e.attempts] ?? RETRY_MINUTES[RETRY_MINUTES.length - 1]!;
   await db.query(
@@ -308,11 +310,28 @@ export async function list(db: Db, companyId: string, status?: string) {
     WHERE e.company_id = $1 AND ($2::text IS NULL OR e.status = $2) ORDER BY e.created_at DESC LIMIT 500`, [companyId, status ?? null])).rows;
 }
 export async function forDocument(db: Db, documentId: string) {
-  const rows = (await db.query(`SELECT ${ROW}, e.qr, e.cleared_xml FROM einvoices e JOIN documents d ON d.id = e.document_id LEFT JOIN contacts c ON c.id = d.contact_id
+  const rows = (await db.query(`SELECT ${ROW}, e.qr, e.cleared_xml,
+      EXISTS (SELECT 1 FROM email_outbox o WHERE o.document_id = e.document_id AND o.kind = 'document' AND o.created_at < e.submitted_at) AS sent_before FROM einvoices e JOIN documents d ON d.id = e.document_id LEFT JOIN contacts c ON c.id = d.contact_id
     WHERE e.document_id = $1 ORDER BY e.created_at DESC`, [documentId])).rows;
   // The QR printed on the invoice: ZATCA's (from the cleared XML) for standard invoices, our stamp's for simplified ones.
-  return rows.map(({ cleared_xml, qr, ...r }) => ({ ...r, printQr: (cleared_xml && qrFromXml(cleared_xml)) || qr || null }));
+  // notCleared: a standard invoice ZATCA has not cleared yet (marked so wherever it is shown or printed).
+  // sentBeforeClearance: emailed to the customer before ZATCA cleared it, so the cleared invoice should be sent.
+  return rows.map(({ cleared_xml, qr, sent_before, ...r }) => ({ ...r, printQr: (cleared_xml && qrFromXml(cleared_xml)) || qr || null,
+    notCleared: r.scheme === 'zatca' && r.kind === 'standard' && r.status === 'pending', sentBeforeClearance: r.status === 'cleared' && Boolean(sent_before) }));
 }
+/** Minutes ZATCA is tried before a standard invoice it has not cleared may be given to the buyer (ZATCA, Detailed
+ *  Guidelines for E-Invoicing v2, May 2023, p.46: retry for about 5 minutes, then share the uncleared invoice and
+ *  clear it once ZATCA answers). */
+export const SHARE_AFTER_MINUTES = 5;
+/** Refuses giving a standard invoice to the customer while ZATCA is still being tried, or when ZATCA rejected it. */
+export async function assertShareable(db: Db, documentId: string): Promise<void> {
+  const e = (await db.query(`SELECT kind, status, created_at > now() - make_interval(mins => $2) AS fresh FROM einvoices
+    WHERE document_id = $1 AND scheme = 'zatca' ORDER BY created_at DESC LIMIT 1`, [documentId, SHARE_AFTER_MINUTES])).rows[0];
+  if (!e || e.kind !== 'standard') return;
+  if (e.status === 'rejected') bad('ZATCA rejected this invoice. Correct it and prepare the e-invoice again before giving it to the customer.', 'err.einvRejectedShare');
+  if (e.status === 'pending' && e.fresh) bad(`ZATCA has not cleared it yet. Nusuh Books is trying again; send it in a few minutes.`, 'err.einvNotClearedYet');
+}
+
 /** The XML to download: the cleared one from ZATCA when there is one. */
 export async function xmlOf(db: Db, id: string): Promise<{ fileName: string; xml: string }> {
   const r = (await db.query(`SELECT e.xml, e.cleared_xml, e.scheme, d.number FROM einvoices e JOIN documents d ON d.id = e.document_id WHERE e.id = $1`, [id])).rows[0] ?? notFound();

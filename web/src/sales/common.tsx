@@ -14,7 +14,7 @@ export interface Contact {
   paymentTermsDays: number | null; status: string; balanceDue?: string; overdue?: string; isEmployee?: boolean;
 }
 export interface DocRow {
-  id: string; type: DocType; status: string; state: string; number: string | null; contactId: string; contactName: string; contactNameAr: string | null;
+  id: string; type: DocType; status: string; state: string; number: string | null; einvoiceFlag?: 'not_cleared' | 'rejected' | null; contactId: string; contactName: string; contactNameAr: string | null;
   issueDate: string; dueDate: string | null; reference: string | null; notes: string | null; originalId: string | null; journalEntryId: string | null;
   netTotal: string; vatTotal: string; grossTotal: string; amountDue: string;
   payee?: string | null; paidFromAccountId?: string | null; paidFromName?: string | null; paidFromNameAr?: string | null; recurringId?: string | null; voidedAt?: string | null;

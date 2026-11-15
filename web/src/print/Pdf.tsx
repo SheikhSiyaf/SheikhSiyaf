@@ -91,6 +91,8 @@ export interface SaleDoc {
   payments: { voidedAt: string | null; amount: string }[];
   /** An advance-payment invoice (ZATCA 386), and the advances deducted on a final invoice. */
   isAdvance?: boolean; advances?: { number: string; total: string }[];
+  /** A standard invoice ZATCA has not cleared yet (ZATCA Detailed Guidelines v2, p.46): printed with a notice. */
+  notCleared?: boolean;
 }
 
 /** Standard tax invoice when the buyer is VAT registered, simplified tax invoice otherwise (Saudi Arabia). */
@@ -115,6 +117,7 @@ export function SalePdf({ d, qr }: { d: SaleDoc; qr?: string | null }) {
   return (
     <div className="pdf" dir="ltr">
       <Head seller={d.seller} title={saleTitle(d)} number={d.number} status={d.status}>
+        {d.notCleared && <div className="pdf-notcleared" id="pdf-not-cleared"><b>{en('pdf.notCleared')}</b> · <span dir="rtl">{ar('pdf.notCleared')}</span></div>}
         <div className="pdf-row">
           <Party label="pdf.buyer" name={c?.name ?? ''} nameAr={c?.nameAr} lines={[['pdf.vatNo', c?.vatNumber], ['pdf.crNo', c?.crNumber], ['pdf.address', [c?.address, c?.city].filter(Boolean).join(', ')]]} />
           <Meta rows={[

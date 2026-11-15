@@ -4,7 +4,7 @@
 // the invoice as the person who turned online payments on, in the same transaction that marks it paid.
 import { guardFetch } from '../outside.js';
 import type pg from 'pg';
-import { withUser, type Db } from '../db/session.js';
+import { withSystem, type Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
 import { config } from '../config.js';
 import { decryptSecret, encryptSecret } from '../auth/secretBox.js';
@@ -74,7 +74,8 @@ export async function confirm(pool: pg.Pool, by: { id?: string; ref?: string }):
   }
   if (!g.run_as || !g.deposit_account_id) throw new Error(`Online payment ${g.id} is paid but online payments are turned off: record it by hand.`);
   try {
-    await withUser(pool, g.run_as, async (db) => {
+    // Recorded by the automatic sender (db/migrations/0051), so it does not depend on who switched payments on.
+    await withSystem(pool, g.company_id, 'online_payment', async (db) => {
       // Settle what is still due (the invoice may have been paid some other way meanwhile); any rest stays on the customer's account.
       const due = toMinor((await db.query('SELECT document_amount_due($1)::numeric(18,2)::text AS d', [g.document_id])).rows[0].d);
       const amount = toMinor(g.amount);

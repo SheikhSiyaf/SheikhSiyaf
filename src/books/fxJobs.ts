@@ -5,7 +5,7 @@
 //   * automatic month-end revaluation: for companies that turned it on, the last month end is revalued as the person
 //     who turned it on (their rights, their name in the audit log). Locked months are skipped; problems are noted.
 import type pg from 'pg';
-import { withUser } from '../db/session.js';
+import { withSystem } from '../db/session.js';
 import { CURRENCIES, pegRates, rateText, ratesFromProvider } from './fx.js';
 import * as Fx from './fxService.js';
 import { guardFetch } from '../outside.js';
@@ -52,7 +52,7 @@ export async function runAutoRevaluations(pool: pg.Pool, day = new Date().toISOS
   const out: { companyId: string; ok: boolean; problem: string | null }[] = [];
   for (const d of due) {
     let problem: string | null = null;
-    try { await withUser(pool, d.enabled_by, (db) => Fx.post(db, d.company_id, pe, { automatic: true })); }
+    try { await withSystem(pool, d.company_id, 'fx', (db) => Fx.post(db, d.company_id, pe, { automatic: true })); }
     catch (e) { problem = (e as Error).message; }
     await pool.query('SELECT fx_auto_note($1, $2)', [d.company_id, problem]);
     out.push({ companyId: d.company_id, ok: !problem, problem });

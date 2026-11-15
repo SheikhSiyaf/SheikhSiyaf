@@ -229,21 +229,31 @@ function Uae({ books, o, reload }: { books: CompanyBooks; o: Overview; reload: (
 /** On an invoice or credit note: its e-invoice status, the XML, and sending or preparing it again. */
 export function EInvoiceStatus({ books, documentId, onChange }: { books: CompanyBooks; documentId: string; onChange?: () => void }) {
   const { t, has } = useI18n();
-  const rows = useApi<EInvoiceRow[]>(`/api/documents/${documentId}/einvoice`);
+  const rows = useApi<(EInvoiceRow & { notCleared?: boolean; sentBeforeClearance?: boolean })[]>(`/api/documents/${documentId}/einvoice`);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>();
+  const [sent, setSent] = useState(false);
   const e = rows.data?.[0];
   if (!e) return null;
   const act = async (fn: () => Promise<unknown>) => { setBusy(true); setErr(undefined); try { await fn(); rows.reload(); onChange?.(); } catch (x) { setErr(errorText(t, has, x)); } finally { setBusy(false); } };
   return (
+    <>
     <div className={`notice ${e.status === 'rejected' ? 'bad' : e.status === 'pending' ? 'warn' : ''} actions`} id="doc-einvoice">
-      <span><b>{e.scheme === 'pint_ae' ? 'PINT AE' : 'ZATCA'}:</b> {t(`einv.s.${e.status}` as Key)}{e.scheme === 'zatca' && <> · {t(`einv.k.${e.kind}` as Key)}</>}
+      <span><b>{e.scheme === 'pint_ae' ? 'PINT AE' : 'ZATCA'}:</b> {e.notCleared ? <b id="doc-not-cleared">{t('einv.notClearedYet')}</b> : t(`einv.s.${e.status}` as Key)}{e.scheme === 'zatca' && <> · {t(`einv.k.${e.kind}` as Key)}</>}
         {[...e.errors, ...e.warnings].length > 0 && <span className="small"> · {[...e.errors, ...e.warnings].join('; ')}</span>}</span>
       <span className="spacer" />
       {books.canPost && e.status === 'pending' && <button className="b small p" disabled={busy} onClick={() => void act(() => api(`/api/einvoices/${e.id}/submit`, { body: {} }))}>{t('einv.sendNow')}</button>}
       {books.canPost && e.status === 'rejected' && <button className="b small" disabled={busy} onClick={() => void act(() => api(`/api/documents/${documentId}/einvoice/again`, { body: {} }))}>{t('einv.again')}</button>}
       <button className="b small" onClick={() => void downloadXml(e.id)}>XML</button>
       {err && <span className="bad small">{err}</span>}
+      {e.notCleared && <div className="small" style={{ flexBasis: '100%' }}>{t('einv.notClearedHint')}</div>}
     </div>
+    {e.sentBeforeClearance && (
+      <div className="notice actions" id="doc-send-cleared">
+        <span>{sent ? t('einv.sentCleared') : t('einv.clearedAfterSent')}</span><span className="spacer" />
+        {books.canPost && !sent && <button className="b small p" disabled={busy} onClick={() => void act(async () => { await api(`/api/documents/${documentId}/email`, { body: {} }); setSent(true); })}>{t('einv.sendCleared')}</button>}
+      </div>
+    )}
+    </>
   );
 }

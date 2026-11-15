@@ -131,7 +131,7 @@ describe('Month-end revaluation', () => {
     await expect(as(f.staff, (db) => Fx.reverse(db, march.id))).rejects.toThrow(/later month/);
   });
 
-  it('the automatic month-end run revalues as the person who turned it on, and skips locked months', async () => {
+  it('the automatic month-end run revalues as the automatic sender, also when the person who turned it on is suspended, and skips locked months', async () => {
     await as(f.staff, (db) => Fx.saveSettings(db, f.a.id, { autoRevalue: true }));
     await as(f.staff, (db) => Fx.saveRate(db, f.a.id, { currency: 'EUR', date: '2026-05-31', rate: '4.1' }));
     await as(f.staff, (db) => Fx.saveRate(db, f.a.id, { currency: 'CHF', date: '2026-05-31', rate: '4.3' }));
@@ -139,10 +139,12 @@ describe('Month-end revaluation', () => {
     await addPeriod(f.a.id, '2026-05-01', '2026-05-31', true);
     expect(await runAutoRevaluations(app, '2026-06-02')).toEqual([]);
     await owner.query(`UPDATE periods SET locked_at = NULL WHERE company_id = $1 AND start_date = '2026-05-01'`, [f.a.id]);
-    const out = await runAutoRevaluations(app, '2026-06-02');
+    await owner.query(`UPDATE users SET status = 'suspended' WHERE id = $1`, [f.staff]);
+    let out;
+    try { out = await runAutoRevaluations(app, '2026-06-02'); } finally { await owner.query(`UPDATE users SET status = 'active' WHERE id = $1`, [f.staff]); }
     expect(out).toEqual([{ companyId: f.a.id, ok: true, problem: null }]);
     const may = (await owner.query(`SELECT automatic, created_by FROM fx_revaluations WHERE company_id = $1 AND period_end = '2026-05-31' AND status = 'posted'`, [f.a.id])).rows[0];
-    expect(may).toEqual({ automatic: true, created_by: f.staff });
+    expect(may).toEqual({ automatic: true, created_by: (await owner.query(`SELECT id FROM users WHERE kind = 'system'`)).rows[0].id });
     expect(await runAutoRevaluations(app, '2026-06-03')).toEqual([]);   // done once
     expect((await as(f.staff, (db) => Fx.settings(db, f.a.id))).enabledBy).toBeTruthy();
   });

@@ -96,7 +96,9 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
                   <tr key={d.id}>
                     {canBulk && <td className="pick"><input type="checkbox" aria-label={`${t('bulk.pick')} ${d.number ?? ''}`} checked={picked.includes(d.id)}
                       onChange={(e) => setPicked(e.target.checked ? [...picked, d.id] : picked.filter((x) => x !== d.id))} /></td>}
-                    <td><button className="link" onClick={() => go(m, page, d.id)}>{d.number ?? t('doc.draftNo')}</button>{d.reference && <div className="mut small ltr">{d.reference}</div>}</td>
+                    <td><button className="link" onClick={() => go(m, page, d.id)}>{d.number ?? t('doc.draftNo')}</button>
+                      {d.einvoiceFlag && <> <span className={`badge ${d.einvoiceFlag === 'rejected' ? 'bad' : 'warn'}`}>{t(d.einvoiceFlag === 'rejected' ? 'einv.s.rejected' : 'einv.notClearedYet')}</span></>}
+                      {d.reference && <div className="mut small ltr">{d.reference}</div>}</td>
                     <td>{local(d.contactName, d.contactNameAr)}</td>
                     <td data-label={t('doc.date')}>{d.issueDate}</td>
                     {hasDueCol && <td data-label={t('doc.dueDate')}>{d.dueDate ?? '—'}</td>}

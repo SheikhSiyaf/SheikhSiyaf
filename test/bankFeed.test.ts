@@ -64,12 +64,16 @@ describe('A connected bank account', () => {
     expect(r.booked).toBeGreaterThan(0);
   });
 
-  it('the job syncs as the person who connected it; an expired consent stops the feed until it is connected again', async () => {
+  it('the job syncs as the automatic sender, also when the person who connected it is suspended; an expired consent stops the feed until it is connected again', async () => {
     await owner.query(`UPDATE bank_feeds SET last_sync_at = now() - interval '7 hours' WHERE bank_account_id = $1`, [bank]);
-    const out = (await BF.runBankFeeds(appPool, '2026-07-05')).filter((x) => x.problem === null);
+    await owner.query(`UPDATE users SET status = 'suspended' WHERE id = $1`, [f.staff]);
+    let all;
+    try { all = await BF.runBankFeeds(appPool, '2026-07-05'); } finally { await owner.query(`UPDATE users SET status = 'active' WHERE id = $1`, [f.staff]); }
+    const out = all.filter((x) => x.problem === null);
     expect(out.length).toBeGreaterThan(0);
-    const who = (await owner.query(`SELECT DISTINCT imported_by FROM bank_imports WHERE bank_account_id = $1`, [bank])).rows.map((x) => x.imported_by);
-    expect(who).toEqual([f.staff]);
+    const who = (await owner.query(`SELECT imported_by FROM bank_imports WHERE bank_account_id = $1 ORDER BY imported_at DESC LIMIT 1`, [bank])).rows.map((x) => x.imported_by);
+    expect(who).toEqual([(await owner.query(`SELECT id FROM users WHERE kind = 'system'`)).rows[0].id]);
+    expect((await owner.query('SELECT created_by FROM bank_feeds WHERE bank_account_id = $1', [bank])).rows[0].created_by).toBe(f.staff);   // who connected it
     const feed = (await as(f.staff, (db) => BF.feedFor(db, bank))).feed;
     expect((await as(f.staff, (db) => BF.sync(db, feed.id, '2026-12-31'))).expired).toBe(true);
     expect((await as(f.staff, (db) => BF.feedFor(db, bank))).feed.status).toBe('expired');

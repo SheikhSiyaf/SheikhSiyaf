@@ -8,6 +8,7 @@ import { useGo } from '../sales/common.tsx';
 import { fmt, neg } from '../money.ts';
 import { toMinor, fromMinor } from '../money.ts';
 import { ErrorNote, Loading } from '../ui.tsx';
+import { accessTo } from '../../../src/books/modules.ts';
 
 interface Summary {
   asOf: string; cash: string; receivables: string; payables: string; inputVat: string; outputVat: string;
@@ -16,7 +17,16 @@ interface Summary {
 
 export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?: string) => void }) {
   const { t } = useI18n();
-  const s = useApi<Summary>(`/api/companies/${books.company.id}/summary`);
+  // A client role sees the company figures only with Reports or Ledger; quick actions follow its modules.
+  const level = (m: string) => accessTo(books.access?.permissions, m);
+  const figures = level('Reports') !== 'none' || level('Ledger') !== 'none';
+  const s = useApi<Summary>(figures ? `/api/companies/${books.company.id}/summary` : null);
+  if (!figures) return (
+    <>
+      <ComingUp books={books} go={go} />
+      <QuickActions books={books} go={go} level={level} />
+    </>
+  );
   if (s.error) return <ErrorNote error={s.error} onRetry={s.reload} />;
   if (!s.data) return <Loading />;
   const d = s.data;
@@ -54,19 +64,30 @@ export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?:
           </tbody>
         </table>
       </div>
-      <div className="card">
-        <h2>{t('home.quick')}</h2>
-        <div className="actions">
-          {books.canPost && <button className="b p" onClick={() => go('Sales', 'invoices/new')}>{t('ov.newInvoice')}</button>}
-          {books.canPost && <button className="b" onClick={() => go('Sales', 'payments-received/new')}>{t('ov.recordReceipt')}</button>}
-          {books.canPost && <button className="b" onClick={() => go('Expenses', 'expenses/new')}>{t('exp.record')}</button>}
-          {books.canPost && <button className="b" onClick={() => go('Purchases', 'bills/new')}>{t('ov.newBill')}</button>}
-          {books.canPost && <button className="b" onClick={() => go('Journal', 'new')}>{t('home.newEntry')}</button>}
-          <button className="b" onClick={() => go('Reports', 'trial-balance')}>{t('home.trialBalance')}</button>
-          <button className="b" onClick={() => go('Reports', 'vat-summary')}>{t('home.vatSummary')}</button>
-        </div>
-      </div>
+      <QuickActions books={books} go={go} level={level} />
     </>
+  );
+}
+
+/** Shortcuts, each shown only when the person's role may use its module (edit to create, view to read). */
+function QuickActions({ books, go, level }: { books: CompanyBooks; go: (m: string, sub?: string) => void; level: (m: string) => string }) {
+  const { t } = useI18n();
+  const can = (m: string) => books.canPost && level(m) === 'edit';
+  const actions: [boolean, string, string, Key][] = [
+    [can('Sales'), 'Sales', 'invoices/new', 'ov.newInvoice'], [can('Sales'), 'Sales', 'payments-received/new', 'ov.recordReceipt'],
+    [can('Expenses'), 'Expenses', 'expenses/new', 'exp.record'], [can('Purchases'), 'Purchases', 'bills/new', 'ov.newBill'],
+    [can('Journal'), 'Journal', 'new', 'home.newEntry'],
+    [level('Reports') !== 'none', 'Reports', 'trial-balance', 'home.trialBalance'], [level('Reports') !== 'none', 'Reports', 'vat-summary', 'home.vatSummary'],
+  ];
+  const shown = actions.filter(([ok]) => ok);
+  if (!shown.length) return null;
+  return (
+    <div className="card">
+      <h2>{t('home.quick')}</h2>
+      <div className="actions">
+        {shown.map(([, m, sub, key], i) => <button key={key} className={i === 0 ? 'b p' : 'b'} onClick={() => go(m, sub)}>{t(key)}</button>)}
+      </div>
+    </div>
   );
 }
 

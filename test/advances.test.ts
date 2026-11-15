@@ -108,3 +108,29 @@ describe('The final invoice', () => {
     await expect(as(f.a.clientViewer, (db) => A.deduct(db, d, adv))).rejects.toThrow();
   });
 });
+
+describe('A cancelled stay', () => {
+  it('an unused advance is credited in full: the credit note reverses 2160 and the advance VAT; it can no longer be deducted', async () => {
+    const before = { adv: await bal('2160'), vat: await bal('2100') };
+    const a = await as(f.staff, (db) => A.createAdvance(db, f.a.id, { contactId: other, amount: '230.00', date: '2027-03-01', payment: { accountId: f.a.cash, method: 'card' } }));
+    const cn = await as(f.staff, (db) => S.createCredit(db, a));
+    await as(f.staff, (db) => S.issueDocument(db, cn));
+    const d = (await owner.query('SELECT type, status, original_id, net_total::text AS net, vat_total::text AS vat, gross_total::text AS gross FROM documents WHERE id = $1', [cn])).rows[0];
+    expect(d).toEqual({ type: 'credit_note', status: 'issued', original_id: a, net: '200.00', vat: '30.00', gross: '230.00' });
+    expect(await bal('2160')).toBe(before.adv);
+    expect(await bal('2100')).toBe(before.vat);
+    expect(await as(f.staff, (db) => A.available(db, f.a.id, other))).toEqual([]);
+    const final = await sale(other, '100.00', '2027-03-05');
+    await expect(as(f.staff, (db) => A.deduct(db, final, a))).rejects.toThrow();
+  });
+
+  it('a credit note on any other sales document still needs an income account', async () => {
+    const inv = await sale(other, '50.00', '2027-03-06');
+    await as(f.staff, (db) => S.issueDocument(db, inv));
+    const cn = await as(f.staff, (db) => S.saveDraft(db, f.a.id, { type: 'credit_note', contactId: other, issueDate: '2027-03-06', originalId: inv,
+      lines: [{ description: 'x', quantity: '1', unitPrice: '10.00', accountId: f.a.sales, vatCode: 'standard' }] }));
+    const adv2160 = (await owner.query(`SELECT id FROM accounts WHERE company_id = $1 AND code = '2160'`, [f.a.id])).rows[0].id;
+    await expect(owner.query(`INSERT INTO document_lines (document_id, line_no, description, quantity, unit_price, account_id, vat_code, vat_rate, net_amount, vat_amount)
+      SELECT $1, 9, 'y', 1, 10, $2, 'standard', 15, 10, 1.5`, [cn, adv2160])).rejects.toThrow(/income account/);
+  });
+});

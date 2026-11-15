@@ -410,3 +410,8 @@ Every change below is covered by a test in `test/`.
 | `document_amount_due()` subtracts the advances deducted | The amount due is the gross less payments, credit notes and advances. |
 | `booking_advances` (Rooms: advances taken for a booking) | Advances come off the guest bill automatically. |
 | The VAT treatment of advances on the Saudi VAT return is to be confirmed by a qualified accountant before real use | The VAT return worksheet takes the advance's net and VAT off the final invoice's sales so it agrees with the books. |
+
+## 0047_credit_unused_advance.sql
+| Change | Why |
+|---|---|
+| `before_document_line_change()` and `before_document_advance()`: a credit note whose original is an advance invoice may use and be issued with 2160 Customer advances (other sales lines still need an income account; other documents still cannot post to 2160) | Found in the Rooms Deep Check: a cancelled booking's paid advance could not be refunded, because the credit note's 2160 lines were refused. Crediting the unused advance reverses 2160 and its VAT; an advance already deducted on a final invoice still cannot be credited (0046). |

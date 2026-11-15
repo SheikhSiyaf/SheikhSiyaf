@@ -99,6 +99,19 @@ describe('Roles and permissions', () => {
     expect((await get(c, `/api/companies/${f.a.id}/hr/employees`)).statusCode).toBe(403);
     // Reports: read only.
     expect((await get(c, `/api/companies/${f.a.id}/reports/trial-balance`)).statusCode).toBe(200);
+    // The home page money figures (cash, receivables, profit, VAT) are a report: Reports or Ledger needed.
+    expect((await get(c, `/api/companies/${f.a.id}/summary`)).statusCode).toBe(200);
+  });
+
+  it('a role without Reports or Ledger (front desk) does not see the company figures on the home page', async () => {
+    const a = await signIn('admin');
+    const desk = (await post(a, '/api/admin/roles', { name: 'Front desk', permissions: { Rooms: 'edit', Sales: 'edit' } })).json().id;
+    expect((await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: desk })).statusCode).toBe(200);
+    const c = await signIn('clientA');
+    expect((await get(c, `/api/companies/${f.a.id}/summary`)).json()).toMatchObject({ key: 'err.roleNoAccess' });
+    expect((await get(c, `/api/companies/${f.a.id}/reports/trial-balance`)).statusCode).toBe(403);
+    expect((await get(c, `/api/companies/${f.a.id}/documents?type=invoice`)).statusCode).toBe(200);   // its own work still opens
+    expect((await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: cashier })).statusCode).toBe(200);
   });
 
   it('changing the role changes the access at once; a view-only role cannot write anywhere, even in the database', async () => {

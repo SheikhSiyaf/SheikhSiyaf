@@ -53,5 +53,5 @@ Entry settings per client: invoice prefix, payment terms, period lock date.
 - Every UI string lives in web/src/i18n.tsx (English and Arabic). Amounts use src/money.ts, never floats.
 - Schema changes go in a new file in `db/migrations/`. Never edit an applied migration. Record each change and the reason for it in docs/SCHEMA_CHANGES.md.
 - docs/ADVISOR_BRIEF.md is the brief the owner gives Claude chat (their advisor). After each feature or fix, update its "What is built" and "Where things stand" sections and the date, and say so in the reply.
-- Use the headroom approach for large files: outline first, then read only the parts needed.
+- Use the headroom skill by default for every file read, to keep tokens down (standing owner rule, applies without being asked): measure first (size, outline), then read only the parts needed (line ranges, grep with context, extract JSON paths); never read a whole large file.
 - Required project logs (docs/SCHEMA_CHANGES.md for every migration) are always updated, even when the owner has asked for no other new or changed files.

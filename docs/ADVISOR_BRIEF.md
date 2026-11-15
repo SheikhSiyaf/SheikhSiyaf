@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-15 (demo-site switches for free hosting).
+Last updated: 2026-11-15 (free demo site live on Render + Neon).
 
 ---
 
@@ -81,7 +81,7 @@ console: creates customers and companies, bills them, answers support messages, 
   the customer gets an email when answered.
 - **Email**: outbox with Resend, SendGrid or Postmark; invitations, password reset, documents, approvals.
 - **Quality**: 500+ automated tests (accounting rules, data separation, API); every change is tested first.
-- **Demo**: a browser-only demo with sample data exists as a claude.ai artifact. The real app is not hosted yet.
+- **Demo**: the real app now runs as a free demo site (Render web service + Neon PostgreSQL 16, Frankfurt), demo data only, every background job and outside connection switched off, sign-in with the demo users (password demo1234, so share the address only with trusted people). It sleeps after 15 minutes and takes up to a minute to wake; Neon keeps only 6 hours of restore history. Every push to the branch redeploys it. Not for real data: the paid hosting, backups and security review below are still needed. A browser-only demo also exists as a claude.ai artifact.
 - **Demo-site switches**: `OUTSIDE_CALLS=off` stops every call to an outside service (ZATCA, online payment, exchange rates, email), and `AUTH_PURGE_JOBS=off` joins the other job switches, so a free demo (Render + Neon) can run with no background work and no outside contact.
 
 Technology (for vendor conversations): PostgreSQL database, Node.js (TypeScript) server, React web front end. One
@@ -104,7 +104,7 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 ## 7. Where things stand and what is next
 
 **Going live needs** (none of these are code-heavy; they are accounts and decisions):
-- A PostgreSQL host (Supabase as a plain database, Neon, AWS RDS, or a Saudi/UAE region for data-residency law).
+- A PostgreSQL host (Supabase as a plain database, Neon, AWS RDS, or a Saudi/UAE region for data-residency law). Needs: PostgreSQL 16, the btree_gist extension, a login that can create the nusuh_app role, 11+ connections, daily backups with point-in-time restore.
 - A server that keeps running (Render, Railway, Fly.io, DigitalOcean, AWS). Not Cloudflare Pages.
 - A domain with Cloudflare (DNS, HTTPS, firewall).
 - An email provider (Resend recommended) with the sending domain verified (SPF, DKIM).

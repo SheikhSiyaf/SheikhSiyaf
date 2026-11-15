@@ -43,8 +43,9 @@ export class Throttle {
 export async function purgeAttempts(db: Querier): Promise<number> {
   return (await db.query('SELECT auth_throttle_purge() AS n')).rows[0].n as number;
 }
-/** Runs the purge every hour, with the server's other jobs. */
+/** Runs the purge every hour, with the server's other jobs (AUTH_PURGE_JOBS=off turns it off). */
 export function startAuthPurgeJob(pool: pg.Pool, log: (m: string) => void = console.log) {
+  if (process.env.AUTH_PURGE_JOBS === 'off') return () => undefined;   // AUTH_PURGE_JOBS=off turns it off (demo sites)
   const go = () => void purgeAttempts(pool).then((n) => { if (n) log(`Sign-in attempts purged: ${n}`); }).catch((e) => log(`Sign-in attempt purge failed: ${(e as Error).message}`));
   const first = setTimeout(go, 50_000);
   const every = setInterval(go, 60 * 60 * 1000);

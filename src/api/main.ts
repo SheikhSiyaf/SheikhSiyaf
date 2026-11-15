@@ -60,7 +60,7 @@ startBillingJob(pool, (m) => app.log.info(m));
 startBankFeedJob(pool, (m) => app.log.info(m));
 // Simplified e-invoices reported to ZATCA every 2 minutes, with retries and warnings (EINVOICE_JOBS=off turns it off).
 startEInvoiceSender(pool, config.publicUrl ?? '', (m) => app.log.info(m));
-// Sign-in attempts older than 24 hours are deleted every hour.
+// Sign-in attempts older than 24 hours are deleted every hour (AUTH_PURGE_JOBS=off turns it off).
 startAuthPurgeJob(pool, (m) => app.log.info(m));
 console.log(serveWeb
   ? `\n  Nusuh Books is running: open http://localhost:${config.port}\n`

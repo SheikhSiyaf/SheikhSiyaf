@@ -1,6 +1,7 @@
 // E-invoicing in the books: per-company settings, ZATCA onboarding of a device (EGS unit), the e-invoice made
 // when an invoice or credit note is issued, and sending it to ZATCA. UAE companies get the PINT AE XML ready for
 // their accredited service provider. Runs inside withUser(); 0025_einvoicing.sql guards the chain and the rules.
+import { assertOutsideCalls } from '../outside.js';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
@@ -26,7 +27,8 @@ export function configureEInvoicing(o: { encryptionKey?: string; fetch?: Fetch; 
   if (o.fetch) fetchFn = o.fetch;
   if (o.now) clock = o.now;
 }
-const client = (env: Z.ZatcaEnv) => new ZatcaClient(env, fetchFn);
+// OUTSIDE_CALLS=off: refused before any request to ZATCA, with a plain message.
+const client = (env: Z.ZatcaEnv) => { assertOutsideCalls(); return new ZatcaClient(env, fetchFn); };
 /** Local date and time for the company's country (Saudi Arabia UTC+3, UAE and Oman UTC+4). */
 function localParts(at: Date, country: string) {
   const s = new Date(at.getTime() + (country === 'SA' ? 3 : 4) * 3600_000).toISOString();

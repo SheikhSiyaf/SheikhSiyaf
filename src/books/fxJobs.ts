@@ -8,6 +8,7 @@ import type pg from 'pg';
 import { withUser } from '../db/session.js';
 import { CURRENCIES, pegRates, rateText, ratesFromProvider } from './fx.js';
 import * as Fx from './fxService.js';
+import { guardFetch } from '../outside.js';
 
 export const DEFAULT_RATES_URL = 'https://open.er-api.com/v6/latest/{base}';
 export type FetchJson = (url: string) => Promise<unknown>;
@@ -24,7 +25,7 @@ export interface SyncResult { base: string; stored: number; provider: boolean; p
 export async function syncRates(pool: pg.Pool, o: { day?: string; url?: string; fetchJson?: FetchJson; force?: boolean } = {}): Promise<SyncResult[]> {
   const day = o.day ?? new Date().toISOString().slice(0, 10);
   const url = o.url ?? process.env.FX_RATES_URL ?? DEFAULT_RATES_URL;
-  const fetchJson = o.fetchJson ?? realFetch;
+  const fetchJson = guardFetch(o.fetchJson ?? realFetch);   // OUTSIDE_CALLS=off: refused before any request
   const needs = (await pool.query('SELECT base, currencies, have FROM fx_sync_needs($1)', [day])).rows as { base: string; currencies: string[]; have: number }[];
   const out: SyncResult[] = [];
   for (const n of needs) {

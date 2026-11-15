@@ -2,6 +2,7 @@
 //   resend (RESEND_API_KEY), sendgrid (SENDGRID_API_KEY), postmark (POSTMARK_TOKEN), log (writes to the server log and
 //   counts as sent: for development), none (default: emails wait in the outbox until a provider is set).
 // EMAIL_FROM is the sender, e.g. "Nusuh Books <no-reply@books.example.com>".
+import { OUTSIDE_OFF_MESSAGE, outsideCallsOff } from '../outside.js';
 export interface OutgoingEmail { to: string; toName?: string | null; replyTo?: string | null; subject: string; text: string; html?: string | null;
   attachments?: { fileName: string; contentType: string; base64: string }[] }
 export type SendResult = { ok: true; providerId: string | null } | { ok: false; hold: boolean; error: string };
@@ -17,6 +18,8 @@ export const emailConfig = (env = process.env): EmailConfig => ({
 const addr = (from: string) => { const m = /^(.*)<([^>]+)>\s*$/.exec(from); return m ? { name: m[1]!.trim().replace(/^"|"$/g, ''), email: m[2]!.trim() } : { name: '', email: from.trim() }; };
 
 export async function sendEmail(e: OutgoingEmail, cfg: EmailConfig = emailConfig(), fetchFn: Fetch = fetch as unknown as Fetch): Promise<SendResult> {
+  // OUTSIDE_CALLS=off: nothing goes to a provider; the email waits in the outbox.
+  if (outsideCallsOff() && cfg.provider !== 'none' && cfg.provider !== 'log') return { ok: false, hold: true, error: OUTSIDE_OFF_MESSAGE };
   const att = e.attachments ?? [];
   let url: string, headers: Record<string, string>, body: unknown;
   switch (cfg.provider) {

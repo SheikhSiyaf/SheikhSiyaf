@@ -2,6 +2,7 @@
 // and the account the money lands in. The customer presses Pay online on the invoice link; once the provider confirms
 // (asked by the server itself, after its webhook or when the customer comes back), the payment is recorded against
 // the invoice as the person who turned online payments on, in the same transaction that marks it paid.
+import { guardFetch } from '../outside.js';
 import type pg from 'pg';
 import { withUser, type Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
@@ -15,6 +16,8 @@ import { hashLinkToken } from './emailService.js';
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
 let encryptionKey = config.encryptionKey || config.sessionSecret;
 let fetchFn: Fetch = (...a) => fetch(...a);
+// OUTSIDE_CALLS=off: the payment provider is never contacted (the test sandbox, which makes no request, still works).
+const net: Fetch = (...a) => guardFetch(fetchFn)(...a);
 /** Set by the server (encryption key) and by tests (a stand-in for the provider). */
 export function configurePayments(o: { encryptionKey?: string; fetch?: Fetch }) {
   if (o.encryptionKey) encryptionKey = o.encryptionKey;
@@ -52,7 +55,7 @@ export async function start(pool: pg.Pool, token: string, base: string): Promise
   const p = PROVIDERS[r.provider]!;
   const out = await p.create({ id: r.id, amountMinor: toMinor(r.amount), currency: r.currency, description: `Invoice ${r.number} · ${r.seller}`,
     returnUrl: `${base}/i/${token}?paid=${r.id}`, webhookUrl: `${base}/api/public/payments/webhook/${r.provider}`, base },
-  r.secretEnc ? decryptSecret(encryptionKey, r.secretEnc) : '', fetchFn);
+  r.secretEnc ? decryptSecret(encryptionKey, r.secretEnc) : '', net);
   await pool.query('SELECT online_pay_checkout($1, $2, $3)', [r.id, out.ref, out.url]);
   return { url: out.url };
 }
@@ -62,7 +65,7 @@ export async function confirm(pool: pg.Pool, by: { id?: string; ref?: string }):
   const g = (await pool.query('SELECT * FROM online_pay_get($1, $2)', [by.id ?? null, by.ref ?? null])).rows[0];
   if (!g) return 'unknown';
   if (g.status !== 'created' || !g.provider_ref) return g.status;
-  const c = await PROVIDERS[g.provider]!.check(g.provider_ref, g.secret_enc ? decryptSecret(encryptionKey, g.secret_enc) : '', fetchFn);
+  const c = await PROVIDERS[g.provider]!.check(g.provider_ref, g.secret_enc ? decryptSecret(encryptionKey, g.secret_enc) : '', net);
   if (c.status === 'pending') return 'created';
   if (c.status === 'failed') { await pool.query('SELECT online_pay_failed($1, $2)', [g.id, c.detail ?? 'Declined']); return 'failed'; }
   if (c.amountMinor !== toMinor(g.amount) || c.currency !== g.currency) {

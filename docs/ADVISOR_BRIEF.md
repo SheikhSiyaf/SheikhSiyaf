@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-13 (Rooms module, stages 1 to 3).
+Last updated: 2026-11-15 (demo-site switches for free hosting).
 
 ---
 
@@ -82,6 +82,7 @@ console: creates customers and companies, bills them, answers support messages, 
 - **Email**: outbox with Resend, SendGrid or Postmark; invitations, password reset, documents, approvals.
 - **Quality**: 500+ automated tests (accounting rules, data separation, API); every change is tested first.
 - **Demo**: a browser-only demo with sample data exists as a claude.ai artifact. The real app is not hosted yet.
+- **Demo-site switches**: `OUTSIDE_CALLS=off` stops every call to an outside service (ZATCA, online payment, exchange rates, email), and `AUTH_PURGE_JOBS=off` joins the other job switches, so a free demo (Render + Neon) can run with no background work and no outside contact.
 
 Technology (for vendor conversations): PostgreSQL database, Node.js (TypeScript) server, React web front end. One
 codebase for all customers; per-customer settings, never copies. Code is in GitHub.

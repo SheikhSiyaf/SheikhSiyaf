@@ -250,3 +250,12 @@ describe('Advance payments on ZATCA e-invoices (0046)', () => {
     expect((await as(f.staff, (db) => E.submit(db, ef.id))).status).toBe('reported');
   });
 });
+
+describe('Demo sites', () => {
+  it('OUTSIDE_CALLS=off: connecting a device is refused before anything is sent to ZATCA', async () => {
+    process.env.OUTSIDE_CALLS = 'off';
+    try {
+      await expect(as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'simulation', otp: '123456' }))).rejects.toMatchObject({ status: 403, key: 'err.outsideOff' });
+    } finally { delete process.env.OUTSIDE_CALLS; }
+  });
+});

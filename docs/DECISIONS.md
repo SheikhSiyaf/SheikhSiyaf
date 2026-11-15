@@ -50,3 +50,23 @@
 - Confirm the calendar's deadline rules with ZATCA, the FTA, GOSI, GPSSA and MOHRE (src/books/compliance.ts), and whether Saudi Mudad/WPS salary deadlines should be added.
 - Email or SMS reminders for deadlines, portal requests and approvals: needs a sending provider.
 - Approvals: whether some clients need two levels (for example a second approver above a higher amount).
+
+## Users, access and client registration (moved from CLAUDE.md)
+
+### Users and access (decided)
+- Customers (tenants): accounting firms (keep books for clients) and companies that run their own books. The platform owner (the seller of Nusuh Books, owner console) creates every customer, its first Administrator and every company; it opens a customer's Administrator console to do so and never sees books.
+- Five kinds of people: platform owner; Administrator (one customer's admin console only, never sees books); firm staff (Firm partner, Reviewer, Staff accountant; see only clients assigned to them; firms only); client users (each with a client role; see only their own company).
+- A company customer's Administrator manages its users, roles, access and activity only; company details are kept by the owner. Its finance team reviews and signs off through roles with review and sign-off rights.
+- No client or role switcher inside the app. Login decides everything.
+- Roles: partner/staff accountant/client accountant can post; reviewer reviews and signs off; only partner locks periods; only the platform owner adds companies; the Administrator adds staff (firms) and users.
+- Client roles: the Administrator defines job titles for client users (Admin > Roles and permissions) with None/View/View and enter per module and an "approve claims" right. Every role is editable: Client accountant and Client management are created for each firm as ordinary roles, and every client user has a role. Checked in the API per module; the database still blocks writes for view-only roles.
+- Client data must never mix: every row carries company_id, every query is scoped by the user's assigned companies, enforced in the database (row-level security) and tested.
+
+### Client registration (decided)
+Required: company name, country, industry, CR (or trade licence in UAE) number, legal form, VAT status, address, city, financial year end, first client user (name, email).
+The industry sets the optional modules (Inventory, Restaurant, Assets, Projects, HRM, CRM; a restaurant gets Restaurant instead of Inventory); the Administrator can change them.
+VAT number required only if VAT registered; "VAT unregistered" means VAT rate 0%.
+Optional: Arabic name, trade name, CR expiry, VAT registration date, phone, email, website, logo, compliance notes, staff assignment.
+Validation: SA CR 10 digits; SA VAT 15 digits starting and ending with 3; UAE TRN 15 digits; CR and VAT numbers unique across clients.
+Entry settings per client: invoice prefix, payment terms, period lock date.
+

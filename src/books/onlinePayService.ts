@@ -14,7 +14,7 @@ import { recordPayment } from './documentsService.js';
 import { hashLinkToken } from './emailService.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
-let encryptionKey = config.encryptionKey || config.sessionSecret;
+let encryptionKey = config.encryptionKey;   // never the session secret
 let fetchFn: Fetch = (...a) => fetch(...a);
 // OUTSIDE_CALLS=off: the payment provider is never contacted (the test sandbox, which makes no request, still works).
 const net: Fetch = (...a) => guardFetch(fetchFn)(...a);

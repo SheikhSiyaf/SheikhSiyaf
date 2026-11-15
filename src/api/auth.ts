@@ -1,3 +1,4 @@
+import { encryptionKeyOf } from './context.js';
 // Sign-in, two-factor, invitations and the signed-in person's own account.
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
@@ -22,7 +23,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
   const addresses = new Throttle(pool, LOGIN_LIMITS.ip);
   const codes = new Throttle(pool, LOGIN_LIMITS.mfa);
   const secure = Boolean(opts.cookieSecure);
-  const key = opts.encryptionKey || opts.sessionSecret;
+  const key = encryptionKeyOf(opts);
   // Never in production, whatever was passed (the server also refuses to start with DEMO_LOGINS=true there).
   const demo = Boolean(opts.demoLogins) && !opts.production;
 

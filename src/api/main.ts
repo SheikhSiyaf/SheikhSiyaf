@@ -1,4 +1,7 @@
 // Starts the API, and serves the built web app from web/dist when it exists.
+import { reportError } from '../log/errorReport.js';
+import { releaseJobs } from '../jobs/runJob.js';
+import { loggerOptions } from '../log/redact.js';
 import { existsSync } from 'node:fs';
 import { config, validateConfig } from '../config.js';
 import { createPool } from '../db/session.js';
@@ -36,18 +39,22 @@ const pool = createPool(config.databaseUrl);
 const app = buildServer({
   pool,
   sessionSecret: config.sessionSecret,
-  // No fallback to SESSION_SECRET in production (validateConfig has refused to start without ENCRYPTION_KEY there).
-  encryptionKey: config.production ? config.encryptionKey : config.encryptionKey || config.sessionSecret,
+  encryptionKey: config.encryptionKey,   // never SESSION_SECRET (src/config.ts)
   production: config.production,
   publicUrl: config.publicUrl,
   cookieSecure: config.cookieSecure,
   demoLogins: config.demoLogins,
   trustProxy: config.trustProxy,
   staticDir: serveWeb ? WEB_DIST : undefined,
-  logger: true,
+  logger: loggerOptions(),   // masked: no passwords, keys, tokens, one-time codes or amounts (src/log/redact.ts)
 });
 
 await app.listen({ port: config.port, host: config.host });
+// Crashes are logged (masked) and, with ERROR_REPORT_URL set, reported.
+// On shutdown the jobs this copy owns are handed over at once (otherwise when its database connection closes).
+for (const sig of ['SIGTERM', 'SIGINT'] as const) process.once(sig, () => { void releaseJobs(pool).finally(() => app.close().finally(() => process.exit(0))); });
+process.on('unhandledRejection', (e) => { app.log.error(e as Error); void reportError({ where: 'unhandled rejection', message: (e as Error)?.message ?? String(e), stack: (e as Error)?.stack }); });
+process.on('uncaughtException', (e) => { app.log.error(e); void reportError({ where: 'crash', message: e.message, stack: e.stack }).finally(() => process.exit(1)); });
 // Daily exchange rates and the automatic month-end revaluation (FX_JOBS=off turns them off; FX_RATES_URL sets the provider).
 startFxJobs(pool, (m) => app.log.info(m));
 // Sending queued emails every minute (EMAIL_PROVIDER chooses the provider; EMAIL_JOBS=off turns it off).

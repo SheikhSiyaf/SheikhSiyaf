@@ -1,6 +1,7 @@
 // Throttling of sign-in and other public endpoints, kept in the database (db/migrations/0040) so the counts survive
 // restarts and are shared by every server instance. Each Throttle counts one kind of key: an account (normalised
 // email), an IP address, a person's two-factor step, or another public endpoint.
+import { runExclusive } from '../jobs/runJob.js';
 import type pg from 'pg';
 import { HttpError } from '../api/errors.js';
 
@@ -46,7 +47,7 @@ export async function purgeAttempts(db: Querier): Promise<number> {
 /** Runs the purge every hour, with the server's other jobs (AUTH_PURGE_JOBS=off turns it off). */
 export function startAuthPurgeJob(pool: pg.Pool, log: (m: string) => void = console.log) {
   if (process.env.AUTH_PURGE_JOBS === 'off') return () => undefined;   // AUTH_PURGE_JOBS=off turns it off (demo sites)
-  const go = () => void purgeAttempts(pool).then((n) => { if (n) log(`Sign-in attempts purged: ${n}`); }).catch((e) => log(`Sign-in attempt purge failed: ${(e as Error).message}`));
+  const go = () => void runExclusive(pool, 'signin_purge', () => purgeAttempts(pool)).then((x) => { if (x.ran && x.result) log(`Sign-in attempts purged: ${x.result}`); }).catch((e) => log(`Sign-in attempt purge failed: ${(e as Error).message}`));
   const first = setTimeout(go, 50_000);
   const every = setInterval(go, 60 * 60 * 1000);
   first.unref(); every.unref();

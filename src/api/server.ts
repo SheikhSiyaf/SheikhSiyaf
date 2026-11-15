@@ -1,5 +1,7 @@
 // HTTP API for the web front end. Every request that touches data runs inside withUser(), so the
 // database's row-level security and role rules decide what the signed-in user can see and do.
+import { reportError } from '../log/errorReport.js';
+import { registerHardening } from './hardening.js';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -10,7 +12,7 @@ import { checkEntry, postEntry, reverseEntry, setPeriodLock, trialBalance, type 
 import { SESSION_COOKIE, readCookie, verifySession } from '../auth/session.js';
 import { SYSTEM_ACCOUNTS } from '../books/chartTemplate.js';
 import { HttpError, toHttpError } from './errors.js';
-import { dateParam, today, uuidParam, type Ctx, type ServerOptions } from './context.js';
+import { dateParam, today, uuidParam, type Ctx, type ServerOptions, encryptionKeyOf } from './context.js';
 import { registerAuthRoutes } from './auth.js';
 import { registerAdminRoutes } from './admin.js';
 import { registerSalesRoutes } from './sales.js';
@@ -57,6 +59,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 1_000_000, trustProxy });
   const { pool } = opts;
   app.decorateRequest('userId', null);
+  registerHardening(app, { pool, https: Boolean(opts.cookieSecure || opts.production), publicUrl: opts.publicUrl });
 
   app.addHook('onRequest', async (req) => {
     req.userId = verifySession(opts.sessionSecret, readCookie(req.headers.cookie, SESSION_COOKIE));
@@ -70,7 +73,10 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
       : status && status < 500
         ? new HttpError(status, 'Some values are not in the right format.', 'err.format')
         : toHttpError(err);
-    if (e.status >= 500) req.log.error(err);
+    if (e.status >= 500) {
+      req.log.error(err);
+      void reportError({ where: 'request', message: (err as Error).message ?? String(err), stack: (err as Error).stack, method: req.method, url: req.url, status: e.status });
+    }
     reply.status(e.status).send({ error: e.message, key: e.key, details: e.details });
   });
 
@@ -82,8 +88,8 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     return withUser(pool, req.userId, fn, typeof acting === 'string' && /^[0-9a-f-]{36}$/i.test(acting) ? acting : null);
   };
   const ctx: Ctx = { pool, opts, as };
-  configureEInvoicing({ encryptionKey: opts.encryptionKey || opts.sessionSecret });
-  configurePayments({ encryptionKey: opts.encryptionKey || opts.sessionSecret });
+  configureEInvoicing({ encryptionKey: encryptionKeyOf(opts) });
+  configurePayments({ encryptionKey: encryptionKeyOf(opts) });
   registerPermissionCheck(app, ctx);
 
   async function companyRole(db: Db, companyId: string): Promise<string> {

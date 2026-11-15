@@ -1,6 +1,7 @@
 // Hourly jobs for the accountant tools, run by the server with nobody signed in; each piece of work runs as the person
 // who set it up: recurring sales invoices that are due, and automatic payment reminders. Links in emails start with
 // PUBLIC_URL; without it, invoices are still made and issued but not emailed.
+import { runExclusive } from '../jobs/runJob.js';
 import type pg from 'pg';
 import { withSystem } from '../db/session.js';
 import * as T from './toolsService.js';
@@ -43,8 +44,10 @@ export function startToolJobs(pool: pg.Pool, log: (m: string) => void = console.
   if (process.env.TOOL_JOBS === 'off') return () => undefined;
   const run = async () => {
     try {
+      await runExclusive(pool, 'accountant_tools', async () => {
       for (const r of await runRecurringInvoices(pool)) log(`Recurring invoice ${r.id}: ${r.problem ?? `${r.created} made`}`);
       for (const r of await runAutoReminders(pool)) if (r.sent || r.problem) log(`Reminders ${r.companyId}: ${r.problem ?? `${r.sent} sent`}`);
+      });
     } catch (e) { log(`Accountant tools job failed: ${(e as Error).message}`); }
   };
   const first = setTimeout(() => void run(), 20_000);

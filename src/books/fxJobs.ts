@@ -4,6 +4,7 @@
 //     come from the central bank pegs, so they are there even when the provider cannot be reached.
 //   * automatic month-end revaluation: for companies that turned it on, the last month end is revalued as the person
 //     who turned it on (their rights, their name in the audit log). Locked months are skipped; problems are noted.
+import { runExclusive } from '../jobs/runJob.js';
 import type pg from 'pg';
 import { withSystem } from '../db/session.js';
 import { CURRENCIES, pegRates, rateText, ratesFromProvider } from './fx.js';
@@ -65,8 +66,10 @@ export function startFxJobs(pool: pg.Pool, log: (m: string) => void = console.lo
   if (process.env.FX_JOBS === 'off') return () => undefined;
   const run = async () => {
     try {
+      await runExclusive(pool, 'exchange_rates', async () => {
       for (const r of await syncRates(pool)) log(`Exchange rates for ${r.base}: ${r.stored} stored${r.problem ? ` (provider: ${r.problem}; central bank pegs used)` : ''}.`);
       for (const r of await runAutoRevaluations(pool)) log(`Automatic revaluation ${r.companyId}: ${r.ok ? 'posted' : r.problem}`);
+      });
     } catch (e) { log(`Exchange rate job failed: ${(e as Error).message}`); }
   };
   const first = setTimeout(() => void run(), 10_000);

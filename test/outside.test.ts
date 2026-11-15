@@ -56,7 +56,8 @@ describe('OUTSIDE_CALLS=off', () => {
 describe('AUTH_PURGE_JOBS=off', () => {
   const run = async () => {
     vi.useFakeTimers();
-    const pool = { query: vi.fn(async () => ({ rows: [{ n: 0 }] })) } as unknown as pg.Pool;
+    // A stand-in pool: the job lock (src/jobs/runJob.ts) takes a connection and is always granted here.
+    const pool = { query: vi.fn(async () => ({ rows: [{ n: 0 }] })), connect: async () => ({ query: async () => ({ rows: [{ ok: true }] }), release: () => undefined }) } as unknown as pg.Pool;
     const stop = startAuthPurgeJob(pool, () => undefined);
     await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
     stop();

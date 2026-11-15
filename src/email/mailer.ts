@@ -1,5 +1,6 @@
 // The sender job: every minute, the next queued emails go to the provider; failures are retried later
 // (db/migrations/0031_email.sql). Runs with nobody signed in.
+import { runExclusive } from '../jobs/runJob.js';
 import type pg from 'pg';
 import { emailConfig, sendEmail, type EmailConfig, type Fetch } from './transport.js';
 
@@ -22,7 +23,7 @@ export function startMailer(pool: pg.Pool, log: (m: string) => void = console.lo
   const t = setInterval(() => {
     if (running) return;
     running = true;
-    void sendQueued(pool).then((r) => { const bad = r.filter((x) => !x.ok && x.error && !x.error.startsWith('No email provider')); if (bad.length) log(`Email: ${bad.length} not sent (${bad[0]!.error})`); })
+    void runExclusive(pool, 'email', () => sendQueued(pool)).then((x) => { if (!x.ran) return; const r = x.result; const bad = r.filter((x) => !x.ok && x.error && !x.error.startsWith('No email provider')); if (bad.length) log(`Email: ${bad.length} not sent (${bad[0]!.error})`); })
       .catch((e) => log(`Email job failed: ${(e as Error).message}`)).finally(() => { running = false; });
   }, 60_000);
   t.unref();

@@ -19,7 +19,7 @@ const notFound = (): never => { throw new HttpError(404, 'Not found.', 'err.notF
 const text = (v: unknown, max = 200) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
 
 // ------------------------------------------------------------------ configuration
-let encryptionKey = config.encryptionKey || config.sessionSecret;
+let encryptionKey = config.encryptionKey;   // never the session secret
 let fetchFn: Fetch | undefined;
 let clock = () => new Date();
 /** Set by the server (encryption key) and by tests (a stand-in for ZATCA, a fixed clock). */

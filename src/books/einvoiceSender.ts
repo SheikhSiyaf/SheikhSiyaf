@@ -5,6 +5,7 @@
 //   * Each device sends in invoice-counter order; one that cannot be reached holds back the ones after it, a rejected
 //     one does not.
 //   * Each answer is saved in its own transaction, so a crash loses nothing: what was not answered is sent again.
+import { runExclusive } from '../jobs/runJob.js';
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { withSystem } from '../db/session.js';
@@ -142,7 +143,9 @@ export function startEInvoiceSender(pool: pg.Pool, base: string, log: (m: string
     if (busy) return;
     busy = true;
     try {
-      const r = await runEInvoiceSender(pool, { all, base });
+      const x = await runExclusive(pool, JOB, () => runEInvoiceSender(pool, { all, base }), { record: false });   // it records its own runs
+      if (!x.ran) return;
+      const r = x.result;
       if (r.reported || r.rejected || r.warnings) log(`ZATCA sender: ${r.reported} reported, ${r.rejected} rejected, ${r.waiting} waiting, ${r.warnings} warnings`);
     } catch (e) { log(`ZATCA sender failed: ${(e as Error).message}`); }
     finally { busy = false; }

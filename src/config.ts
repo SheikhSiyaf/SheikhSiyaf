@@ -11,6 +11,10 @@ const env = process.env;
 
 const production = env.NODE_ENV === 'production';
 
+/** Development and tests only, when ENCRYPTION_KEY is not set: a fixed key so local data stays readable. Never the
+ *  session secret, and never in production (the server refuses to start without ENCRYPTION_KEY there). */
+export const DEV_ENCRYPTION_KEY = 'nusuh-development-only-encryption-key-not-for-real-data';
+
 export const config = {
   /** NODE_ENV=production: unsafe settings stop the server (see validateConfig). */
   production,
@@ -23,9 +27,9 @@ export const config = {
   sessionSecret: env.SESSION_SECRET || randomBytes(32).toString('hex'),
   sessionSecretFromEnv: Boolean(env.SESSION_SECRET),
   cookieSecure: env.COOKIE_SECURE === 'true',
-  /** Encrypts two-factor and provider secrets in the database. Never change it once in use. Outside production it falls
-   *  back to SESSION_SECRET; in production it must be set on its own. */
-  encryptionKey: production ? env.ENCRYPTION_KEY || '' : env.ENCRYPTION_KEY || env.SESSION_SECRET || '',
+  /** Encrypts two-factor and provider secrets in the database. Never change it once in use. It never falls back to
+   *  SESSION_SECRET; in production it must be set (validateConfig), elsewhere a fixed development key is used. */
+  encryptionKey: env.ENCRYPTION_KEY || (production ? '' : DEV_ENCRYPTION_KEY),
   /** Address used in links in emails, e.g. https://books.example.com. In production the only address used. */
   publicUrl: env.PUBLIC_URL || '',
   /** Show the demo sign-in buttons on the sign-in page. Never on in production. */
@@ -42,9 +46,11 @@ export function validateConfig(e: Record<string, string | undefined>): string[] 
   const key = e.ENCRYPTION_KEY ?? '';
   if (!session) out.push('SESSION_SECRET is not set: sign-in cookies would be signed with a random secret.');
   else if (session.length < 32) out.push('SESSION_SECRET is shorter than 32 characters.');
+  else if (exampleSecret(session)) out.push('SESSION_SECRET looks like an example value: generate a random one (see .env.example).');
   if (!key) out.push('ENCRYPTION_KEY is not set: it encrypts two-factor and provider secrets and must be set on its own.');
   else {
     if (key.length < 32) out.push('ENCRYPTION_KEY is shorter than 32 characters.');
+    else if (exampleSecret(key)) out.push('ENCRYPTION_KEY looks like an example value: generate a random one (see .env.example).');
     if (key === session) out.push('ENCRYPTION_KEY is the same as SESSION_SECRET: use two different secrets.');
   }
   const db = e.DATABASE_URL ?? '';
@@ -64,7 +70,16 @@ export function validateConfig(e: Record<string, string | undefined>): string[] 
   if (!pub) out.push('PUBLIC_URL is not set: links in emails need the real https:// address.');
   else if (!/^https:\/\/[^\s/]+/i.test(pub)) out.push('PUBLIC_URL does not start with https://.');
   if (e.DEMO_LOGINS === 'true') out.push('DEMO_LOGINS is true: demo sign-in buttons must never be on with real data.');
+  if (e.ERROR_REPORT_URL && !/^https:\/\/[^\s/]+/i.test(e.ERROR_REPORT_URL)) out.push('ERROR_REPORT_URL does not start with https://: error reports must be sent encrypted.');
   return out;
+}
+
+/** A secret someone typed or copied rather than generated: example words, the development key, or very few different
+ *  characters (for example 32 times "a" or "abcabc..."). */
+export function exampleSecret(s: string): boolean {
+  if (s === DEV_ENCRYPTION_KEY) return true;
+  if (/change.?me|example|replace|your.?(secret|key)|placeholder|secret|password|passw0rd|demo|test|sample|default|todo|xxxx|1234|abcd|qwerty/i.test(s)) return true;
+  return new Set(s).size < 10;
 }
 
 export function parseTrustProxy(v: string | undefined): boolean | number | string {

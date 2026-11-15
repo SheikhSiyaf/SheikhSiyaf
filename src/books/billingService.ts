@@ -1,6 +1,7 @@
 // Billing and subscriptions: what each customer pays for Nusuh Books. The platform owner sets plans and each
 // customer's subscription, runs billing (or the daily job does) and marks invoices paid; a customer's Administrator
 // sees its own plan, usage and invoices. Amounts are NUMERIC in the database and strings here.
+import { runExclusive } from '../jobs/runJob.js';
 import type pg from 'pg';
 import type { Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
@@ -201,13 +202,15 @@ export async function runAsOwner(db: Db, day: string, base?: string) { await req
 export function startBillingJob(pool: pg.Pool, log: (m: string) => void = console.log) {
   if (process.env.BILLING_JOBS === 'off') return () => undefined;
   const go = async () => {
-    const c = await pool.connect();
-    try {
-      await c.query('BEGIN');
-      const made = await run(c, new Date().toISOString().slice(0, 10), (process.env.PUBLIC_URL ?? '').replace(/\/+$/, '') || undefined);
-      await c.query('COMMIT');
-      if (made.length) log(`Billing: ${made.length} invoice(s) made`);
-    } catch (e) { await c.query('ROLLBACK').catch(() => undefined); log(`Billing job failed: ${(e as Error).message}`); } finally { c.release(); }
+    await runExclusive(pool, 'billing', async () => {
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        const made = await run(c, new Date().toISOString().slice(0, 10), (process.env.PUBLIC_URL ?? '').replace(/\/+$/, '') || undefined);
+        await c.query('COMMIT');
+        if (made.length) log(`Billing: ${made.length} invoice(s) made`);
+      } catch (e) { await c.query('ROLLBACK').catch(() => undefined); throw e; } finally { c.release(); }
+    }).catch((e) => log(`Billing job failed: ${(e as Error).message}`));
   };
   const first = setTimeout(() => void go(), 30_000);
   const every = setInterval(() => void go(), 6 * 60 * 60 * 1000);

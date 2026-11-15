@@ -1,6 +1,7 @@
 // Direct bank feeds (db/migrations/0038): a bank account connected through an open-banking provider brings its own
 // transactions in as statement lines, through the same import as a statement file (duplicates skipped), then the
 // bank rules book what they recognise. Synced on connecting, by Sync now, and every six hours by the server.
+import { runExclusive } from '../jobs/runJob.js';
 import type pg from 'pg';
 import { withSystem, type Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
@@ -78,7 +79,7 @@ export async function runBankFeeds(pool: pg.Pool, day = today()) {
 export function startBankFeedJob(pool: pg.Pool, log: (m: string) => void = console.log) {
   if (process.env.BANK_FEED_JOBS === 'off') return () => undefined;
   const go = async () => {
-    try { for (const r of await runBankFeeds(pool)) if (r.imported || r.problem) log(`Bank feed ${r.id}: ${r.problem ?? `${r.imported} new lines`}`); }
+    try { await runExclusive(pool, 'bank_feeds', async () => { for (const r of await runBankFeeds(pool)) if (r.imported || r.problem) log(`Bank feed ${r.id}: ${r.problem ?? `${r.imported} new lines`}`); }); }
     catch (e) { log(`Bank feed job failed: ${(e as Error).message}`); }
   };
   const first = setTimeout(() => void go(), 40_000);

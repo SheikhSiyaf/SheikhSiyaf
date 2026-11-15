@@ -3,6 +3,7 @@ import type { FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
+import { DEV_ENCRYPTION_KEY } from '../config.js';
 
 export interface ServerOptions {
   pool: pg.Pool;
@@ -15,7 +16,7 @@ export interface ServerOptions {
   demoLogins?: boolean;
   /** Folder with the built front end (web/dist). Served with a fallback to index.html. */
   staticDir?: string;
-  logger?: boolean;
+  logger?: import('fastify').FastifyServerOptions['logger'];
   /** NODE_ENV=production: links use only publicUrl, and the demo sign-in stays off. */
   production?: boolean;
   /** Fastify's trustProxy: when on, the client address comes from X-Forwarded-For (only behind your own proxy). */
@@ -31,6 +32,13 @@ export interface Ctx {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The key that encrypts stored secrets: ENCRYPTION_KEY, never the session secret. Production without it is refused. */
+export function encryptionKeyOf(opts: Pick<ServerOptions, 'encryptionKey' | 'production'>): string {
+  if (opts.encryptionKey) return opts.encryptionKey;
+  if (opts.production) throw new Error('ENCRYPTION_KEY is required in production.');
+  return DEV_ENCRYPTION_KEY;
+}
 
 export function uuidParam(v: string): string {
   if (!UUID.test(v)) throw new HttpError(404, 'Not found.', 'err.notFound');

@@ -161,9 +161,28 @@ prototype/          The original clickable prototype (visual and flow reference 
   The database works out which companies the user can see, and their role in each, from `memberships`.
 - Every table has row-level security. Triggers protect the ledger and the audit log so that even the owner role cannot change them.
 
+## Starting a real installation (no demo data)
+1. Create an empty PostgreSQL 16 database. Set `DATABASE_ADMIN_URL` (owner connection, used only for steps 2 and 3),
+   `APP_DB_PASSWORD` (a long random password for the app role), `DATABASE_URL` (`nusuh_app` with that password),
+   `NODE_ENV=production` and the other settings under "Before real client data".
+2. `npm run db:migrate` creates the tables and the `nusuh_app` role. It adds no people and no companies.
+3. `npm run db:install -- --name "Owner's full name" --email owner@yourdomain.com` creates the platform owner and
+   prints a one-time link (valid 3 days) to choose a password. Nobody types or sees a password on the server. Run it
+   again before the link is used to get a new one. It refuses a database that has the demo data in it.
+4. `npm run build`, then `npm start`. Open the link, choose a password, sign in, and turn on two-factor sign-in.
+5. In the owner console, add the first customer (an accounting firm, or a company that keeps its own books) with its
+   Administrator, then open that customer and add its company with its first user. Each gets an invitation link.
+- Never run `npm run db:seed` or `npm run db:reset` here: both refuse to run when `NODE_ENV=production`, and the demo
+  sign-in buttons are always off in production.
+- Monitoring: `GET /health` answers 200 when the database and every switched-on background job are fine, 503
+  otherwise (no customer data). Background jobs run in one server copy at a time, even with several copies running.
+- Error reports: set `ERROR_REPORT_URL` to an https address (for example a monitoring service's webhook) to receive
+  server errors, failed jobs and crashes as JSON. Off when empty. Reports and logs never contain passwords, keys,
+  tokens, one-time codes or amounts.
+
 ## Before real client data
 - Hosting with HTTPS. In `.env`, set `NODE_ENV=production`: the server then refuses to start, listing every problem, until:
-  - `SESSION_SECRET` and `ENCRYPTION_KEY` are each at least 32 characters and different (never change `ENCRYPTION_KEY` afterwards)
+  - `SESSION_SECRET` and `ENCRYPTION_KEY` are each at least 32 characters, random (not example values such as `change-me`), and different (never change `ENCRYPTION_KEY` afterwards; it never falls back to `SESSION_SECRET`)
   - `DATABASE_URL` connects as `nusuh_app` with a real password, and is not `DATABASE_ADMIN_URL`
   - `COOKIE_SECURE=true`, and `PUBLIC_URL` is the `https://` address people use (the only address used in links)
   - `DEMO_LOGINS` is not true (and do not load the demo data)

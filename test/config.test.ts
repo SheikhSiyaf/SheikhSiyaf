@@ -2,12 +2,13 @@
 // elsewhere the same list is printed as warnings. Links in emails use only PUBLIC_URL in production.
 import { describe, it, expect } from 'vitest';
 import type { FastifyRequest } from 'fastify';
-import { validateConfig } from '../src/config.js';
+import { validateConfig, config, DEV_ENCRYPTION_KEY } from '../src/config.js';
+import { encryptionKeyOf } from '../src/api/context.js';
 import { baseUrl } from '../src/api/context.js';
 import { app as appPool, owner, seed } from './helpers.js';
 import { buildServer } from '../src/api/server.js';
 
-const S32 = 'a'.repeat(40), E32 = 'b'.repeat(40);
+const S32 = '9f2c7e41b8d05a63c1e47f90b2d8a5163e7c0f4b29d6a81e', E32 = '4d81a6f03c9e27b5d1f846a0c37e92b15a6d08f4c2e79b31';
 const good = {
   NODE_ENV: 'production', SESSION_SECRET: S32, ENCRYPTION_KEY: E32,
   DATABASE_URL: 'postgres://nusuh_app:Str0ng-and-long@db.internal:5432/nusuh', DATABASE_ADMIN_URL: 'postgres://postgres:other@db.internal:5432/nusuh',
@@ -28,6 +29,23 @@ describe('validateConfig', () => {
     expect(has(problems({ ENCRYPTION_KEY: undefined }), /ENCRYPTION_KEY/)).toBe(true);
     expect(has(problems({ ENCRYPTION_KEY: 'short' }), /ENCRYPTION_KEY.*32/)).toBe(true);
     expect(has(problems({ ENCRYPTION_KEY: S32 }), /ENCRYPTION_KEY.*SESSION_SECRET/)).toBe(true);
+  });
+  it('SESSION_SECRET and ENCRYPTION_KEY: never example values', () => {
+    for (const v of ['change-me-change-me-change-me-change-me', 'a'.repeat(40), 'abcabcabcabcabcabcabcabcabcabcabcabc', 'my-super-secret-session-key-for-nusuh-books',
+      'replace-this-with-a-long-random-value-0001', DEV_ENCRYPTION_KEY]) {
+      expect(has(problems({ SESSION_SECRET: v }), /SESSION_SECRET looks like an example/), v).toBe(true);
+      expect(has(problems({ ENCRYPTION_KEY: v }), /ENCRYPTION_KEY looks like an example/), v).toBe(true);
+    }
+  });
+  it('ERROR_REPORT_URL, when set, must be https', () => {
+    expect(problems({ ERROR_REPORT_URL: 'https://errors.example.com/hook' })).toEqual([]);
+    expect(has(problems({ ERROR_REPORT_URL: 'http://errors.example.com/hook' }), /ERROR_REPORT_URL/)).toBe(true);
+  });
+  it('the encryption key never falls back to the session secret', () => {
+    expect(encryptionKeyOf({ encryptionKey: E32, production: true })).toBe(E32);
+    expect(() => encryptionKeyOf({ encryptionKey: '', production: true })).toThrow(/ENCRYPTION_KEY is required/);
+    expect(encryptionKeyOf({ encryptionKey: '', production: false })).toBe(DEV_ENCRYPTION_KEY);
+    expect(config.encryptionKey).not.toBe(config.sessionSecret);
   });
   it('DATABASE_URL: set, the nusuh_app role, not the default password', () => {
     expect(has(problems({ DATABASE_URL: undefined }), /DATABASE_URL is not set/)).toBe(true);

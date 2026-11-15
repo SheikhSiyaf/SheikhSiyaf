@@ -239,11 +239,18 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
         nextDate: daysAgo(2), lines: [{ ...SL('Fibre internet and 5 mobile lines', '1', '299.00', undefined, '5300'), vatCode: 'standard' }] });
 
       // Projects: Project A gets a customer and budget; a second project with its own invoice and costs.
-      await client.query(`UPDATE cost_centres SET budget = 5000, contact_id = $2, start_date = $3 WHERE company_id = $1 AND name = 'Project A'`, [id, walkIn, daysAgo(40)]);
-      const fitOut = await saveProject(db, id, { name: 'Warehouse fit-out', nameAr: 'تجهيز المستودع', contactId: faisal, budget: '8000.00', startDate: daysAgo(30) });
+      await client.query(`UPDATE cost_centres SET budget = 5000, contact_id = $2, start_date = $3, name = 'Showroom refit', name_ar = 'تجديد صالة العرض'
+        WHERE company_id = $1 AND name = 'Project A'`, [id, walkIn, daysAgo(40)]);
+      const fitOut = await saveProject(db, id, { name: 'Warehouse fit-out', nameAr: 'تجهيز المستودع', contactId: faisal, budget: '90000.00', startDate: daysAgo(30) });
       const pInv = await saveDraft(db, id, { type: 'invoice', contactId: faisal, issueDate: daysAgo(15), dueDate: daysAgo(-15),
-        lines: [{ ...SL('Fit-out works, stage 1', '1', '9500.00', undefined), costCentreId: fitOut }] });
+        lines: [{ ...SL('Fit-out works, stage 1', '1', '52000.00', undefined), costCentreId: fitOut }] });
       await issueDocument(db, pInv);
+      // The customer pays most of stage 1; stage 2 is invoiced this month.
+      await recordPayment(db, id, { direction: 'received', contactId: faisal, date: daysAgo(6), amount: '40000.00', accountId: acct['1000'], method: 'transfer',
+        reference: 'FAISAL-TRF-2231', allocations: [{ documentId: pInv, amount: '40000.00' }] });
+      const pInv2 = await saveDraft(db, id, { type: 'invoice', contactId: faisal, issueDate: daysAgo(4), dueDate: daysAgo(-26),
+        lines: [{ ...SL('Fit-out works, stage 2', '1', '26000.00', undefined), costCentreId: fitOut }] });
+      await issueDocument(db, pInv2);
       const pBill = await saveDraft(db, id, { type: 'bill', contactId: najd, issueDate: daysAgo(14), dueDate: daysAgo(-1), reference: 'NW-88190',
         lines: [{ ...SL('Shelving and racks', '1', '5200.00', undefined, '5000'), costCentreId: fitOut }] });
       await issueDocument(db, pBill);
@@ -403,7 +410,7 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
       const bankId = (await client.query('SELECT id FROM bank_accounts WHERE account_id = $1', [acct['1000']])).rows[0].id;
       await Bank.saveBankAccount(db, id, sa ? { kind: 'bank', iban: 'SA03 8000 0000 6080 1016 7519', accountNumber: '608010167519', name: 'Al Rajhi Bank – current account', nameAr: 'مصرف الراجحي – الحساب الجاري' }
         : { kind: 'bank', iban: 'AE07 0331 2345 6789 0123 456', accountNumber: '1234567890123456', name: 'Mashreq – current account', nameAr: 'بنك المشرق – الحساب الجاري' }, bankId);
-      const from = daysAgo(45);
+      const from = daysAgo(400);   // every bank entry so far: nothing older is left unreconciled
       const inBooks = (await client.query(
         `SELECT e.entry_date::text AS date, e.memo, (l.debit - l.credit)::text AS amount FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id
          WHERE l.account_id = $1 AND e.entry_date >= $2 AND e.entry_date < $3 ORDER BY e.entry_date, e.created_at`, [acct['1000'], from, daysAgo(1)])).rows
@@ -420,7 +427,7 @@ export async function seed(adminUrl: string): Promise<'seeded' | 'exists'> {
         `SELECT coalesce(sum(l.debit - l.credit), 0)::numeric(18,2)::text AS v FROM journal_lines l JOIN journal_entries e ON e.id = l.entry_id WHERE l.account_id = $1 AND e.entry_date < $2`,
         [acct['1000'], from])).rows[0].v);
       const statement = all.map((l) => { bal += toMinor(l.amount); return { ...l, reference: null, balance: fromMinor(bal) }; });
-      await Bank.importStatement(db, bankId, { fileName: 'statement-last-45-days.csv', lines: statement });
+      await Bank.importStatement(db, bankId, { fileName: 'statement.csv', lines: statement });
       await Bank.saveRule(db, id, { matchText: 'STC', direction: 'out', accountId: acct['5300'], vatCode: 'standard', label: 'Mobile and internet' });
       await Bank.saveRule(db, id, { matchText: 'BANK SERVICE CHARGES', direction: 'out', accountId: acct['5400'], vatCode: 'exempt', label: 'Bank charges' });
       for (const l of await Bank.statementLines(db, bankId, { status: 'open' })) {

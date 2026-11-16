@@ -155,7 +155,7 @@ export async function emailStatement(db: Db, companyId: string, contactId: strin
     + `<td style="padding:2px 8px">${esc(r.memo ?? '')}</td><td style="padding:2px 8px;text-align:right">${r.debit !== '0.00' ? esc(r.debit) : ''}</td>`
     + `<td style="padding:2px 8px;text-align:right">${r.credit !== '0.00' ? esc(r.credit) : ''}</td><td style="padding:2px 8px;text-align:right"><b>${esc(r.balance)}</b></td></tr>`).join('')}</table>`;
   mail.html = mail.html.replace(`<p style="margin:0 0 12px">Opening balance`, `${table}<p style="margin:0 0 12px">Opening balance`);
-  const csv = ['Date,Number,Description,Debit,Credit,Balance', ...l.rows.map((r) => [r.date, r.number ?? '', `"${String(r.memo ?? '').replace(/"/g, '""')}"`, r.debit, r.credit, r.balance].join(','))].join('\n');
+  const csv = ['Date,Number,Description,Debit,Credit,Balance', ...l.rows.map((r) => [r.date, csvCell(r.number ?? ''), csvCell(String(r.memo ?? '')), r.debit, r.credit, r.balance].join(','))].join('\n');
   return Mail.queue(db, { companyId, kind: 'statement', to, toName: s.customer.name, replyTo: s.company.email, mail, contactId,
     attachments: [{ fileName: `statement-${x.to}.csv`, contentType: 'text/csv', base64: Buffer.from(`﻿${csv}`, 'utf8').toString('base64') }] });
 }
@@ -304,8 +304,11 @@ export async function markRead(db: Db, companyId: string, keys: string[]) {
 }
 
 // ------------------------------------------------------------------ export everything
-const csvCell = (v: unknown) => { const s = v === null || v === undefined ? '' : v instanceof Date ? v.toISOString() : typeof v === 'object' ? JSON.stringify(v) : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+/** Text that a spreadsheet would run as a formula (=, +, -, @, tab or return first) gets a leading apostrophe, so a name
+ *  such as =HYPERLINK(...) stays text. Plain numbers, negative amounts included, are left as they are. */
+export const safeCsvText = (s: string) => (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s) ? `'${s}` : s);
+export const csvCell = (v: unknown) => { const s = safeCsvText(v === null || v === undefined ? '' : v instanceof Date ? v.toISOString() : typeof v === 'object' ? JSON.stringify(v) : String(v));
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 /** Everything the company keeps, one CSV per table (UTF-8 with BOM, opens in Excel), in a ZIP. Read with the person's rights. */
 export async function exportAll(db: Db, companyId: string): Promise<{ fileName: string; bytes: Uint8Array }> {
   const co = (await db.query('SELECT name FROM companies WHERE id = $1', [companyId])).rows[0] ?? notFound();

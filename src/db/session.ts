@@ -1,6 +1,7 @@
 // Every request runs inside one transaction with app.user_id set.
 // The database derives the user's companies and roles from memberships (row-level security).
 import pg from 'pg';
+import { HttpError } from '../api/errors.js';
 
 export type Db = pg.PoolClient;
 
@@ -12,12 +13,15 @@ export function createPool(connectionString: string): pg.Pool {
   return pool;
 }
 
-/** actingFirm: the tenant the platform owner is working in on this request (ignored for everyone else by the database). */
-export async function withUser<T>(pool: pg.Pool, userId: string, fn: (db: Db) => Promise<T>, actingFirm?: string | null): Promise<T> {
+/** actingFirm: the tenant the platform owner is working in on this request (ignored for everyone else by the database).
+ *  sessionVersion: the sign-in cookie's version; the request is refused unless it is the person's current one (0053). */
+export async function withUser<T>(pool: pg.Pool, userId: string, fn: (db: Db) => Promise<T>, actingFirm?: string | null, sessionVersion?: number): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
+    const ok = (await client.query("SELECT set_config('app.user_id', $1, true), CASE WHEN $2::int IS NULL THEN true ELSE session_ok($1::uuid, $2::int) END AS ok",
+      [userId, sessionVersion ?? null])).rows[0].ok;
+    if (!ok) throw new HttpError(401, 'Please sign in.', 'err.signIn');
     if (actingFirm) await client.query("SELECT set_config('app.acting_firm', $1, true)", [actingFirm]);
     const result = await fn(client);
     await client.query('COMMIT');

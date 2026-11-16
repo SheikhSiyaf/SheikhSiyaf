@@ -42,13 +42,20 @@ export function totpCode(secret: Buffer, unixSeconds: number, digits = 6, step =
   return String(n).padStart(digits, '0');
 }
 
-/** Accepts the current code and one step either side, to allow for clock drift. */
-export function verifyTotp(secretBase32: string, code: string, now = Date.now()): boolean {
+/** The 30-second step a code belongs to (the current one or one either side, for clock drift), or null if it is wrong.
+ *  The caller records the step (totp_use, db/migrations/0053) so the same code is never accepted twice. */
+export function totpStep(secretBase32: string, code: string, now = Date.now()): number | null {
   const c = code.replace(/\s/g, '');
-  if (!/^\d{6}$/.test(c)) return false;
+  if (!/^\d{6}$/.test(c)) return null;
   const secret = base32Decode(secretBase32);
   const t = Math.floor(now / 1000);
-  return [-30, 0, 30].some((d) => timingSafeEqual(Buffer.from(totpCode(secret, t + d)), Buffer.from(c)));
+  for (const d of [-30, 0, 30]) if (timingSafeEqual(Buffer.from(totpCode(secret, t + d)), Buffer.from(c))) return Math.floor((t + d) / 30);
+  return null;
+}
+
+/** Accepts the current code and one step either side, to allow for clock drift. */
+export function verifyTotp(secretBase32: string, code: string, now = Date.now()): boolean {
+  return totpStep(secretBase32, code, now) !== null;
 }
 
 export function otpauthUri(secretBase32: string, account: string, issuer = 'Nusuh Books'): string {

@@ -48,7 +48,7 @@ const POSTING_ROLES = ['partner', 'staff_accountant', 'client_accountant'];
 
 
 declare module 'fastify' {
-  interface FastifyRequest { userId: string | null }
+  interface FastifyRequest { userId: string | null; sessionVersion: number | null }
 }
 
 export function buildServer(opts: ServerOptions): FastifyInstance {
@@ -59,10 +59,13 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   const app = Fastify({ logger: opts.logger ?? false, bodyLimit: 1_000_000, trustProxy });
   const { pool } = opts;
   app.decorateRequest('userId', null);
+  app.decorateRequest('sessionVersion', null);
   registerHardening(app, { pool, https: Boolean(opts.cookieSecure || opts.production), publicUrl: opts.publicUrl });
 
   app.addHook('onRequest', async (req) => {
-    req.userId = verifySession(opts.sessionSecret, readCookie(req.headers.cookie, SESSION_COOKIE));
+    const s = verifySession(opts.sessionSecret, readCookie(req.headers.cookie, SESSION_COOKIE));
+    req.userId = s?.userId ?? null;
+    req.sessionVersion = s?.version ?? null;
   });
 
   app.setErrorHandler((err, req, reply) => {
@@ -85,11 +88,11 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
     if (!req.userId) throw new HttpError(401, 'Please sign in.', 'err.signIn');
     // The platform owner names the customer they are working in (only the owner's requests honour it: 0023_tenants.sql).
     const acting = req.headers['x-acting-tenant'];
-    return withUser(pool, req.userId, fn, typeof acting === 'string' && /^[0-9a-f-]{36}$/i.test(acting) ? acting : null);
+    return withUser(pool, req.userId, fn, typeof acting === 'string' && /^[0-9a-f-]{36}$/i.test(acting) ? acting : null, req.sessionVersion ?? undefined);
   };
   const ctx: Ctx = { pool, opts, as };
   configureEInvoicing({ encryptionKey: encryptionKeyOf(opts) });
-  configurePayments({ encryptionKey: encryptionKeyOf(opts) });
+  configurePayments({ encryptionKey: encryptionKeyOf(opts), production: Boolean(opts.production) });
   registerPermissionCheck(app, ctx);
 
   async function companyRole(db: Db, companyId: string): Promise<string> {

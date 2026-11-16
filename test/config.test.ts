@@ -12,7 +12,7 @@ const S32 = '9f2c7e41b8d05a63c1e47f90b2d8a5163e7c0f4b29d6a81e', E32 = '4d81a6f03
 const good = {
   NODE_ENV: 'production', SESSION_SECRET: S32, ENCRYPTION_KEY: E32,
   DATABASE_URL: 'postgres://nusuh_app:Str0ng-and-long@db.internal:5432/nusuh', DATABASE_ADMIN_URL: 'postgres://postgres:other@db.internal:5432/nusuh',
-  COOKIE_SECURE: 'true', PUBLIC_URL: 'https://books.example.com', DEMO_LOGINS: 'false',
+  COOKIE_SECURE: 'true', PUBLIC_URL: 'https://books.example.com', DEMO_LOGINS: 'false', TRUST_PROXY: '1',
 };
 const problems = (over: Record<string, string | undefined>) => validateConfig({ ...good, ...over });
 const has = (list: string[], re: RegExp) => list.some((p) => re.test(p));
@@ -56,6 +56,12 @@ describe('validateConfig', () => {
   it('DATABASE_URL must not be the owner connection', () => {
     expect(has(problems({ DATABASE_ADMIN_URL: good.DATABASE_URL }), /DATABASE_ADMIN_URL/)).toBe(true);
   });
+  it('TRUST_PROXY must be a decision (a number of proxies, or false), never left unset', () => {
+    expect(has(problems({ TRUST_PROXY: undefined }), /TRUST_PROXY/)).toBe(true);
+    expect(has(problems({ TRUST_PROXY: ' ' }), /TRUST_PROXY/)).toBe(true);
+    expect(problems({ TRUST_PROXY: 'false' })).toEqual([]);
+  });
+
   it('COOKIE_SECURE=true, PUBLIC_URL on https, DEMO_LOGINS off', () => {
     expect(has(problems({ COOKIE_SECURE: undefined }), /COOKIE_SECURE/)).toBe(true);
     expect(has(problems({ PUBLIC_URL: undefined }), /PUBLIC_URL/)).toBe(true);
@@ -64,8 +70,8 @@ describe('validateConfig', () => {
   });
   it('lists every problem at once', () => {
     const all = validateConfig({ NODE_ENV: 'production' });
-    expect(all).toHaveLength(5);
-    for (const name of ['SESSION_SECRET', 'ENCRYPTION_KEY', 'DATABASE_URL', 'COOKIE_SECURE', 'PUBLIC_URL']) expect(has(all, new RegExp(name)), name).toBe(true);
+    expect(all).toHaveLength(6);
+    for (const name of ['SESSION_SECRET', 'ENCRYPTION_KEY', 'DATABASE_URL', 'COOKIE_SECURE', 'PUBLIC_URL', 'TRUST_PROXY']) expect(has(all, new RegExp(name)), name).toBe(true);
   });
   it('outside production gives the same list (printed as warnings by the server)', () => {
     expect(validateConfig({ ...good, NODE_ENV: 'development', COOKIE_SECURE: 'false' })).toEqual(problems({ COOKIE_SECURE: 'false' }));

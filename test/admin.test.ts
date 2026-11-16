@@ -155,7 +155,8 @@ describe('Administrator console (API)', () => {
     expect((await get(c, '/api/me')).statusCode).toBe(401);
     expect((await server.inject({ method: 'POST', url: '/api/login', payload: { email: email.clientA, password: PW } })).json()).toMatchObject({ key: 'err.suspended' });
     expect((await post(a, `/api/admin/users/${f.a.clientAccountant}/status`, { active: true })).statusCode).toBe(200);
-    expect((await get(c, '/api/me')).statusCode).toBe(200);
+    expect((await get(c, '/api/me')).statusCode).toBe(401);   // reactivated: the old sign-in stays ended (0053)
+    expect((await get(await signIn(email.clientA!), '/api/me')).statusCode).toBe(200);
     expect((await post(a, `/api/admin/users/${f.admin}/status`, { active: false })).json()).toMatchObject({ key: 'err.selfSuspend' });
   });
 
@@ -210,15 +211,21 @@ describe('Two-factor sign-in', () => {
     expect(start.uri).toMatch(/^otpauth:\/\/totp\//);
     const code = () => totpCode(base32Decode(start.secret), Math.floor(Date.now() / 1000));
     expect((await post(c, '/api/me/two-factor/confirm', { ticket: start.ticket, code: '000000' === code() ? '111111' : '000000' })).json()).toMatchObject({ key: 'err.code' });
-    expect((await post(c, '/api/me/two-factor/confirm', { ticket: start.ticket, code: code() })).statusCode).toBe(200);
-    expect((await get(c, '/api/me')).json().user.twoFactor).toBe(true);
+    const on = await post(c, '/api/me/two-factor/confirm', { ticket: start.ticket, code: code() });
+    expect(on.statusCode).toBe(200);
+    expect((await get(c, '/api/me')).statusCode).toBe(401);   // the new secret ends older sign-ins; this browser got a new cookie
+    expect((await get(String(on.headers['set-cookie']).split(';')[0]!, '/api/me')).json().user.twoFactor).toBe(true);
 
     const step1 = await server.inject({ method: 'POST', url: '/api/login', payload: { email: email.partner, password: PW } });
     expect(step1.json()).toMatchObject({ twoFactor: true });
     expect(step1.headers['set-cookie']).toBeUndefined();
     const wrong = await server.inject({ method: 'POST', url: '/api/login/two-factor', payload: { ticket: step1.json().ticket, code: '000000' === code() ? '111111' : '000000' } });
     expect(wrong.statusCode).toBe(401);
-    const right = await server.inject({ method: 'POST', url: '/api/login/two-factor', payload: { ticket: step1.json().ticket, code: code() } });
+    // The code that turned it on is used up: signing in takes the next one.
+    const used = await server.inject({ method: 'POST', url: '/api/login/two-factor', payload: { ticket: step1.json().ticket, code: code() } });
+    expect(used.statusCode).toBe(401);
+    const next = totpCode(base32Decode(start.secret), Math.floor(Date.now() / 1000) + 30);
+    const right = await server.inject({ method: 'POST', url: '/api/login/two-factor', payload: { ticket: step1.json().ticket, code: next } });
     expect(right.statusCode).toBe(200);
     expect(String(right.headers['set-cookie'])).toMatch(/nb_session=/);
 

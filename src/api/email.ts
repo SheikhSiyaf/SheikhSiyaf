@@ -37,11 +37,14 @@ export function registerEmailRoutes(app: FastifyInstance, { as, pool, opts }: Ct
   });
 
   // Forgotten password: always the same answer, so it does not tell whether the address has an account.
-  const throttle = new Throttle(pool, { kind: 'reset', max: 3, windowMs: 60 * 60_000 });
+  const throttle = new Throttle(pool, { kind: 'reset', max: 3, windowMs: 60 * 60_000 });          // per email address
+  const resetAddresses = new Throttle(pool, { kind: 'resetip', max: 20, windowMs: 60 * 60_000 }); // per sender's address
   app.post<{ Body: { email?: string } }>('/api/password-reset', async (req) => {
     const email = String(req.body?.email ?? '').trim().toLowerCase();
     if (!E.EMAIL.test(email)) throw new HttpError(400, 'Enter a valid email address.', 'err.email');
+    await resetAddresses.check(req.ip);
     await throttle.check(email);
+    await resetAddresses.fail(req.ip);
     await throttle.fail(email);
     const token = randomBytes(32).toString('base64url');
     const u = (await pool.query('SELECT * FROM start_password_reset($1, $2)', [email, hashInviteToken(token)])).rows[0];

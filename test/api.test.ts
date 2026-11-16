@@ -43,9 +43,10 @@ describe('API', () => {
   });
 
   it('a tampered session token is rejected', async () => {
-    const token = signSession(SECRET, f.a.clientAccountant);
-    const [, exp, sig] = token.split('.');
-    expect((await get(`nb_session=${f.partner}.${exp}.${sig}`, '/api/me')).statusCode).toBe(401);
+    const token = signSession(SECRET, f.a.clientAccountant, 1);
+    const [, ver, exp, sig] = token.split('.');
+    expect((await get(`nb_session=${f.partner}.${ver}.${exp}.${sig}`, '/api/me')).statusCode).toBe(401);
+    expect((await get(`nb_session=${f.a.clientAccountant}.${exp}.${sig}`, '/api/me')).statusCode).toBe(401);   // the old 3-part form
   });
 
   it('a client user only sees their own company, even by asking for another one directly', async () => {

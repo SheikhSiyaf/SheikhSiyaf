@@ -1,4 +1,5 @@
-// Stateless signed session token: <userId>.<expiresAtSeconds>.<hmac>. Stored in an HttpOnly cookie.
+// Signed session token: <userId>.<sessionVersion>.<expiresAtSeconds>.<hmac>, in an HttpOnly cookie. The version must
+// match users.session_version (db/migrations/0053), so signing out or changing the password ends every older cookie.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export const SESSION_COOKIE = 'nb_session';
@@ -6,21 +7,24 @@ export const SESSION_HOURS = 12;
 
 const mac = (secret: string, data: string) => createHmac('sha256', secret).update(data).digest('base64url');
 
-export function signSession(secret: string, userId: string, now = Date.now()): string {
+export function signSession(secret: string, userId: string, version: number, now = Date.now()): string {
   const exp = Math.floor(now / 1000) + SESSION_HOURS * 3600;
-  const data = `${userId}.${exp}`;
+  const data = `${userId}.${version}.${exp}`;
   return `${data}.${mac(secret, data)}`;
 }
 
-export function verifySession(secret: string, token: string | undefined, now = Date.now()): string | null {
+export interface Session { userId: string; version: number }
+export function verifySession(secret: string, token: string | undefined, now = Date.now()): Session | null {
   if (!token) return null;
-  const [userId, exp, sig] = token.split('.');
-  if (!userId || !exp || !sig) return null;
-  const good = Buffer.from(mac(secret, `${userId}.${exp}`));
+  const parts = token.split('.');
+  if (parts.length !== 4) return null;
+  const [userId, ver, exp, sig] = parts as [string, string, string, string];
+  if (!/^\d{1,9}$/.test(ver)) return null;
+  const good = Buffer.from(mac(secret, `${userId}.${ver}.${exp}`));
   const given = Buffer.from(sig);
   if (good.length !== given.length || !timingSafeEqual(good, given)) return null;
   if (Number(exp) * 1000 < now) return null;
-  return /^[0-9a-f-]{36}$/i.test(userId) ? userId : null;
+  return /^[0-9a-f-]{36}$/i.test(userId) ? { userId: userId.toLowerCase(), version: Number(ver) } : null;
 }
 
 export function readCookie(header: string | undefined, name: string): string | undefined {

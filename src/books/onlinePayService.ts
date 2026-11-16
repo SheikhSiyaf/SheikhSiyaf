@@ -19,8 +19,11 @@ let fetchFn: Fetch = (...a) => fetch(...a);
 // OUTSIDE_CALLS=off: the payment provider is never contacted (the test sandbox, which makes no request, still works).
 const net: Fetch = (...a) => guardFetch(fetchFn)(...a);
 /** Set by the server (encryption key) and by tests (a stand-in for the provider). */
-export function configurePayments(o: { encryptionKey?: string; fetch?: Fetch }) {
+/** The live site (NODE_ENV=production): the test checkout, which records a payment without money moving, is refused. */
+let production = false;
+export function configurePayments(o: { encryptionKey?: string; fetch?: Fetch; production?: boolean }) {
   if (o.encryptionKey) encryptionKey = o.encryptionKey;
+  if (o.production !== undefined) production = o.production;
   if (o.fetch) fetchFn = o.fetch;
 }
 const today = () => new Date().toISOString().slice(0, 10);
@@ -35,6 +38,7 @@ export interface SettingsInput { enabled?: boolean; provider?: string; publishab
 export async function saveSettings(db: Db, companyId: string, x: SettingsInput) {
   const provider = String(x.provider ?? 'sandbox');
   if (!PROVIDER_NAMES.includes(provider)) bad('Choose the payment provider.', 'err.payProvider');
+  if (production && provider === 'sandbox' && x.enabled) bad('The test checkout cannot be used on the live site. Choose a real payment provider.', 'err.paySandboxProd');
   const secret = x.secretKey?.trim() ? encryptSecret(encryptionKey, x.secretKey.trim()) : null;
   await db.query(`INSERT INTO payment_settings (company_id, enabled, provider, publishable_key, secret_enc, deposit_account_id) VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (company_id) DO UPDATE SET enabled = $2, provider = $3, publishable_key = $4, secret_enc = coalesce($5, payment_settings.secret_enc), deposit_account_id = $6`,
@@ -52,6 +56,7 @@ export async function list(db: Db, companyId: string) {
 export async function start(pool: pg.Pool, token: string, base: string): Promise<{ url: string }> {
   const r = (await pool.query('SELECT online_pay_start($1) AS r', [hashLinkToken(token)])).rows[0].r as
     { id: string; amount: string; currency: string; provider: string; secretEnc: string | null; number: string; seller: string };
+  if (production && r.provider === 'sandbox') bad('The test checkout cannot be used on the live site. Choose a real payment provider.', 'err.paySandboxProd');
   const p = PROVIDERS[r.provider]!;
   const out = await p.create({ id: r.id, amountMinor: toMinor(r.amount), currency: r.currency, description: `Invoice ${r.number} · ${r.seller}`,
     returnUrl: `${base}/i/${token}?paid=${r.id}`, webhookUrl: `${base}/api/public/payments/webhook/${r.provider}`, base },

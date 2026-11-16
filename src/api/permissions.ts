@@ -5,7 +5,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
-import type { Ctx } from './context.js';
+import { routePath, type Ctx } from './context.js';
 import { accessTo, type AccessLevel } from '../books/modules.js';
 
 type Need = { companyId: string; modules: string[]; approve?: boolean; also?: string[] } | null;
@@ -157,7 +157,7 @@ const rank: Record<AccessLevel, number> = { none: 0, view: 1, edit: 2 };
 
 export function registerPermissionCheck(app: FastifyInstance, { as }: Ctx) {
   app.addHook('preHandler', async (req) => {
-    const path = req.url.split('?')[0]!;
+    const path = routePath(req);
     const rule = RULES.find(([method, re]) => (method === '*' || method === req.method) && re.test(path));
     if (!rule) return;
     if (!req.userId) return;   // signed out: the route answers "please sign in"

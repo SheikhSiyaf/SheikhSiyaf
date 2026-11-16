@@ -42,7 +42,20 @@ export function encryptionKeyOf(opts: Pick<ServerOptions, 'encryptionKey' | 'pro
 
 export function uuidParam(v: string): string {
   if (!UUID.test(v)) throw new HttpError(404, 'Not found.', 'err.notFound');
-  return v;
+  return v.toLowerCase();
+}
+
+/** The path of the route the server matched, filled in with its decoded parameters, in small letters. Access rules and
+ *  rate limits match this, never the raw address: an ID in capitals or a letter written as %72 reaches the same route,
+ *  so it must meet the same rule (security review finding 1). */
+export function routePath(req: FastifyRequest): string {
+  const template = req.routeOptions?.url;
+  const params = (req.params ?? {}) as Record<string, string>;
+  if (!template) {
+    const raw = req.url.split('?')[0]!;
+    try { return decodeURIComponent(raw).toLowerCase(); } catch { return raw.toLowerCase(); }
+  }
+  return template.replace(/:([A-Za-z0-9_]+)|\*/g, (m, k?: string) => String((k ? params[k] : params['*']) ?? m)).toLowerCase();
 }
 
 export function dateParam(v: unknown, fallback: string): string {

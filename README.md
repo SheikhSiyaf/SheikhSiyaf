@@ -186,6 +186,7 @@ prototype/          The original clickable prototype (visual and flow reference 
   - `DATABASE_URL` connects as `nusuh_app` with a real password, and is not `DATABASE_ADMIN_URL`
   - `COOKIE_SECURE=true`, and `PUBLIC_URL` is the `https://` address people use (the only address used in links)
   - `DEMO_LOGINS` is not true (and do not load the demo data)
-  Outside production the same list is printed as warnings at start-up. Behind your own proxy, set `TRUST_PROXY`.
+  - `TRUST_PROXY` is set on purpose: the number of proxies in front of the server (1 on most hosts, such as Render), or `false` when visitors connect to it directly. Left unset behind a proxy, every visitor would share one address and a few wrong passwords would lock everyone out of signing in.
+  Outside production the same list is printed as warnings at start-up.
 - Everyone turns on two-factor sign-in. Settings shows how many have.
 - Sending sign-in links by email (today the Administrator copies the link and sends it).

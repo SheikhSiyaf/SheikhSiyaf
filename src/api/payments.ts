@@ -36,11 +36,13 @@ export function registerPaymentRoutes(app: FastifyInstance, { as, pool, opts }: 
   });
   // The sandbox checkout (no money moves).
   app.get<{ Params: { ref: string } }>('/api/public/payments/sandbox/:ref', async (req) => {
+    if (opts.production) throw new HttpError(404, 'This checkout has ended. Go back to the invoice and press Pay online again.', 'err.payCheckoutGone');
     const s = sandboxCheckout(String(req.params.ref));
     if (!s) throw new HttpError(404, 'This checkout has ended. Go back to the invoice and press Pay online again.', 'err.payCheckoutGone');
     return { amount: fromMinor(s.amountMinor), currency: s.currency, outcome: s.outcome, returnUrl: s.returnUrl };
   });
   app.post<{ Params: { ref: string }; Body: { outcome?: string } }>('/api/public/payments/sandbox/:ref', async (req) => {
+    if (opts.production) throw new HttpError(404, 'This checkout has ended. Go back to the invoice and press Pay online again.', 'err.payCheckoutGone');
     const ref = String(req.params.ref);
     const s = sandboxDecide(ref, req.body?.outcome === 'paid' ? 'paid' : 'failed');
     if (!s) throw new HttpError(404, 'This checkout has ended. Go back to the invoice and press Pay online again.', 'err.payCheckoutGone');

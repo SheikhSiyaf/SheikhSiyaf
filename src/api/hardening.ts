@@ -9,6 +9,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type pg from 'pg';
 import { HttpError } from './errors.js';
+import { routePath } from './context.js';
 import { JOBS } from '../jobs/runJob.js';
 
 export const CSP = [
@@ -21,6 +22,8 @@ export const CSP = [
 export const LIMITS: [RegExp, number][] = [
   [/^\/api\/login/, 60],   // the database throttle (0040) is the main guard: 5 per account, 30 per address
   [/^\/api\/invite\//, 20],
+  [/^\/api\/password-reset$/, 10],   // the database also allows 3 an hour per email and 20 per sender's address
+  [/^\/api\/me\/two-factor\//, 30],
   [/^\/api\/public\//, 120],
   [/^\/health$/, 120],
 ];
@@ -40,7 +43,7 @@ export function registerHardening(app: FastifyInstance, o: { pool: pg.Pool; http
   const publicHost = (() => { try { return o.publicUrl ? new URL(o.publicUrl).host : ''; } catch { return ''; } })();
 
   app.addHook('onRequest', async (req: FastifyRequest) => {
-    const path = req.url.split('?')[0]!;
+    const path = routePath(req);
     const rule = LIMITS.find(([re]) => re.test(path));
     if (rule && !limits.take(`${rule[0].source}|${req.ip}`, rule[1])) throw new HttpError(429, 'Too many requests. Wait a minute and try again.', 'err.tooMany');
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers.cookie && req.headers.origin) {

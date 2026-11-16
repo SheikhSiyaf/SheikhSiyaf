@@ -446,3 +446,10 @@ Every change below is covered by a test in `test/`.
 |---|---|
 | `app_system_company()` and `before_system_write()` add the jobs 'recurring' (make and issue the due invoice, its entry and e-invoice), 'reminders' (email reminders), 'fx' (post the month-end revaluation, add the exchange gains and losses accounts if missing) and 'bank_feed' (import lines, book those a bank rule matches), each only while it is switched on for the company | Found in the batch 1 sweep: recurring invoices, automatic reminders and bank feed syncs stopped without a word when the person who set them up was suspended or left, and the automatic revaluation failed. |
 | `recurring_invoices_due()`, `reminders_auto()`, `bank_feeds_due()` no longer require that person to be active, and return the automatic sender | Who set them up stays recorded (`created_by`, `enabled_by`). |
+
+## 0053_session_versions_totp_steps.sql
+| Change | Why |
+|---|---|
+| `users.session_version` (only goes up); `session_version_of()`, `session_ok()`, `end_own_sessions()`; trigger `users_session_guard` raises it when the password, the two-factor secret or the status changes | Every sign-in cookie carries the version: signing out, a new password (also by reset or invitation), a new or reset two-factor secret and a suspension end every older sign-in (security review) |
+| `users.totp_last_step` (only goes up; cleared with a new secret); `totp_use()` | A two-factor code is accepted once, so a code seen by someone else cannot be used again |
+| `entry_amount()` and `add_default_client_roles()` no longer executable by `nusuh_app` | Internal helpers used only by owner-rights triggers; the app never needs them with a person's input |

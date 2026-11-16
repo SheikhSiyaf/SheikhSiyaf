@@ -70,6 +70,9 @@ export function validateConfig(e: Record<string, string | undefined>): string[] 
   if (!pub) out.push('PUBLIC_URL is not set: links in emails need the real https:// address.');
   else if (!/^https:\/\/[^\s/]+/i.test(pub)) out.push('PUBLIC_URL does not start with https://.');
   if (e.DEMO_LOGINS === 'true') out.push('DEMO_LOGINS is true: demo sign-in buttons must never be on with real data.');
+  // Behind a host's proxy every visitor would otherwise share the proxy's address, so one person's wrong passwords would
+  // lock everyone out of signing in. The setting must be a decision: the number of proxies in front, or false for none.
+  if (!(e.TRUST_PROXY ?? '').trim()) out.push('TRUST_PROXY is not set: set it to the number of proxies in front of the server (1 on most hosts, such as Render), or false if visitors connect to it directly.');
   if (e.ERROR_REPORT_URL && !/^https:\/\/[^\s/]+/i.test(e.ERROR_REPORT_URL)) out.push('ERROR_REPORT_URL does not start with https://: error reports must be sent encrypted.');
   return out;
 }

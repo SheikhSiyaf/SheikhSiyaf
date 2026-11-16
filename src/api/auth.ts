@@ -6,7 +6,7 @@ import type { Ctx } from './context.js';
 import { HttpError } from './errors.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
 import { clearedCookie, sessionCookie, signSession, signToken, verifyToken } from '../auth/session.js';
-import { newTotpSecret, otpauthUri, verifyTotp } from '../auth/totp.js';
+import { newTotpSecret, otpauthUri, totpStep } from '../auth/totp.js';
 import { decryptSecret, encryptSecret } from '../auth/secretBox.js';
 import { DEMO_PASSWORD, DEMO_USERS } from '../db/demoData.js';
 import { LOGIN_LIMITS, Throttle, accountKey } from '../auth/throttle.js';
@@ -26,6 +26,17 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
   const key = encryptionKeyOf(opts);
   // Never in production, whatever was passed (the server also refuses to start with DEMO_LOGINS=true there).
   const demo = Boolean(opts.demoLogins) && !opts.production;
+  /** The sign-in cookie carries the person's current session version (db/migrations/0053). */
+  const sessionFor = async (userId: string) => {
+    const v = (await pool.query('SELECT session_version_of($1) AS v', [userId])).rows[0]?.v;
+    if (v === null || v === undefined) throw new HttpError(403, 'This account is suspended. Contact the Administrator.', 'err.suspended');
+    return sessionCookie(signSession(opts.sessionSecret, userId, Number(v)), secure);
+  };
+  /** A code from the person's authenticator, accepted once (the same code again is refused). */
+  const useCode = async (userId: string, secret: string, code: string) => {
+    const step = totpStep(secret, code);
+    return step !== null && Boolean((await pool.query('SELECT totp_use($1, $2) AS ok', [userId, step])).rows[0].ok);
+  };
 
   app.get('/api/config', async () => ({
     demoLogins: demo,
@@ -59,7 +70,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
     if (u.totp_secret_enc) {
       return { twoFactor: true, ticket: signToken(opts.sessionSecret, 'mfa', b64(`${u.id}:${email}`), 300) };
     }
-    reply.header('set-cookie', sessionCookie(signSession(opts.sessionSecret, u.id), secure));
+    reply.header('set-cookie', await sessionFor(u.id));
     return { ok: true };
   });
 
@@ -73,7 +84,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
     const u = rows[0];
     let good = false;
     try {
-      good = Boolean(u && u.id === userId && u.totp_secret_enc && verifyTotp(decryptSecret(key, u.totp_secret_enc), String(req.body?.code ?? '')));
+      good = Boolean(u && u.id === userId && u.totp_secret_enc && await useCode(userId, decryptSecret(key, u.totp_secret_enc), String(req.body?.code ?? '')));
     } catch {
       good = false;
     }
@@ -84,11 +95,13 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     if (u.status !== 'active') throw new HttpError(403, 'This account is suspended. Contact the Administrator.', 'err.suspended');
     await codes.clear(userId);
-    reply.header('set-cookie', sessionCookie(signSession(opts.sessionSecret, userId), secure));
+    reply.header('set-cookie', await sessionFor(userId));
     return { ok: true };
   });
 
-  app.post('/api/logout', async (_req, reply) => {
+  // Signing out ends every sign-in of this person (all devices), not only this browser's cookie.
+  app.post('/api/logout', async (req, reply) => {
+    if (req.userId) await as(req, (db) => db.query('SELECT end_own_sessions()')).catch(() => undefined);
     reply.header('set-cookie', clearedCookie(secure));
     return { ok: true };
   });
@@ -136,12 +149,28 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
     };
   }));
 
-  app.post<{ Body: { ticket?: string; code?: string } }>('/api/me/two-factor/confirm', async (req) => {
+  // Replacing an authenticator already in use needs a code from it, so a borrowed or stolen session cannot swap it.
+  app.post<{ Body: { ticket?: string; code?: string; currentCode?: string } }>('/api/me/two-factor/confirm', async (req, reply) => {
     const payload = verifyToken(opts.sessionSecret, 'totp-setup', req.body?.ticket);
     const [userId, secret] = payload ? (unb64(payload).split(':') as [string, string]) : [];
     if (!userId || userId !== req.userId || !secret) throw new HttpError(400, 'Start the set-up again: it timed out.', 'err.ticket');
-    if (!verifyTotp(secret, String(req.body?.code ?? ''))) throw new HttpError(400, 'That code is not right. Use the latest code from your authenticator app.', 'err.code');
+    const current = (await as(req, (db) => db.query('SELECT totp_secret_enc FROM users WHERE id = app_user_id()'))).rows[0]?.totp_secret_enc as string | null;
+    if (current) {
+      await codes.check(userId);
+      let good = false;
+      try { good = await useCode(userId, decryptSecret(key, current), String(req.body?.currentCode ?? '')); } catch { good = false; }
+      if (!good) {
+        await codes.fail(userId);
+        throw new HttpError(400, 'Enter the current code from the authenticator app you use now.', 'err.currentCode');
+      }
+      await codes.clear(userId);
+    }
+    const step = totpStep(secret, String(req.body?.code ?? ''));
+    if (step === null) throw new HttpError(400, 'That code is not right. Use the latest code from your authenticator app.', 'err.code');
     await as(req, (db) => db.query('SELECT set_own_totp($1)', [encryptSecret(key, secret)]));
+    await pool.query('SELECT totp_use($1, $2)', [userId, step]);   // the code that turned it on is used up too
+    // The new secret ends every older sign-in (0053); this browser gets a fresh cookie.
+    reply.header('set-cookie', await sessionFor(userId));
     return { ok: true };
   });
 }

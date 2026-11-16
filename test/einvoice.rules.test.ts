@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { zatcaAdvice, ADVICE_KEYS } from '../src/einvoice/zatca/advice.js';
 import { createHash, createPublicKey, verify } from 'node:crypto';
 import * as Z from '../src/einvoice/zatca/crypto.js';
 import * as X from '../src/einvoice/zatca/xml.js';
@@ -195,3 +196,34 @@ describe('UAE: Peppol PINT AE', () => {
     expect(A.pintAeInScope(ae({ buyer: { name: 'Walk-in', country: 'AE' } }))).toBe(false);
   });
 });
+
+// What ZATCA's refusal means, in words a customer can act on (src/einvoice/zatca/advice.ts).
+describe('Advice on a ZATCA refusal', () => {
+  it('names the likely cause for the refusals we have seen, and stays quiet when it cannot', () => {
+    expect(zatcaAdvice('[{"code":"Invalid-OTP","message":"The provided OTP is invalid"}]')).toBe('einv.why.otp');
+    expect(zatcaAdvice('HTTP 401 with no message')).toBe('einv.why.signin');
+    expect(zatcaAdvice('"Unauthorized"')).toBe('einv.why.signin');
+    expect(zatcaAdvice('unreachable')).toBe('einv.why.unreachable');
+    expect(zatcaAdvice('connect ETIMEDOUT 1.2.3.4:443')).toBe('einv.why.unreachable');
+    expect(zatcaAdvice('The VAT number does not match the taxpayer')).toBe('einv.why.vat');
+    expect(zatcaAdvice('A device already exists for this unit')).toBe('einv.why.exists');
+    expect(zatcaAdvice('national address is not correct: district')).toBe('einv.why.address');
+    expect(zatcaAdvice('HTTP 503 service unavailable')).toBe('einv.why.zatcaDown');
+    expect(zatcaAdvice('')).toBeNull();
+    expect(zatcaAdvice('Something we have never seen before')).toBeNull();
+  });
+
+  it('the one-time password comes before the sign-in guess: both words can appear together', () => {
+    expect(zatcaAdvice('{"status":401,"message":"OTP expired"}')).toBe('einv.why.otp');
+  });
+
+  it('every sentence it can return exists in English and Arabic', async () => {
+    const web = (x: string) => import(x);   // loaded at run time: the .tsx file is not part of this project's type check
+    const { DICTS } = await web('../web/src/i18n.tsx') as { DICTS: Record<string, Record<string, string>> };
+    for (const k of ADVICE_KEYS) {
+      expect(Boolean(DICTS.en![k]), `English ${k}`).toBe(true);
+      expect(Boolean(DICTS.ar![k]), `Arabic ${k}`).toBe(true);
+    }
+  });
+});
+

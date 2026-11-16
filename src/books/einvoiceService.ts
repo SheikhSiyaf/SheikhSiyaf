@@ -2,6 +2,7 @@
 // when an invoice or credit note is issued, and sending it to ZATCA. UAE companies get the PINT AE XML ready for
 // their accredited service provider. Runs inside withUser(); 0025_einvoicing.sql guards the chain and the rules.
 import { assertOutsideCalls } from '../outside.js';
+import { zatcaAdvice } from '../einvoice/zatca/advice.js';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
@@ -120,6 +121,8 @@ export function buyerAddressMissing(b: EParty | null): string[] {
 }
 
 // ------------------------------------------------------------------ devices and onboarding
+/** ZATCA's own words, with the likely cause first when we can name one. */
+const zatcaDetails = (err: string): string[] => [zatcaAdvice(err), err].filter(Boolean) as string[];
 const secret = (v: string) => encryptSecret(encryptionKey, v);
 const unbox = (v: string) => decryptSecret(encryptionKey, v);
 export interface OnboardInput { environment?: string; otp?: string; name?: string; branch?: string; invoiceTypes?: string }
@@ -144,7 +147,7 @@ export async function onboard(db: Db, companyId: string, b: OnboardInput): Promi
     vatNumber: co.vatNumber, invoiceTypes: types, address: `${s.buildingNumber} ${s.street}, ${s.district}, ${co.city} ${s.postalCode}`, industry: co.industry ?? 'Trading' });
   const r = await client(env).complianceCsid(csr.base64, otp);
   if ('error' in r) bad(r.error === 'unreachable' ? 'ZATCA could not be reached. Try again in a moment.' : 'ZATCA did not accept the request. Check the one-time password (it works once, for one hour).',
-    r.error === 'unreachable' ? 'err.zatcaUnreachable' : 'err.zatcaOtp', [r.error]);
+    r.error === 'unreachable' ? 'err.zatcaUnreachable' : 'err.zatcaOtp', zatcaDetails(r.error));
   const ok = r as { requestId: string; token: string; secret: string };
   return (await db.query(
     `INSERT INTO einvoice_devices (company_id, environment, name, serial, branch, invoice_types, private_key_enc, csr, compliance_request_id, compliance_token, compliance_secret_enc,
@@ -175,7 +178,7 @@ function samples(co: { name: string; vatNumber: string; crNumber: string; city: 
 }
 
 /** Step 2: the compliance checks, then the production CSID. The device is active when both pass. */
-export async function finishOnboarding(db: Db, deviceId: string): Promise<{ status: string; checks: { type: string; outcome: string; warnings: string[]; errors: string[] }[]; zatcaError?: string }> {
+export async function finishOnboarding(db: Db, deviceId: string): Promise<{ status: string; checks: { type: string; outcome: string; warnings: string[]; errors: string[] }[]; zatcaError?: string; advice?: string }> {
   const dev = await device(db, deviceId);
   if (dev.status === 'active' || dev.status === 'retired') bad('This device is already set up.', 'err.einvDeviceDone');
   const co = await company(db, dev.company_id);
@@ -200,7 +203,7 @@ export async function finishOnboarding(db: Db, deviceId: string): Promise<{ stat
     if (!passed) return { status: 'checks_failed', checks };
   }
   const p = await client(dev.environment).productionCsid(creds, dev.compliance_request_id);
-  if ('error' in p) return { status: 'checks_passed', checks, zatcaError: p.error };   // ZATCA's own words, shown as they are
+  if ('error' in p) return { status: 'checks_passed', checks, zatcaError: p.error, advice: zatcaAdvice(p.error) ?? undefined };   // ZATCA's own words, with the likely cause
   const prod = p as { token: string; secret: string };
   // Never switch a device on with a certificate that is not for its own key: every invoice would be rejected.
   // The check results are kept and returned, so the person still sees what ZATCA said about each sample invoice.
@@ -230,7 +233,7 @@ export async function renew(db: Db, deviceId: string, b: { otp?: string }): Prom
     vatNumber: co.vatNumber, invoiceTypes: dev.invoice_types, address: `${s.buildingNumber} ${s.street}, ${s.district}, ${co.city} ${s.postalCode}`, industry: co.industry ?? 'Trading' });
   const r = await client(dev.environment).renewCsid({ token: dev.production_token, secret: unbox(dev.production_secret_enc) }, csr.base64, otp);
   if ('error' in r) bad(r.error === 'unreachable' ? 'ZATCA could not be reached. Try again in a moment.' : 'ZATCA did not accept the request. Check the one-time password (it works once, for one hour).',
-    r.error === 'unreachable' ? 'err.zatcaUnreachable' : 'err.zatcaOtp', [r.error]);
+    r.error === 'unreachable' ? 'err.zatcaUnreachable' : 'err.zatcaOtp', zatcaDetails(r.error));
   const ok = r as { token: string; secret: string };
   // The same rule as when connecting: never use a certificate that is not for this device's (new) key.
   if (!Z.certMatchesKey(Z.certInfo(ok.token), Z.keyFrom(privatePem)))

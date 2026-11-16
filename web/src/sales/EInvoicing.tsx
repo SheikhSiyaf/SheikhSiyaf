@@ -49,7 +49,8 @@ function useRun(reload: () => void) {
     try { await fn(); if (ok) setMsg({ ok }); reload(); return true; } catch (e) { setMsg({ bad: errorText(t, has, e), details: (e as { details?: string[] }).details }); return false; } finally { setBusy(false); }
   };
   const notes = <>{msg.ok && <div className="notice">{msg.ok}</div>}{msg.bad && <div className="notice bad" role="alert">{msg.bad}
-    {msg.details?.length ? <> ({msg.details.map((x) => (has(`einv.f.${x}`) ? t(`einv.f.${x}` as Key) : x)).join(', ')})</> : null}</div>}</>;
+    {msg.details?.length ? <div className="small" style={{ marginTop: 4 }}>
+      {msg.details.map((x) => (has(`einv.f.${x}`) ? t(`einv.f.${x}` as Key) : has(x) ? t(x as Key) : x)).map((line, i) => <div key={i} className={i ? 'mut ltr' : ''}>{line}</div>)}</div> : null}</div>}</>;
   return { run, busy, notes, setMsg };
 }
 
@@ -123,12 +124,12 @@ function SetupSaudi({ books, o, unfinished, run, busy, onDone, canCancel }: { bo
   const [checks, setChecks] = useState<Check[] | null>(unfinished?.checks.length ? unfinished.checks : null);
   const addressDone = Boolean(s.street && s.buildingNumber && s.district && s.postalCode);
   const finish = async (id: string) => {
-    const r = await api<{ status: string; checks: Check[]; zatcaError?: string }>(`/api/einvoicing/devices/${id}/finish`, { body: {} });
+    const r = await api<{ status: string; checks: Check[]; zatcaError?: string; advice?: string }>(`/api/einvoicing/devices/${id}/finish`, { body: {} });
     setChecks(r.checks);
     if (r.status === 'active') onDone();
     else if (r.status === 'cert_mismatch') throw new ApiError(400, t('err.einvCertMismatch'), 'err.einvCertMismatch');
     else if (r.status === 'checks_failed') throw new ApiError(400, t('einv.checksFailed'), 'einv.checksFailed');
-    else throw new ApiError(400, t('einv.prodPending'), 'einv.prodPending', r.zatcaError ? [r.zatcaError] : undefined);   // with ZATCA's own words
+    else throw new ApiError(400, t('einv.prodPending'), 'einv.prodPending', [r.advice, r.zatcaError].filter(Boolean) as string[]);   // likely cause, then ZATCA's own words
   };
   const connect = (e: FormEvent) => {
     e.preventDefault();
@@ -164,6 +165,11 @@ function SetupSaudi({ books, o, unfinished, run, busy, onDone, canCancel }: { bo
       </form>
       <form className={`card ${addressDone ? '' : 'mut'}`} onSubmit={connect}>
         <h2>{t('einv.step2')}</h2>
+        <details className="small" style={{ marginBottom: 8 }}>
+          <summary>{t('einv.ready')}</summary>
+          <ul style={{ marginTop: 6 }}>{['vat', 'cr', 'address', 'group', 'portal'].map((k) => <li key={k}>{t(`einv.ready.${k}` as Key)}</li>)}</ul>
+          <div className="mut">{t('einv.noPassword')}</div>
+        </details>
         <ol className="small" style={{ marginTop: 0 }}><li>{t('einv.step2a')}</li><li>{t('einv.step2b')}</li><li>{t('einv.step2c')}</li></ol>
         {!addressDone && <div className="notice small">{t('einv.addressFirst')}</div>}
         <fieldset disabled={!addressDone || busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>

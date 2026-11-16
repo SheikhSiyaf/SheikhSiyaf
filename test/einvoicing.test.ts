@@ -106,7 +106,10 @@ describe('Settings and onboarding', () => {
   });
 
   it('a wrong one-time password is refused; the right one gives a device with an encrypted key', async () => {
-    await expect(as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'sandbox', otp: '111111' }))).rejects.toThrow(/did not accept/);
+    const refused: { message?: string; details?: string[] } = await as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'sandbox', otp: '111111' })).then(() => ({}), (e: unknown) => e as { message: string; details?: string[] });
+    expect(refused.message).toMatch(/did not accept/);
+    expect(refused.details?.[0]).toBe('einv.why.otp');            // the likely cause, in plain words on the screen
+    expect(refused.details?.[1]).toMatch(/Invalid-OTP/);          // ZATCA's own text, kept as it is
     await expect(as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'sandbox', otp: '12' }))).rejects.toThrow(/6 digits/);
     const id = await as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'sandbox', otp: '123345', name: 'EGS-Riyadh-1', branch: 'Riyadh' }));
     const d = (await owner.query('SELECT * FROM einvoice_devices WHERE id = $1', [id])).rows[0];

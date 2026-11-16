@@ -25,14 +25,18 @@ export interface InvoiceSubmission { invoiceHash: string; uuid: string; xml: str
 const auth = (c: Credentials) => `Basic ${Buffer.from(`${c.token}:${c.secret}`).toString('base64')}`;
 const list = (m?: Messages[] | Messages) => (Array.isArray(m) ? m : m ? [m] : []).map((x) => [x.code, x.message].filter(Boolean).join(': '));
 
+/** ZATCA's own answer as text; when it sends nothing, the HTTP status (for example 401: the device's sign-in was refused). */
+const zatcaText = (r: { status: number; json: Record<string, unknown> | null; text: string }) =>
+  (r.json?.errors ?? r.json ?? r.text.trim() ? JSON.stringify(r.json?.errors ?? r.json ?? r.text.trim()) : `HTTP ${r.status} with no message`).slice(0, 500);
+
 export class ZatcaClient {
   constructor(private env: ZatcaEnv, private fetchFn: Fetch = fetch as unknown as Fetch, private timeoutMs = 20_000) {}
 
-  private async call(path: string, body: unknown, headers: Record<string, string>): Promise<{ status: number; json: Record<string, unknown> | null; text: string }> {
+  private async call(path: string, body: unknown, headers: Record<string, string>, method = 'POST'): Promise<{ status: number; json: Record<string, unknown> | null; text: string }> {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), this.timeoutMs);
     try {
       const r = await this.fetchFn(`${BASE[this.env]}${path}`, {
-        method: 'POST', signal: ctl.signal, redirect: 'manual',   // ZATCA's 303 (clearance switched off) is an answer, not a redirect
+        method, signal: ctl.signal, redirect: 'manual',   // ZATCA's 303 (clearance switched off) is an answer, not a redirect
         headers: { 'Accept-Version': 'V2', 'Accept-Language': 'en', Accept: 'application/json', 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify(body),
       });
@@ -48,7 +52,7 @@ export class ZatcaClient {
     const r = await this.call('/compliance', { csr: csrBase64 }, { OTP: otp }).catch((e) => ({ status: 0, json: null, text: String(e) }));
     const j = r.json as { requestID?: unknown; binarySecurityToken?: string; secret?: string; errors?: unknown } | null;
     if (r.status === 200 && j?.binarySecurityToken && j.secret) return { requestId: String(j.requestID), token: j.binarySecurityToken, secret: j.secret };
-    return { error: r.status === 0 ? 'unreachable' : JSON.stringify(j?.errors ?? j ?? r.text).slice(0, 500) };
+    return { error: r.status === 0 ? 'unreachable' : zatcaText(r) };
   }
   /** Step 2: sample invoices of each kind are checked with the compliance CSID. */
   complianceCheck(c: Credentials, inv: InvoiceSubmission) { return this.send('/compliance/invoices', c, inv, {}); }
@@ -57,7 +61,15 @@ export class ZatcaClient {
     const r = await this.call('/production/csids', { compliance_request_id: complianceRequestId }, { Authorization: auth(c) }).catch((e) => ({ status: 0, json: null, text: String(e) }));
     const j = r.json as { requestID?: unknown; binarySecurityToken?: string; secret?: string; errors?: unknown } | null;
     if (r.status === 200 && j?.binarySecurityToken && j.secret) return { requestId: String(j.requestID), token: j.binarySecurityToken, secret: j.secret };
-    return { error: r.status === 0 ? 'unreachable' : JSON.stringify(j?.errors ?? j ?? r.text).slice(0, 500) };
+    return { error: r.status === 0 ? 'unreachable' : zatcaText(r) };
+  }
+  /** Renewal: a new certificate for a new key on the same device, for a one-time password from the Fatoora portal,
+   *  signed in with the certificate in use now (PATCH /production/csids). */
+  async renewCsid(c: Credentials, csrBase64: string, otp: string): Promise<{ requestId: string; token: string; secret: string } | { error: string }> {
+    const r = await this.call('/production/csids', { csr: csrBase64 }, { OTP: otp, Authorization: auth(c) }, 'PATCH').catch((e) => ({ status: 0, json: null, text: String(e) }));
+    const j = r.json as { requestID?: unknown; binarySecurityToken?: string; secret?: string; errors?: unknown } | null;
+    if ((r.status === 200 || r.status === 428) && j?.binarySecurityToken && j.secret) return { requestId: String(j.requestID), token: j.binarySecurityToken, secret: j.secret };
+    return { error: r.status === 0 ? 'unreachable' : zatcaText(r) };
   }
   /** Standard (B2B) invoices: cleared by ZATCA before they are given to the buyer. */
   clearance(c: Credentials, inv: InvoiceSubmission) { return this.send('/invoices/clearance/single', c, inv, { 'Clearance-Status': '1' }); }

@@ -11,6 +11,10 @@ import * as S from '../src/books/documentsService.js';
 import * as E from '../src/books/einvoiceService.js';
 import * as Adv from '../src/books/advanceService.js';
 import * as X from '../src/einvoice/zatca/xml.js';
+import * as Z from '../src/einvoice/zatca/crypto.js';
+import { decryptSecret } from '../src/auth/secretBox.js';
+import { sendCertWarnings } from '../src/books/einvoiceSender.js';
+import { notifications } from '../src/books/toolsService.js';
 import type { Fetch } from '../src/einvoice/zatca/api.js';
 
 let f: Fixture;
@@ -35,6 +39,12 @@ const fakeZatca: Fetch = async (url, init) => {
     if (init.headers.OTP !== '123345') return reply(400, { errors: ['Invalid-OTP'] });
     issued = issueFor(body.csr);
     return reply(200, { requestID: 1234567890, binarySecurityToken: issued, secret: 'compliance-secret' });
+  }
+  // Renewal (PATCH): a new certificate for the new key in the CSR, for a one-time password.
+  if (p === '/production/csids' && init.method === 'PATCH') {
+    if (init.headers.OTP !== '123345') return reply(400, { errors: ['Invalid-OTP'] });
+    if (!init.headers.Authorization) return reply(401, { errors: ['Unauthorized'] });
+    return reply(200, { requestID: 30369, binarySecurityToken: mode === 'otherKey' ? token : issueFor(body.csr), secret: 'renewed-secret' });
   }
   // 'otherKey': a certificate for some other key (what ZATCA's sandbox hands out at this step).
   if (p === '/production/csids') return reply(200, { requestID: 30368, binarySecurityToken: mode === 'otherKey' ? token : issued, secret: 'production-secret' });
@@ -85,7 +95,9 @@ describe('Settings and onboarding', () => {
     const id = await as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'sandbox', otp: '123345', name: 'EGS-Mismatch' }));
     mode = 'otherKey';
     try {
-      await expect(as(f.staff, (db) => E.finishOnboarding(db, id))).rejects.toThrow(/certificate ZATCA sent does not belong to this device/);
+      const r = await as(f.staff, (db) => E.finishOnboarding(db, id));
+      expect(r.status).toBe('cert_mismatch');
+      expect(r.checks).toHaveLength(6);   // what ZATCA said about each sample invoice is kept and shown
     } finally { mode = 'ok'; }
     const d = (await owner.query('SELECT status, production_token FROM einvoice_devices WHERE id = $1', [id])).rows[0];
     expect(d.status).not.toBe('active');
@@ -257,5 +269,73 @@ describe('Demo sites', () => {
     try {
       await expect(as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'simulation', otp: '123456' }))).rejects.toMatchObject({ status: 403, key: 'err.outsideOff' });
     } finally { delete process.env.OUTSIDE_CALLS; }
+  });
+});
+
+describe('Renewing the certificate and the warning before it ends (0054)', () => {
+  const active = async () => (await owner.query(`SELECT * FROM einvoice_devices WHERE company_id = $1 AND status = 'active'`, [f.a.id])).rows[0];
+
+  it('Production cannot be connected unless the host switched it on', async () => {
+    await expect(as(f.staff, (db) => E.onboard(db, f.a.id, { environment: 'production', otp: '123345' }))).rejects.toThrow(/Production is switched off/);
+    expect((await as(f.staff, (db) => E.overview(db, f.a.id))).productionAllowed).toBe(false);
+  });
+
+  it('is refused while e-invoices signed with the old key are waiting, and with a wrong one-time password', async () => {
+    const before = await active();
+    await invoice(f.a, b2b);
+    await expect(as(f.staff, (db) => E.renew(db, before.id, { otp: '123345' }))).rejects.toThrow(/waiting/);
+    await as(f.staff, (db) => E.submitPending(db, f.a.id));   // everything left waiting by the tests above is sent
+    expect((await owner.query(`SELECT count(*)::int AS n FROM einvoices WHERE device_id = $1 AND status = 'pending'`, [before.id])).rows[0].n).toBe(0);
+    await expect(as(f.staff, (db) => E.renew(db, before.id, { otp: '111111' }))).rejects.toThrow(/did not accept/);
+    await expect(as(f.a.clientViewer, (db) => E.renew(db, before.id, { otp: '123345' }))).rejects.toThrow();
+    mode = 'otherKey';
+    try { await expect(as(f.staff, (db) => E.renew(db, before.id, { otp: '123345' }))).rejects.toThrow(/old certificate was kept/); } finally { mode = 'ok'; }
+    expect(await active()).toMatchObject({ private_key_enc: before.private_key_enc, production_token: before.production_token, renewed_at: null });
+  });
+
+  it('keeps the device and its chain: the next invoice follows the last one and is signed with the new key', async () => {
+    const before = await active();
+    const r = await as(f.staff, (db) => E.renew(db, before.id, { otp: '123345' }));
+    const after = await active();
+    expect(r.certValidTo).not.toBeNull();
+    expect(after.id).toBe(before.id);
+    expect([after.icv, after.last_hash, after.serial, after.environment]).toEqual([before.icv, before.last_hash, before.serial, before.environment]);
+    expect(after.private_key_enc).not.toBe(before.private_key_enc);
+    expect(after.production_token).not.toBe(before.production_token);
+    expect(after.renewed_at).not.toBeNull();
+    expect(Z.certMatchesKey(Z.certInfo(after.production_token), Z.keyFrom(decryptSecret('test-key', after.private_key_enc)))).toBe(true);
+    const call = calls.filter((c) => c.url.endsWith('/production/csids')).at(-1)!;
+    expect(call.headers.OTP).toBe('123345');
+    const doc = await invoice(f.a, b2b);
+    const e = await einvoiceOf(doc);
+    expect(e).toMatchObject({ device_id: before.id, icv: String(Number(before.icv) + 1), pih: before.last_hash });
+    expect((await as(f.staff, (db) => E.submit(db, e.id))).status).toBe('cleared');
+  });
+
+  it('the key never changes any other way, and people cannot mark a device as warned or renewed', async () => {
+    const d = await active();
+    await expect(as(f.staff, (db) => db.query(`UPDATE einvoice_devices SET private_key_enc = 'x' WHERE id = $1`, [d.id]))).rejects.toThrow(/keeps its key/);
+    await expect(as(f.staff, (db) => db.query(`UPDATE einvoice_devices SET environment = 'production' WHERE id = $1`, [d.id]))).rejects.toThrow(/keeps its key/);
+    await as(f.staff, (db) => db.query(`UPDATE einvoice_devices SET cert_warned_for = cert_valid_to, renewed_at = NULL WHERE id = $1`, [d.id]));
+    expect(await active()).toMatchObject({ cert_warned_for: null });
+    expect((await active()).renewed_at).not.toBeNull();
+  });
+
+  it('30 days before the end: a notice in the app and one email to the Administrators, once per certificate', async () => {
+    const d = await active();
+    const days = (await as(f.staff, (db) => E.devices(db, f.a.id))).find((x: { id: string }) => x.id === d.id).certDaysLeft;
+    expect(days).toBeGreaterThan(0); expect(days).toBeLessThanOrEqual(30);
+    const notes = await as(f.staff, (db) => notifications(db, f.a.id));
+    expect(notes.find((n) => n.kind === 'einvoiceCert')).toMatchObject({ module: 'Sales', sub: 'e-invoicing', params: { days } });
+    const only = (id: string) => id === f.a.id;
+    const sent = await sendCertWarnings(owner, new Date(), 'https://books.example.com', only);
+    expect(sent).toBeGreaterThan(0);
+    const mail = (await owner.query(`SELECT subject, body_text FROM email_outbox WHERE company_id = $1 ORDER BY created_at DESC LIMIT 1`, [f.a.id])).rows[0];
+    expect(mail.subject).toMatch(/Renew the ZATCA certificate/);
+    expect(mail.body_text).toMatch(/Sales\/e-invoicing/);
+    expect(await sendCertWarnings(owner, new Date(), 'https://books.example.com', only)).toBe(0);
+    // After a renewal the new certificate is warned about afresh (a new expiry date).
+    await as(f.staff, (db) => E.renew(db, d.id, { otp: '123345' }));
+    expect((await active()).cert_warned_for).toBeNull();
   });
 });

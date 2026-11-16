@@ -2,7 +2,7 @@
 // the one-time password, and every invoice's e-invoice: cleared, reported, waiting or rejected. UAE: PINT AE XML
 // prepared for the accredited service provider. The books team sets it up; everyone on the client can see it.
 import { useState, type FormEvent } from 'react';
-import { api, useApi, type CompanyBooks } from '../api.ts';
+import { api, ApiError, useApi, type CompanyBooks } from '../api.ts';
 import { useI18n, type Key } from '../i18n.tsx';
 import { fmt } from '../money.ts';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
@@ -13,8 +13,8 @@ interface Settings { enabled: boolean; street: string | null; buildingNumber: st
   zeroReasonCode: string; zeroReason: string; exemptReasonCode: string; exemptReason: string; oosReason: string }
 interface Check { type: string; outcome: string; warnings: string[]; errors: string[] }
 interface Device { id: string; environment: string; name: string; branch: string; invoiceTypes: string; status: string; checks: Check[]; icv: number; certValidTo: string | null;
-  createdAt: string; activatedAt: string | null; createdBy: string | null }
-interface Overview { country: 'SA' | 'AE' | 'OM'; vatStatus: string; settings: Settings; devices: Device[]; counts: Record<string, number> }
+  createdAt: string; activatedAt: string | null; createdBy: string | null; renewedAt?: string | null; certDaysLeft?: number | null }
+interface Overview { country: 'SA' | 'AE' | 'OM'; vatStatus: string; settings: Settings; devices: Device[]; counts: Record<string, number>; productionAllowed?: boolean; certWarnDays?: number }
 export interface EInvoiceRow { id: string; documentId: string; docType: string; number: string; issueDate: string; total: string; customer: string | null; scheme: 'zatca' | 'pint_ae';
   kind: 'standard' | 'simplified'; icv: number | null; status: 'pending' | 'cleared' | 'reported' | 'rejected' | 'ready'; warnings: string[]; errors: string[]; attempts: number;
   submittedAt: string | null; printQr?: string | null }
@@ -59,6 +59,9 @@ function Saudi({ books, o, reload }: { books: CompanyBooks; o: Overview; reload:
   const active = o.devices.find((x) => x.status === 'active');
   const unfinished = o.devices.find((x) => ['compliance', 'checks_failed', 'checks_passed'].includes(x.status));
   const [setup, setSetup] = useState(!active);
+  const [renewing, setRenewing] = useState(false);
+  const [otp, setOtp] = useState('');
+  const certSoon = active && active.certDaysLeft != null && active.certDaysLeft <= (o.certWarnDays ?? 30);
   const { run, busy, notes } = useRun(reload);
   const tile = (k: string, tone = '') => <div className={`card fig ${o.counts[k] && tone ? tone : ''}`}><small>{t(`einv.s.${k}` as Key)}</small><b>{o.counts[k] ?? 0}</b><small>{t(`einv.sub.${k}` as Key)}</small></div>;
   return (
@@ -67,19 +70,41 @@ function Saudi({ books, o, reload }: { books: CompanyBooks; o: Overview; reload:
       {active ? (
         <div className="card">
           <div className="actions"><h2 style={{ margin: 0 }}>{t('einv.connected')}</h2><span className={`badge ${active.environment === 'production' ? 'good' : 'warn'}`}>{t(`einv.env.${active.environment}` as Key)}</span>
-            <span className="spacer" />{books.canPost && !setup && <button className="b small" onClick={() => setSetup(true)}>{t('einv.newDevice')}</button>}</div>
+            <span className="spacer" />{books.canPost && !setup && <button className={`b small ${certSoon ? 'p' : ''}`} id="einv-renew" onClick={() => setRenewing(!renewing)}>{t('einv.renew')}</button>}
+            {books.canPost && !setup && <button className="b small" onClick={() => setSetup(true)}>{t('einv.newDevice')}</button>}</div>
+          {certSoon && <div className={`notice ${active.certDaysLeft! > 0 ? 'warn' : 'bad'}`} id="einv-cert-warning" style={{ marginTop: 8 }}>
+            {active.certDaysLeft! > 0 ? t('einv.certSoon', { days: active.certDaysLeft!, date: active.certValidTo?.slice(0, 10) ?? '' }) : t('einv.certEnded', { date: active.certValidTo?.slice(0, 10) ?? '' })}</div>}
           <table className="mini"><tbody>
             <tr><td>{t('einv.device')}</td><td><b>{active.name}</b> · {active.branch}</td></tr>
             <tr><td>{t('einv.counter')}</td><td className="ltr">{active.icv}</td></tr>
-            <tr><td>{t('einv.certUntil')}</td><td className="ltr">{active.certValidTo?.slice(0, 10) ?? '—'}</td></tr>
+            <tr><td>{t('einv.certUntil')}</td><td><span className="ltr">{active.certValidTo?.slice(0, 10) ?? '—'}</span>{active.certDaysLeft != null && active.certDaysLeft > 0 ? ` · ${t('einv.daysLeft', { days: active.certDaysLeft })}` : ''}
+              {active.renewedAt ? <span className="small mut"> · {t('einv.renewedOn', { date: active.renewedAt.slice(0, 10) })}</span> : null}</td></tr>
             <tr><td>{t('einv.since')}</td><td className="ltr">{active.activatedAt?.slice(0, 10)} · {active.createdBy}</td></tr>
           </tbody></table>
           {active.environment !== 'production' && <div className="notice warn small" style={{ marginTop: 8 }}>{t('einv.testOnly')}</div>}
+          {renewing && books.canPost && (
+            <form id="einv-renew-form" style={{ marginTop: 10 }} onSubmit={(e) => { e.preventDefault(); void run(async () => { await api(`/api/einvoicing/devices/${active.id}/renew`, { body: { otp } }); setOtp(''); setRenewing(false); }, t('einv.renewed')); }}>
+              <ol className="small" style={{ marginTop: 0 }}><li>{t('einv.renew1')}</li><li>{t('einv.renew2')}</li><li>{t('einv.renew3')}</li></ol>
+              <div className="small mut" style={{ marginBottom: 6 }}>{t('einv.noPassword')}</div>
+              <div className="actions">
+                <label className="f">{t('einv.otp')}<input id="einv-renew-otp" dir="ltr" inputMode="numeric" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} /></label>
+                <button className="b p" id="einv-renew-go" disabled={busy || otp.length !== 6}>{busy ? t('einv.connecting') : t('einv.renewGo')}</button>
+                <button type="button" className="b" onClick={() => setRenewing(false)}>{t('cancel')}</button>
+              </div>
+            </form>)}
         </div>
       ) : <div className="notice warn">{t('einv.notConnected')}</div>}
       {active && <div className="grid">{tile('pending', 'warn')}{tile('cleared')}{tile('reported')}{tile('rejected', 'over')}</div>}
       {notes}
       {setup && books.canPost && <SetupSaudi books={books} o={o} unfinished={unfinished} run={run} busy={busy} onDone={() => setSetup(false)} canCancel={Boolean(active)} />}
+      {o.devices.length > 1 && (
+        <div className="card"><h2>{t('einv.allDevices')}</h2>
+          <table className="stack" id="einv-devices"><thead><tr><th>{t('einv.device')}</th><th>{t('einv.where')}</th><th>{t('einv.devStatus')}</th><th>{t('einv.counter')}</th><th>{t('einv.certUntil')}</th></tr></thead>
+            <tbody>{o.devices.map((d) => (
+              <tr key={d.id}><td data-label={t('einv.device')}><b>{d.name}</b> · {d.branch}</td><td data-label={t('einv.where')}>{t(`einv.env.${d.environment}` as Key)}</td>
+                <td data-label={t('einv.devStatus')}><span className={`badge ${d.status === 'active' ? 'good' : d.status === 'checks_failed' ? 'bad' : d.status === 'retired' ? '' : 'warn'}`}>{t(`einv.dev.${d.status}` as Key)}</span></td>
+                <td data-label={t('einv.counter')} className="ltr">{d.icv}</td><td data-label={t('einv.certUntil')} className="ltr">{d.certValidTo?.slice(0, 10) ?? '—'}</td></tr>))}</tbody></table>
+        </div>)}
       {active && <EInvoiceList books={books} reload={reload} />}
     </>
   );
@@ -92,14 +117,18 @@ function SetupSaudi({ books, o, unfinished, run, busy, onDone, canCancel }: { bo
   const [addr, setAddr] = useState({ street: s.street ?? '', buildingNumber: s.buildingNumber ?? '', district: s.district ?? '', postalCode: s.postalCode ?? '' });
   const [reasons, setReasons] = useState({ zeroReasonCode: s.zeroReasonCode, zeroReason: s.zeroReason, exemptReasonCode: s.exemptReasonCode, exemptReason: s.exemptReason, oosReason: s.oosReason });
   const [more, setMore] = useState(false);
-  const [conn, setConn] = useState({ environment: 'sandbox', name: '', branch: '', otp: '' });
+  const [conn, setConn] = useState({ environment: 'simulation', name: '', branch: '', otp: '' });
+  const [sure, setSure] = useState(false);
+  const prodOff = !o.productionAllowed;
   const [checks, setChecks] = useState<Check[] | null>(unfinished?.checks.length ? unfinished.checks : null);
   const addressDone = Boolean(s.street && s.buildingNumber && s.district && s.postalCode);
   const finish = async (id: string) => {
-    const r = await api<{ status: string; checks: Check[] }>(`/api/einvoicing/devices/${id}/finish`, { body: {} });
+    const r = await api<{ status: string; checks: Check[]; zatcaError?: string }>(`/api/einvoicing/devices/${id}/finish`, { body: {} });
     setChecks(r.checks);
     if (r.status === 'active') onDone();
-    else throw Object.assign(new Error(t(r.status === 'checks_failed' ? 'einv.checksFailed' : 'einv.prodPending')), { key: r.status === 'checks_failed' ? 'einv.checksFailed' : 'einv.prodPending' });
+    else if (r.status === 'cert_mismatch') throw new ApiError(400, t('err.einvCertMismatch'), 'err.einvCertMismatch');
+    else if (r.status === 'checks_failed') throw new ApiError(400, t('einv.checksFailed'), 'einv.checksFailed');
+    else throw new ApiError(400, t('einv.prodPending'), 'einv.prodPending', r.zatcaError ? [r.zatcaError] : undefined);   // with ZATCA's own words
   };
   const connect = (e: FormEvent) => {
     e.preventDefault();
@@ -137,19 +166,22 @@ function SetupSaudi({ books, o, unfinished, run, busy, onDone, canCancel }: { bo
         <h2>{t('einv.step2')}</h2>
         <ol className="small" style={{ marginTop: 0 }}><li>{t('einv.step2a')}</li><li>{t('einv.step2b')}</li><li>{t('einv.step2c')}</li></ol>
         {!addressDone && <div className="notice small">{t('einv.addressFirst')}</div>}
-        <fieldset disabled={!addressDone || busy} style={{ border: 0, padding: 0, margin: 0 }}>
+        <fieldset disabled={!addressDone || busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <div className="row">
-            <label className="f">{t('einv.where')}<select id="einv-env" value={conn.environment} onChange={(e) => setConn({ ...conn, environment: e.target.value })}>
-              {['sandbox', 'simulation', 'production'].map((x) => <option key={x} value={x}>{t(`einv.env.${x}` as Key)}</option>)}</select></label>
+            <label className="f" style={{ minWidth: 0, maxWidth: '100%' }}>{t('einv.where')}<select id="einv-env" style={{ width: '100%', minWidth: 0 }} value={conn.environment} onChange={(e) => setConn({ ...conn, environment: e.target.value })}>
+              {['simulation', 'sandbox', 'production'].map((x) => <option key={x} value={x} disabled={x === 'production' && prodOff}>{t(`einv.env.${x}` as Key)}{x === 'production' && prodOff ? ` (${t('einv.prodOffShort')})` : ''}</option>)}</select></label>
             <label className="f">{t('einv.deviceName')}<input id="einv-name" dir="ltr" placeholder={`EGS-${books.company.vatNumber ?? ''}`.slice(0, 30)} value={conn.name} onChange={(e) => setConn({ ...conn, name: e.target.value })} /></label>
             <label className="f">{t('einv.branch')}<input id="einv-branch" value={conn.branch} onChange={(e) => setConn({ ...conn, branch: e.target.value })} /></label>
           </div>
           <div className="small mut" style={{ marginBottom: 6 }}>{t(`einv.envHint.${conn.environment}` as Key)}</div>
+          {conn.environment === 'production' && <div className="notice bad" id="einv-prod-warning" style={{ marginBottom: 8 }}>{t('einv.prodWarning')}
+            <label className="check" style={{ display: 'block', marginTop: 6 }}><input type="checkbox" id="einv-prod-sure" checked={sure} onChange={(e) => setSure(e.target.checked)} /> {t('einv.prodSure')}</label></div>}
+          <div className="small mut" style={{ marginBottom: 6 }}>{t('einv.noPassword')}</div>
           <div className="row">
             <label className="f">{t('einv.otp')}<input id="einv-otp" dir="ltr" inputMode="numeric" maxLength={6} placeholder="123456" value={conn.otp} onChange={(e) => setConn({ ...conn, otp: e.target.value.replace(/\D/g, '') })} /></label>
           </div>
           <div className="actions">
-            <button className="b p" id="einv-connect" disabled={conn.otp.length !== 6}>{busy ? t('einv.connecting') : t('einv.connect')}</button>
+            <button className="b p" id="einv-connect" disabled={conn.otp.length !== 6 || (conn.environment === 'production' && !sure)}>{busy ? t('einv.connecting') : t('einv.connect')}</button>
             {unfinished && <button type="button" className="b" id="einv-finish" onClick={() => void run(() => finish(unfinished.id), t('einv.connectedNow'))}>{t('einv.finish')}</button>}
             {canCancel && <button type="button" className="b" onClick={onDone}>{t('cancel')}</button>}
           </div>

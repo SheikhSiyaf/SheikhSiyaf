@@ -110,6 +110,14 @@ async function main() {
   try { pCert = Z.certInfo(pcsid.token); } catch (e) { console.log('Production certificate could not be read:', (e as Error).message); }
   if (!pCert) return finish({ complianceCsid: 'issued', productionCsid: 'issued but its certificate could not be read' });
 
+  // Renewal: a new key and CSR for the same device, signed in with the certificate in use (PATCH /production/csids).
+  const renewKey = Z.newKey();
+  const renewCsr = Z.makeCsr(renewKey.privatePem, { env: ENV, commonName: 'EGS-SANDBOX-TEST', serialNumber: `1-NusuhBooks|2-1.0|3-${randomUUID()}`, organisation: seller.name,
+    organisationUnit: 'Riyadh Branch', vatNumber: seller.vatNumber!, invoiceTypes: '1100', address: 'RRRD2929', industry: 'Services' });
+  const renewed = await client.renewCsid(pCreds, renewCsr.base64, otp);
+  console.log('Renewal (PATCH /production/csids):', 'error' in renewed ? `FAILED ${renewed.error}` : `issued (request ${renewed.requestId})`);
+
+
   for (const d of cases('INV')) {
     const st = stamp(d, pCert);
     const r = d.buyer ? await client.clearance(pCreds, { invoiceHash: st.hash, uuid: d.uuid, xml: st.xml })

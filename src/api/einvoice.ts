@@ -19,6 +19,7 @@ export function registerEInvoiceRoutes(app: FastifyInstance, { as }: Ctx) {
   app.get<{ Params: Id }>('/api/companies/:id/einvoicing', async (req) => inCompany(req, req.params.id, (db, c) => E.overview(db, c)));
   app.post<{ Params: Id; Body: Partial<E.Settings> }>('/api/companies/:id/einvoicing/settings', async (req) => inCompany(req, req.params.id, async (db, c) => { await E.saveSettings(db, c, req.body ?? {}); return { ok: true }; }));
   app.post<{ Params: Id; Body: E.OnboardInput }>('/api/companies/:id/einvoicing/devices', async (req) => inCompany(req, req.params.id, async (db, c) => ({ id: await E.onboard(db, c, req.body ?? {}) })));
+  app.post<{ Params: Id; Body: { otp?: string } }>('/api/einvoicing/devices/:id/renew', async (req) => as(req, (db) => E.renew(db, uuidParam(req.params.id), req.body ?? {})));
   app.post<{ Params: Id }>('/api/einvoicing/devices/:id/finish', async (req) => as(req, (db) => E.finishOnboarding(db, uuidParam(req.params.id))));
   app.get<{ Params: Id; Querystring: { status?: string } }>('/api/companies/:id/einvoices', async (req) => inCompany(req, req.params.id, (db, c) => E.list(db, c, req.query.status || undefined)));
   app.post<{ Params: Id }>('/api/companies/:id/einvoices/send-pending', async (req) => inCompany(req, req.params.id, (db, c) => E.submitPending(db, c)));

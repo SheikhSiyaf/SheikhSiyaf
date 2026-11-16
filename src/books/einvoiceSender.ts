@@ -36,6 +36,7 @@ export async function runEInvoiceSender(pool: pg.Pool, o: { now?: Date; all?: bo
       finally { await pool.query('SELECT einvoice_release($1, $2)', [d.device_id, lease]); }
     }
     out.warnings = await sendWarnings(pool, now, o.base, only);
+    out.warnings += await sendCertWarnings(pool, now, o.base, only);
   } catch (e) { problem = (e as Error).message; }
   await pool.query('SELECT job_finished($1, $2)', [JOB, problem]);
   if (problem) throw new Error(problem);
@@ -129,6 +130,32 @@ async function sendWarnings(pool: pg.Pool, now: Date, base: string | undefined, 
         try { await queue(client, { companyId: g.company_id, kind: 'notice', to: p.email, toName: p.name, mail }); sent++; } catch { /* no valid address: skip */ }
       }
       for (const [id, stages] of g.mark) await client.query('SELECT einvoice_warned($1, $2)', [[id], stages]);
+      await client.query('COMMIT');
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  }
+  return sent;
+}
+
+/** One email per certificate, 30 days before it ends (or once it has ended), to the company's Administrators and sales
+ *  people (db/migrations/0054). Returns the emails queued. */
+export async function sendCertWarnings(pool: pg.Pool, now: Date, base?: string, only: (companyId: string) => boolean = () => true): Promise<number> {
+  const due = ((await pool.query('SELECT * FROM einvoice_cert_warnings_due($1)', [now])).rows as { device_id: string; company_id: string; company: string; device: string; cert_valid_to: Date }[]).filter((d) => only(d.company_id));
+  let sent = 0;
+  for (const d of due) {
+    const date = new Date(d.cert_valid_to).toISOString().slice(0, 10);
+    const days = Math.ceil((new Date(d.cert_valid_to).getTime() - now.getTime()) / 86_400_000);
+    const link = base ? `${base.replace(/\/+$/, '')}/c/${d.company_id}/Sales/e-invoicing` : '';
+    const mail = bilingual(`Renew the ZATCA certificate before ${date} · جدّد شهادة الهيئة قبل ${date}`,
+      [days > 0 ? `${d.company}: the ZATCA certificate of the e-invoicing device "${d.device}" ends on ${date} (${days} days).` : `${d.company}: the ZATCA certificate of the e-invoicing device "${d.device}" ended on ${date}. Invoices cannot be sent to ZATCA until it is renewed.`,
+        'Renew it in Sales > E-invoicing with a one-time password from the Fatoora portal. Invoice numbering carries on as before.', ...(link ? [link] : [])],
+      [days > 0 ? `${d.company}: تنتهي شهادة الهيئة لجهاز الفوترة "${d.device}" في ${date} (بعد ${days} يوماً).` : `${d.company}: انتهت شهادة الهيئة لجهاز الفوترة "${d.device}" في ${date}. لا يمكن إرسال الفواتير إلى الهيئة حتى تُجدَّد.`,
+        'جدّدها من المبيعات > الفوترة الإلكترونية برمز لمرة واحدة من بوابة فاتورة. يستمر تسلسل الفواتير كما هو.', ...(link ? [link] : [])], 'Nusuh Books');
+    const people = (await pool.query('SELECT name, email FROM einvoice_warning_recipients($1)', [d.company_id])).rows as { name: string; email: string }[];
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const p of people) { try { await queue(client, { companyId: d.company_id, kind: 'notice', to: p.email, toName: p.name, mail }); sent++; } catch { /* no valid address: skip */ } }
+      await client.query('SELECT einvoice_cert_warned($1)', [d.device_id]);
       await client.query('COMMIT');
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
   }

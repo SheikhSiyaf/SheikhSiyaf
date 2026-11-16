@@ -23,7 +23,12 @@ let encryptionKey = config.encryptionKey;   // never the session secret
 let fetchFn: Fetch | undefined;
 let clock = () => new Date();
 /** Set by the server (encryption key) and by tests (a stand-in for ZATCA, a fixed clock). */
-export function configureEInvoicing(o: { encryptionKey?: string; fetch?: Fetch; now?: () => Date }) {
+/** Connecting to ZATCA's PRODUCTION is off unless the host sets ZATCA_PRODUCTION=on, so a real connection is always a
+ *  decision made in the hosting settings, never a slip on a test or demo site. */
+let allowProduction = process.env.ZATCA_PRODUCTION === 'on';
+export const CERT_WARN_DAYS = 30;
+export function configureEInvoicing(o: { encryptionKey?: string; fetch?: Fetch; now?: () => Date; allowProduction?: boolean }) {
+  if (o.allowProduction !== undefined) allowProduction = o.allowProduction;
   if (o.encryptionKey) encryptionKey = o.encryptionKey;
   if (o.fetch) fetchFn = o.fetch;
   if (o.now) clock = o.now;
@@ -122,6 +127,7 @@ export interface OnboardInput { environment?: string; otp?: string; name?: strin
 /** Step 1: a new key and CSR; ZATCA gives the compliance CSID for the one-time password from the Fatoora portal. */
 export async function onboard(db: Db, companyId: string, b: OnboardInput): Promise<string> {
   const env = (['sandbox', 'simulation', 'production'] as const).find((e) => e === b.environment) ?? bad('Choose where to connect.', 'err.format');
+  if (env === 'production' && !allowProduction) bad('Connecting to ZATCA Production is switched off on this site. Use Simulation to test.', 'err.einvProdOff');
   const otp = text(b.otp, 10) ?? bad('Enter the one-time password from the Fatoora portal.', 'err.einvOtp');
   if (!/^\d{6}$/.test(otp)) bad('The one-time password has 6 digits.', 'err.einvOtp');
   const co = await company(db, companyId);
@@ -169,7 +175,7 @@ function samples(co: { name: string; vatNumber: string; crNumber: string; city: 
 }
 
 /** Step 2: the compliance checks, then the production CSID. The device is active when both pass. */
-export async function finishOnboarding(db: Db, deviceId: string): Promise<{ status: string; checks: { type: string; outcome: string; warnings: string[]; errors: string[] }[] }> {
+export async function finishOnboarding(db: Db, deviceId: string): Promise<{ status: string; checks: { type: string; outcome: string; warnings: string[]; errors: string[] }[]; zatcaError?: string }> {
   const dev = await device(db, deviceId);
   if (dev.status === 'active' || dev.status === 'retired') bad('This device is already set up.', 'err.einvDeviceDone');
   const co = await company(db, dev.company_id);
@@ -194,11 +200,11 @@ export async function finishOnboarding(db: Db, deviceId: string): Promise<{ stat
     if (!passed) return { status: 'checks_failed', checks };
   }
   const p = await client(dev.environment).productionCsid(creds, dev.compliance_request_id);
-  if ('error' in p) return { status: 'checks_passed', checks };
+  if ('error' in p) return { status: 'checks_passed', checks, zatcaError: p.error };   // ZATCA's own words, shown as they are
   const prod = p as { token: string; secret: string };
   // Never switch a device on with a certificate that is not for its own key: every invoice would be rejected.
-  if (!Z.certMatchesKey(Z.certInfo(prod.token), Z.keyFrom(unbox(dev.private_key_enc))))
-    bad('The certificate ZATCA sent does not belong to this device, so the device was not switched on. Connect the device again with a new one-time password.', 'err.einvCertMismatch');
+  // The check results are kept and returned, so the person still sees what ZATCA said about each sample invoice.
+  if (!Z.certMatchesKey(Z.certInfo(prod.token), Z.keyFrom(unbox(dev.private_key_enc)))) return { status: 'cert_mismatch', checks };
   // Only one active device per company: the earlier one is retired.
   await db.query(`UPDATE einvoice_devices SET status = 'retired' WHERE company_id = $1 AND status = 'active'`, [dev.company_id]);
   await db.query(`UPDATE einvoice_devices SET status = 'active', production_token = $2, production_secret_enc = $3, cert_valid_to = $4 WHERE id = $1`,
@@ -207,10 +213,39 @@ export async function finishOnboarding(db: Db, deviceId: string): Promise<{ stat
   return { status: 'active', checks };
 }
 
+/** Renews the active device's certificate: a new key and CSR, and ZATCA's new certificate for a one-time password.
+ *  The device, its invoice counter and the hash of its last invoice stay as they are, so the chain is unbroken. */
+export async function renew(db: Db, deviceId: string, b: { otp?: string }): Promise<{ certValidTo: string | null }> {
+  const dev = (await db.query('SELECT * FROM einvoice_devices WHERE id = $1 FOR UPDATE', [deviceId])).rows[0] ?? notFound();
+  if (dev.status !== 'active' || !dev.production_token || !dev.production_secret_enc) bad('Only a connected device can be renewed.', 'err.einvRenewState');
+  if (dev.environment === 'production' && !allowProduction) bad('Connecting to ZATCA Production is switched off on this site. Use Simulation to test.', 'err.einvProdOff');
+  const otp = text(b.otp, 10) ?? bad('Enter the one-time password from the Fatoora portal.', 'err.einvOtp');
+  if (!/^\d{6}$/.test(otp)) bad('The one-time password has 6 digits.', 'err.einvOtp');
+  const waiting = (await db.query(`SELECT count(*)::int AS n FROM einvoices WHERE device_id = $1 AND status = 'pending'`, [deviceId])).rows[0].n;
+  if (waiting) bad('Send the e-invoices that are waiting before renewing the certificate.', 'err.einvRenewPending');
+  const co = await company(db, dev.company_id);
+  const s = await getSettings(db, dev.company_id);
+  const { privatePem } = Z.newKey();
+  const csr = Z.makeCsr(privatePem, { env: dev.environment, commonName: dev.name, serialNumber: `1-NusuhBooks|2-1.0|3-${dev.serial}`, organisation: co.name, organisationUnit: dev.branch,
+    vatNumber: co.vatNumber, invoiceTypes: dev.invoice_types, address: `${s.buildingNumber} ${s.street}, ${s.district}, ${co.city} ${s.postalCode}`, industry: co.industry ?? 'Trading' });
+  const r = await client(dev.environment).renewCsid({ token: dev.production_token, secret: unbox(dev.production_secret_enc) }, csr.base64, otp);
+  if ('error' in r) bad(r.error === 'unreachable' ? 'ZATCA could not be reached. Try again in a moment.' : 'ZATCA did not accept the request. Check the one-time password (it works once, for one hour).',
+    r.error === 'unreachable' ? 'err.zatcaUnreachable' : 'err.zatcaOtp', [r.error]);
+  const ok = r as { token: string; secret: string };
+  // The same rule as when connecting: never use a certificate that is not for this device's (new) key.
+  if (!Z.certMatchesKey(Z.certInfo(ok.token), Z.keyFrom(privatePem)))
+    bad('The certificate ZATCA sent does not belong to this device, so the old certificate was kept. Try again with a new one-time password.', 'err.einvCertMismatch');
+  const validTo = Z.certInfo(ok.token).validTo;
+  await db.query(`UPDATE einvoice_devices SET private_key_enc = $2, csr = $3, production_token = $4, production_secret_enc = $5, cert_valid_to = $6 WHERE id = $1`,
+    [deviceId, secret(privatePem), csr.pem, ok.token, secret(ok.secret), validTo]);
+  return { certValidTo: validTo ? new Date(validTo).toISOString() : null };
+}
+
 export async function devices(db: Db, companyId: string) {
   return (await db.query(
     `SELECT id, environment, name, branch, invoice_types AS "invoiceTypes", status, checks, icv::int, cert_valid_to AS "certValidTo", created_at AS "createdAt", activated_at AS "activatedAt",
-            person_name(created_by) AS "createdBy"
+            person_name(created_by) AS "createdBy", renewed_at AS "renewedAt",
+            CASE WHEN status = 'active' AND cert_valid_to IS NOT NULL THEN ceil(extract(epoch FROM cert_valid_to - now()) / 86400)::int END AS "certDaysLeft"
      FROM einvoice_devices WHERE company_id = $1 ORDER BY created_at DESC`, [companyId])).rows;
 }
 
@@ -345,5 +380,5 @@ export async function overview(db: Db, companyId: string) {
   const co = await company(db, companyId);
   const counts = (await db.query(`SELECT status, count(*)::int AS n FROM einvoices WHERE company_id = $1 GROUP BY status`, [companyId])).rows;
   return { country: co.country, vatStatus: co.vatStatus, settings: await getSettings(db, companyId), devices: await devices(db, companyId),
-    counts: Object.fromEntries(counts.map((r) => [r.status, r.n])) as Record<string, number> };
+    counts: Object.fromEntries(counts.map((r) => [r.status, r.n])) as Record<string, number>, productionAllowed: allowProduction, certWarnDays: CERT_WARN_DAYS };
 }

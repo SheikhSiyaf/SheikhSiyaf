@@ -453,3 +453,10 @@ Every change below is covered by a test in `test/`.
 | `users.session_version` (only goes up); `session_version_of()`, `session_ok()`, `end_own_sessions()`; trigger `users_session_guard` raises it when the password, the two-factor secret or the status changes | Every sign-in cookie carries the version: signing out, a new password (also by reset or invitation), a new or reset two-factor secret and a suspension end every older sign-in (security review) |
 | `users.totp_last_step` (only goes up; cleared with a new secret); `totp_use()` | A two-factor code is accepted once, so a code seen by someone else cannot be used again |
 | `entry_amount()` and `add_default_client_roles()` no longer executable by `nusuh_app` | Internal helpers used only by owner-rights triggers; the app never needs them with a person's input |
+
+## 0054_einvoice_cert_renewal.sql
+| Change | Why |
+|---|---|
+| `einvoice_devices.renewed_at`, `cert_warned_for` (people cannot set either); `before_einvoice_device_change()` lets the key and CSR change only together with a new certificate on an active device with no e-invoice waiting; company, environment and serial never change | Renewing ZATCA's certificate keeps the same device, invoice counter and last-invoice hash, so the chain is unbroken |
+| `einvoice_cert_warnings_due()`, `einvoice_cert_warned()` (background job only) | Administrators are emailed once per certificate, 30 days before it ends |
+

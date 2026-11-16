@@ -286,6 +286,9 @@ export async function notifications(db: Db, companyId: string): Promise<Notice[]
   if (f.n) out.push({ key: `emails:${f.at?.toISOString?.() ?? f.at}`, kind: 'emailsFailed', count: f.n, params: { n: f.n }, module: 'Sales', sub: 'emails', at: f.at });
   const ej = await one(`SELECT count(*)::int AS n, max(created_at) AS at FROM einvoices WHERE company_id = $1 AND status = 'rejected'`);
   if (ej.n) out.push({ key: `einv:${ej.at?.toISOString?.() ?? ej.at}`, kind: 'einvoiceRejected', count: ej.n, params: { n: ej.n }, module: 'Sales', sub: 'e-invoicing', at: ej.at });
+  const cert = await one(`SELECT ceil(extract(epoch FROM cert_valid_to - now()) / 86400)::int AS days, cert_valid_to AS at FROM einvoice_devices
+    WHERE company_id = $1 AND status = 'active' AND production_token IS NOT NULL AND cert_valid_to <= now() + interval '30 days' ORDER BY cert_valid_to LIMIT 1`);
+  if (cert) out.push({ key: `einvCert:${new Date(cert.at).toISOString().slice(0, 10)}`, kind: cert.days > 0 ? 'einvoiceCert' : 'einvoiceCertEnded', params: { days: Math.max(cert.days, 0), date: new Date(cert.at).toISOString().slice(0, 10) }, module: 'Sales', sub: 'e-invoicing', at: null });
   const late = await one(`SELECT count(*)::int AS n, min(created_at) AS at FROM einvoices WHERE company_id = $1 AND scheme = 'zatca' AND kind = 'simplified' AND status = 'pending' AND created_at <= now() - interval '12 hours'`);
   if (late.n) out.push({ key: `einvLate:${today()}:${late.n}`, kind: 'einvoiceLate', count: late.n, params: { n: late.n, hours: Math.floor((Date.now() - new Date(late.at).getTime()) / 3_600_000) }, module: 'Sales', sub: 'e-invoicing', at: late.at });
   const od = (await openInvoices(db, companyId, null)).filter((o) => o.daysOverdue > 0);

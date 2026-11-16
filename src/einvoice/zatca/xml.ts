@@ -9,7 +9,7 @@
 // The XML is written without indentation, so removing the excluded elements leaves no stray whitespace.
 import { createHash, createPublicKey, sign, type KeyObject } from 'node:crypto';
 import { DOMParser } from '@xmldom/xmldom';
-import { C14nCanonicalization, ExclusiveCanonicalization } from 'xml-crypto';
+import { C14nCanonicalization } from 'xml-crypto';
 import { fromCents, toCents, type EInvoiceData } from '../invoiceData.js';
 import type { CertInfo } from './crypto.js';
 
@@ -97,11 +97,19 @@ function signatureBlock(hash: string, signature: string, cert: CertInfo, signing
           signedProperties(signingTime, cert, false)))))))));
 }
 
-/** The signed-properties digest: exclusive canonical form of the element, SHA-256 in hex, base64 (ZATCA's convention). */
+/** `<a b="c"></a>` written as `<a b="c"/>`, the way ZATCA writes an empty element before hashing it. */
+const selfClose = (xml: string) => xml.replace(/<([A-Za-z][\w.:-]*)((?:\s[^<>]*)?)><\/\1>/g, '<$1$2/>');
+
+/** The signed-properties digest: SHA-256 in hex, base64 (ZATCA's convention).
+ *
+ *  ZATCA does NOT hash the standard exclusive canonical form. It re-serialises the element with its namespace
+ *  declarations and with EMPTY ELEMENTS SELF-CLOSING (`<ds:DigestMethod .../>`), then hashes that. Exclusive C14N
+ *  expands them (`<ds:DigestMethod ...></ds:DigestMethod>`), which gives a different digest and makes ZATCA refuse
+ *  every simplified invoice with "wrong xadesSignedPropertiesDigestValue".
+ *  Proven against the official ZATCA SDK 238-R4.0.0 validator: the self-closing form is accepted, the expanded
+ *  form is refused, on an otherwise identical invoice signed with a real ZATCA certificate. */
 export function signedPropertiesDigest(signingTime: string, cert: CertInfo): string {
-  const doc = parse(signedProperties(signingTime, cert, true));
-  const canonical = new ExclusiveCanonicalization().process(doc.documentElement as unknown as Element, {}) as string;
-  return hexB64(canonical);
+  return hexB64(selfClose(signedProperties(signingTime, cert, true)));
 }
 
 /** QR tag 4: the amount due (BT-115), i.e. the total with VAT less any advances deducted (ZATCA warns otherwise). */

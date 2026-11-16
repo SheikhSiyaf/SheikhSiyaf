@@ -63,7 +63,44 @@ describe('Onboarding: key, CSR and certificate', () => {
   });
 });
 
+describe('Signed properties digest (ZATCA serialisation)', () => {
+  // Proven against the official ZATCA SDK 238-R4.0.0 validator: ZATCA re-serialises the signed properties with
+  // EMPTY ELEMENTS SELF-CLOSING (<ds:DigestMethod .../>) before hashing. Hashing the expanded form
+  // (<ds:DigestMethod ...></ds:DigestMethod>), which standard exclusive c14n produces, makes ZATCA refuse every
+  // simplified invoice with "wrong xadesSignedPropertiesDigestValue". The SDK validator accepted the self-closed
+  // form and refused the expanded one on the same invoice.
+  it('hashes the self-closing form, not the expanded one', () => {
+    const digest = X.signedPropertiesDigest('2026-11-03T14:40:40', cert);
+    const ds = 'xmlns:ds="http://www.w3.org/2000/09/xmldsig#"';
+    const expected =
+      '<xades:SignedProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Id="xadesSignedProperties">' +
+      '<xades:SignedSignatureProperties><xades:SigningTime>2026-11-03T14:40:40</xades:SigningTime>' +
+      '<xades:SigningCertificate><xades:Cert><xades:CertDigest>' +
+      `<ds:DigestMethod ${ds} Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>` +
+      `<ds:DigestValue ${ds}>${createHash('sha256').update(cert.base64).digest('hex') && Buffer.from(createHash('sha256').update(cert.base64, 'utf8').digest('hex'), 'utf8').toString('base64')}</ds:DigestValue>` +
+      '</xades:CertDigest><xades:IssuerSerial>' +
+      `<ds:X509IssuerName ${ds}>${cert.issuer}</ds:X509IssuerName>` +
+      `<ds:X509SerialNumber ${ds}>${cert.serial}</ds:X509SerialNumber>` +
+      '</xades:IssuerSerial></xades:Cert></xades:SigningCertificate></xades:SignedSignatureProperties></xades:SignedProperties>';
+    const hexB64 = (x: string) => Buffer.from(createHash('sha256').update(x, 'utf8').digest('hex'), 'utf8').toString('base64');
+    expect(digest).toBe(hexB64(expected));
+    // and the expanded form must NOT be what we hash
+    expect(digest).not.toBe(hexB64(expected.replace(/<(ds:DigestMethod[^>]*)\/>/, '<$1></ds:DigestMethod>')));
+  });
+});
+
 describe('Invoice XML', () => {
+  // ZATCA BR-KSA-EN16931-02: the VAT accounting currency (BT-6) must be SAR, even when the invoice itself is
+  // in another currency. Confirmed against the official SDK 238-R4.0.0 validator, which refused an invoice
+  // whose TaxCurrencyCode was USD with: "[BR-KSA-EN16931-02]-VAT accounting currency code (BT-6) must be \"SAR\"."
+  it('always reports the VAT accounting currency as SAR', () => {
+    const sar = X.invoiceXml(data(), { icv: 1, pih: X.FIRST_PIH });
+    expect(sar).toContain('<cbc:DocumentCurrencyCode>SAR</cbc:DocumentCurrencyCode><cbc:TaxCurrencyCode>SAR</cbc:TaxCurrencyCode>');
+    const usd = X.invoiceXml(data({ currency: 'USD' }), { icv: 1, pih: X.FIRST_PIH });
+    expect(usd).toContain('<cbc:DocumentCurrencyCode>USD</cbc:DocumentCurrencyCode>');
+    expect(usd).toContain('<cbc:TaxCurrencyCode>SAR</cbc:TaxCurrencyCode>');
+  });
+
   it('standard invoice: type 0100000, chain references, buyer address, VAT breakdown with exemption reason', () => {
     const xml = X.invoiceXml(data(), { icv: 7, pih: X.FIRST_PIH });
     expect(xml).toContain('<cbc:InvoiceTypeCode name="0100000">388</cbc:InvoiceTypeCode>');

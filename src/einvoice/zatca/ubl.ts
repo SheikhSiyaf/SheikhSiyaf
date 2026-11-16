@@ -72,7 +72,8 @@ export function invoiceXml(d: EInvoiceData, chain: Chain, qr?: string, signature
     el('cbc:IssueTime', null, d.issueTime),
     el('cbc:InvoiceTypeCode', { name: kind === 'standard' ? '0100000' : '0200000' }, d.advance ? '386' : TYPE_CODE[d.type]),
     el('cbc:DocumentCurrencyCode', null, cur),
-    el('cbc:TaxCurrencyCode', null, cur),
+    // BR-KSA-EN16931-02: VAT is always accounted for in SAR, whatever currency the invoice is written in.
+    el('cbc:TaxCurrencyCode', null, 'SAR'),
     doc && d.original && el('cac:BillingReference', null, el('cac:InvoiceDocumentReference', null, el('cbc:ID', null, text(d.original.number)))),
     el('cac:AdditionalDocumentReference', null, el('cbc:ID', null, 'ICV'), el('cbc:UUID', null, String(chain.icv))),
     el('cac:AdditionalDocumentReference', null, el('cbc:ID', null, 'PIH'), el('cac:Attachment', null, el('cbc:EmbeddedDocumentBinaryObject', { mimeCode: 'text/plain' }, chain.pih))),

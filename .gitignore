@@ -5,3 +5,4 @@ coverage/
 *.log
 web/dist/
 web/dist-demo/
+zatca-sandbox-run/

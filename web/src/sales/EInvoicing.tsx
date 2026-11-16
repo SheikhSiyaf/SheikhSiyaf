@@ -167,8 +167,8 @@ function SetupSaudi({ books, o, unfinished, run, busy, onDone, canCancel }: { bo
         <h2>{t('einv.step2')}</h2>
         <details className="small" style={{ marginBottom: 8 }}>
           <summary>{t('einv.ready')}</summary>
+          {/* The "no password" reminder is not repeated here: it sits beside the code box below, always visible. */}
           <ul style={{ marginTop: 6 }}>{['vat', 'cr', 'address', 'group', 'portal'].map((k) => <li key={k}>{t(`einv.ready.${k}` as Key)}</li>)}</ul>
-          <div className="mut">{t('einv.noPassword')}</div>
         </details>
         <ol className="small" style={{ marginTop: 0 }}><li>{t('einv.step2a')}</li><li>{t('einv.step2b')}</li><li>{t('einv.step2c')}</li></ol>
         {!addressDone && <div className="notice small">{t('einv.addressFirst')}</div>}

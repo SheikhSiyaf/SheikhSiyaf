@@ -460,3 +460,11 @@ Every change below is covered by a test in `test/`.
 | `einvoice_devices.renewed_at`, `cert_warned_for` (people cannot set either); `before_einvoice_device_change()` lets the key and CSR change only together with a new certificate on an active device with no e-invoice waiting; company, environment and serial never change | Renewing ZATCA's certificate keeps the same device, invoice counter and last-invoice hash, so the chain is unbroken |
 | `einvoice_cert_warnings_due()`, `einvoice_cert_warned()` (background job only) | Administrators are emailed once per certificate, 30 days before it ends |
 
+
+## 0055_refunds.sql
+| Change | Why |
+|---|---|
+| `payments.is_refund` (default false) | Money going back the other way: paid out to a customer, or received back from a supplier. Until now money could only move one way per side, so a credit note on an invoice the customer had already paid left the amount owed to them with no way out of the system |
+| `document_amount_due()` counts allocations with a sign: an ordinary allocation reduces what is due, a refund allocation adds it back | Lets a refund settle the negative balance a credit note leaves. Every payment that existed before this migration has `is_refund = false`, so no existing figure changes; `test/refunds.test.ts` keeps that as a regression test |
+| `before_payment_insert()` reverses which side of the contact is required when `is_refund` | A refund paid out needs a customer, a refund received needs a supplier |
+| `before_allocation_insert()` matches the document to the refund's own side and caps the amount at what is owed back (a negative amount due) | A refund can only pay back money we are actually holding; refunding an invoice that is still unpaid, or refunding twice, is refused by the database |

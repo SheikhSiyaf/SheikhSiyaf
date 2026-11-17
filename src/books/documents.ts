@@ -100,12 +100,17 @@ export function postingFor(type: DocType, lines: PricedLine[], sys: SystemAccoun
  * The journal entry a payment posts: received Dr bank / Cr receivables; made Dr payables / Cr bank.
  * Reimbursing an employee (toEmployee) clears employee claims payable instead of payables.
  */
-export function postingForPayment(direction: Direction, amount: Minor, bankAccountId: string, sys: SystemAccounts, toEmployee = false): PostingLine[] {
+/** The journal for a payment. The LEDGER SIDE picks the control account, not the direction the cash moves: a refund
+ *  paid out to a customer still clears receivables (money we were holding for them), never payables. The bank is
+ *  debited when money comes in and credited when it goes out, whichever side it belongs to. */
+export function postingForPayment(direction: Direction, amount: Minor, bankAccountId: string, sys: SystemAccounts,
+  toEmployee = false, side: 'sales' | 'purchases' = direction === 'received' ? 'sales' : 'purchases'): PostingLine[] {
   const a = fromMinor(amount);
   if (toEmployee && !sys.claimsPayable) throw new Error('claims payable');
+  const control = side === 'sales' ? sys.receivables : toEmployee ? sys.claimsPayable! : sys.payables;
   return direction === 'received'
-    ? [{ accountId: bankAccountId, debit: a }, { accountId: sys.receivables, credit: a }]
-    : [{ accountId: toEmployee ? sys.claimsPayable! : sys.payables, debit: a }, { accountId: bankAccountId, credit: a }];
+    ? [{ accountId: bankAccountId, debit: a }, { accountId: control, credit: a }]
+    : [{ accountId: control, debit: a }, { accountId: bankAccountId, credit: a }];
 }
 
 /** Spreads a payment over open documents, oldest due first. */

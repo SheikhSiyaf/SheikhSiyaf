@@ -83,6 +83,9 @@ export function registerSalesRoutes(app: FastifyInstance, { as }: Ctx) {
   }));
   app.get<{ Params: P; Querystring: { contactId?: string; direction?: string } }>('/api/companies/:id/open-documents', async (req) =>
     inCompany(req, req.params.id, (db, c) => S.openDocuments(db, c, uuidParam(String(req.query.contactId ?? '')), direction(req.query.direction))));
+  // What we are holding for a contact and can pay back (0055).
+  app.get<{ Params: P; Querystring: { contactId?: string } }>('/api/companies/:id/refundable', async (req) =>
+    inCompany(req, req.params.id, (db, c) => S.refundable(db, c, uuidParam(String(req.query.contactId ?? '')))));
 
   // ---------------------------------------------------------------- overview and ageing
   app.get<{ Params: P; Querystring: { side?: string } }>('/api/companies/:id/overview', async (req) =>

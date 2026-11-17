@@ -296,6 +296,8 @@ interface MDoc {
 interface MPayment {
   id: string; companyId: string; direction: Direction; number: string; contactId: string; date: string; amount: bigint; accountId: string;
   method: string; reference: string | null; journalEntryId: string; voidedAt: string | null; allocations: { documentId: string; amount: bigint }[]; createdAt: string;
+  /** Money going back the other way (0055): paid out to a customer, or received back from a supplier. */
+  isRefund?: boolean;
 }
 interface MRecurring {
   id: string; companyId: string; name: string; contactId: string | null; payee: string | null; paidFromAccountId: string; frequency: string;
@@ -321,7 +323,10 @@ const sysAccts = (companyId: string) => {
 const docTotals = (d: MDoc) => documentTotals(d.lines);
 function amountDue(d: MDoc): bigint {
   if (!['invoice', 'debit_note', 'bill', 'claim'].includes(d.type) || d.status !== 'issued') return 0n;   // expenses are paid at once
-  const paid = sdb.payments.filter((p) => !p.voidedAt).flatMap((p) => p.allocations).filter((a) => a.documentId === d.id).reduce((s, a) => s + a.amount, 0n);
+  // An ordinary allocation reduces what is due; a refund allocation adds it back (0055).
+  const paid = sdb.payments.filter((p) => !p.voidedAt)
+    .flatMap((p) => p.allocations.map((a) => ({ ...a, sign: p.isRefund ? -1n : 1n })))
+    .filter((a) => a.documentId === d.id).reduce((s, a) => s + a.sign * a.amount, 0n);
   const credited = sdb.docs.filter((c) => c.originalId === d.id && isCredit(c.type) && c.status === 'issued').reduce((s, c) => s + docTotals(c).gross, 0n);
   return docTotals(d).gross - paid - credited;
 }
@@ -516,7 +521,10 @@ function reopenM(id: string) {
 function payM(companyId: string, b: Record<string, unknown>) {
   canPostIn(companyId);
   const direction = b.direction === 'made' ? 'made' : 'received';
-  const contact = sdb.contacts.find((c) => c.id === b.contactId && c.companyId === companyId && (direction === 'received' ? c.isCustomer : c.isSupplier || c.isEmployee));
+  // A refund reverses the side: money paid out to a customer, or received back from a supplier (0055).
+  const isRefund = b.refund === true;
+  const salesSide = (direction === 'received') !== isRefund;
+  const contact = sdb.contacts.find((c) => c.id === b.contactId && c.companyId === companyId && (salesSide ? c.isCustomer : c.isSupplier || c.isEmployee));
   if (!contact) fail(400, 'Choose the customer or supplier.', 'err.contact');
   const bank = db.accounts.find((a) => a.id === b.accountId && a.companyId === companyId && a.isBank);
   if (!bank) fail(400, 'Choose the bank or cash account.', 'err.bankAccount');
@@ -527,22 +535,26 @@ function payM(companyId: string, b: Record<string, unknown>) {
   } catch { return fail(400, 'Amounts must be numbers with at most 2 decimals.', 'err.amountFormat'); }
   if (amount <= 0n) fail(400, 'Enter the amount.', 'err.amount');
   if (allocs.reduce((x, a) => x + a.amount, 0n) > amount) fail(400, 'The amounts settled are more than the payment.', 'err.overAllocated');
-  if (direction === 'made') aprPaymentM(companyId, contact!.id, amount, b.approvalRequestId as string | undefined);
+  if (direction === 'made' && !isRefund) aprPaymentM(companyId, contact!.id, amount, b.approvalRequestId as string | undefined);
   for (const a of allocs) {
     const d = sdb.docs.find((x) => x.id === a.documentId);
-    if (!d || d.contactId !== contact!.id || d.status !== 'issued' || !(direction === 'received' ? ['invoice', 'debit_note'] : contact!.isEmployee ? ['claim'] : ['bill']).includes(d.type))
+    if (!d || d.contactId !== contact!.id || d.status !== 'issued' || !(salesSide ? ['invoice', 'debit_note'] : contact!.isEmployee ? ['claim'] : ['bill']).includes(d.type))
       fail(400, 'A payment can only settle issued invoices (or bills) of the same customer (or supplier).', 'err.contact');
-    if (a.amount <= 0n || a.amount > amountDue(d!)) fail(400, 'This is more than is due on the invoice.', 'err.overDue');
+    // A refund may only pay back money we are holding, which is a negative amount due.
+    if (a.amount <= 0n || a.amount > (isRefund ? -amountDue(d!) : amountDue(d!))) {
+      fail(400, isRefund ? 'This is more than is owed back on the document.' : 'This is more than is due on the invoice.', 'err.overDue');
+    }
   }
   const date = String(b.date ?? '');
   const id = uid();
   const seq = direction === 'received' ? 'receipt' : 'payment';
   const number = nextNo(companyId, seq, numberPrefix(seq, ''));
-  const entry = postingForPayment(direction, amount, bank!.id, sysAccts(companyId), contact!.isEmployee);
+  const entry = postingForPayment(direction, amount, bank!.id, sysAccts(companyId), !isRefund && contact!.isEmployee,
+    salesSide ? 'sales' : 'purchases');
   const je = post(session!, companyId, date, `${number} · ${contact!.name}`, entry.map((l) => ({ accountId: l.accountId, costCentreId: null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
   sdb.payments.push({ id, companyId, direction, number, contactId: contact!.id, date, amount, accountId: bank!.id, method: String(b.method ?? 'bank_transfer'),
-    reference: (b.reference as string)?.trim() || null, journalEntryId: je, voidedAt: null, allocations: allocs, createdAt: new Date().toISOString() });
-  if (direction === 'made' && b.approvalRequestId) aprPaidM(String(b.approvalRequestId), id);
+    reference: (b.reference as string)?.trim() || null, journalEntryId: je, voidedAt: null, allocations: allocs, createdAt: new Date().toISOString(), isRefund });
+  if (direction === 'made' && !isRefund && b.approvalRequestId) aprPaidM(String(b.approvalRequestId), id);
   return id;
 }
 const payOf = (id: string) => sdb.payments.find((p) => p.id === id && roleOf(session, p.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
@@ -550,7 +562,8 @@ function payRow(p: MPayment) {
   const a = db.accounts.find((x) => x.id === p.accountId)!;
   return { id: p.id, direction: p.direction, number: p.number, contactId: p.contactId, contactName: sdb.contacts.find((c) => c.id === p.contactId)!.name,
     date: p.date, amount: s(p.amount), accountId: a.id, accountName: a.name, accountNameAr: a.nameAr, method: p.method, reference: p.reference,
-    voidedAt: p.voidedAt, unallocated: s(p.amount - p.allocations.reduce((x, y) => x + y.amount, 0n)), createdAt: p.createdAt };
+    voidedAt: p.voidedAt, unallocated: s(p.amount - p.allocations.reduce((x, y) => x + y.amount, 0n)), createdAt: p.createdAt,
+    isRefund: Boolean(p.isRefund) };
 }
 function contactRow(c: MContact) {
   const docs = sdb.docs.filter((d) => d.contactId === c.id && d.status === 'issued' && (c.isEmployee ? d.type === 'claim' : c.isCustomer ? d.type === 'invoice' : d.type === 'bill'));
@@ -1917,7 +1930,9 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^\/api\/projects\/([\w-]+)$/, (m, b) => { const p = projectOf(m[1]!); return { id: saveProjectM(p.companyId, b ?? {}, p.id) }; }],
   ['GET', /^\/api\/companies\/([\w-]+)\/payments$/, (m, _b, q) => {
     const id = inCo(m[1]!); const dir = q.get('direction'); const needle = (q.get('q') ?? '').trim().toLowerCase(); const cid = q.get('contactId');
-    return sdb.payments.filter((p) => p.companyId === id && p.direction === dir && (!cid || p.contactId === cid)).map(payRow)
+    // One ledger side: receipts with the refunds paid back to customers, or supplier payments with money refunded
+    // back by suppliers (0055), which is where an accountant looks for each.
+    return sdb.payments.filter((p) => p.companyId === id && ((p.direction === dir) !== Boolean(p.isRefund)) && (!cid || p.contactId === cid)).map(payRow)
       .filter((p) => !needle || [p.contactName, p.number, p.reference].join(' ').toLowerCase().includes(needle))
       .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
   }],
@@ -1937,6 +1952,14 @@ const routes: [string, RegExp, Handler][] = [
     return sdb.docs.filter((d) => d.companyId === id && d.contactId === q.get('contactId') && d.type === type && d.status === 'issued' && amountDue(d) > 0n)
       .sort((a, b) => (a.dueDate ?? a.issueDate).localeCompare(b.dueDate ?? b.issueDate))
       .map((d) => ({ id: d.id, number: d.number, issueDate: d.issueDate, dueDate: d.dueDate, grossTotal: s(docTotals(d).gross), amountDue: s(amountDue(d)) }));
+  }],
+  // What we are holding for a contact and can pay back: a negative amount due, shown as a positive figure (0055).
+  ['GET', /^\/api\/companies\/([\w-]+)\/refundable$/, (m, _b, q) => {
+    const id = inCo(m[1]!);
+    return sdb.docs.filter((d) => d.companyId === id && d.contactId === q.get('contactId') && d.status === 'issued'
+      && ['invoice', 'debit_note', 'bill', 'claim'].includes(d.type) && amountDue(d) < 0n)
+      .sort((a, b) => a.issueDate.localeCompare(b.issueDate))
+      .map((d) => ({ id: d.id, number: d.number, type: d.type, issueDate: d.issueDate, amountDue: s(-amountDue(d)) }));
   }],
   ['GET', /^\/api\/companies\/([\w-]+)\/overview$/, (m, _b, q) => {
     const id = inCo(m[1]!); const sales = q.get('side') !== 'purchases'; const main = sales ? 'invoice' : 'bill'; const credit = sales ? 'credit_note' : 'supplier_credit';
@@ -2168,7 +2191,11 @@ function checkAccess(method: string, path: string, body: Body, q: URLSearchParam
     companyId = cm[1]!;
     const rest = cm[2]!;
     if (rest === 'documents') mods = docMods(String(method === 'GET' ? q.get('type') : body?.type));
-    else if (rest === 'payments') mods = (method === 'GET' ? q.get('direction') : body?.direction) === 'received' ? ['Sales'] : ['Purchases', 'Expenses'];
+    // The rights follow the ledger side, not the way the cash moves: refunding a customer is sales work (0055).
+    else if (rest === 'payments') {
+      const dir = method === 'GET' ? q.get('direction') : body?.direction;
+      mods = (dir === 'received') !== (method !== 'GET' && body?.refund === true) ? ['Sales'] : ['Purchases', 'Expenses'];
+    } else if (rest === 'refundable') mods = ['Sales', 'Purchases', 'Expenses'];
     else if (rest === 'overview') mods = [q.get('side') === 'purchases' ? 'Purchases' : 'Sales'];
     else if (rest === 'contacts' && method === 'POST') mods = body?.isEmployee ? ['HRM', 'Expenses'] : [...(body?.isCustomer ? ['Sales', 'Restaurant'] : []), ...(body?.isSupplier ? ['Purchases', 'Expenses'] : [])];
     else if (rest === 'bank-accounts' && method === 'GET') mods = ['Bank', 'Restaurant'];

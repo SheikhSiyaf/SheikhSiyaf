@@ -46,15 +46,23 @@ const RULES: Rule[] = [
     const r = (await db.query('SELECT company_id, is_customer, is_supplier, is_employee FROM contacts WHERE id = $1', [m[1]])).rows[0];
     return r ? { companyId: r.company_id, modules: r.is_employee ? ['HRM', 'Expenses'] : [...(r.is_customer ? ['Sales'] : []), ...(r.is_supplier ? ['Purchases'] : [])] } : null;
   }],
-  // payments
+  // payments. The rights follow the LEDGER SIDE, not the way the cash moves: refunding a customer is sales work, so
+  // it needs Sales (and must NOT be opened up to someone with only Purchases, since it pays money out).
   ['*', new RegExp(`^/api/companies/${UUID}/payments$`), (_db, m, req) => {
-    const dir = req.method === 'GET' ? query(req).direction : body(req).direction;
-    return { companyId: m[1]!, modules: dir === 'received' ? ['Sales'] : ['Purchases', 'Expenses'] };
+    const get = req.method === 'GET';
+    const dir = get ? query(req).direction : body(req).direction;
+    // A list is asked for by its side's ordinary direction; only a POST can be a refund.
+    const refund = !get && body(req).refund === true;
+    const sales = (dir === 'received') !== refund;
+    return { companyId: m[1]!, modules: sales ? ['Sales'] : ['Purchases', 'Expenses'] };
   }],
   ['*', new RegExp(`^/api/payments/${UUID}(/.*)?$`), async (db, m) => {
-    const r = (await db.query('SELECT company_id, direction FROM payments WHERE id = $1', [m[1]])).rows[0];
-    return r ? { companyId: r.company_id, modules: r.direction === 'received' ? ['Sales'] : ['Purchases', 'Expenses'] } : null;
+    const r = (await db.query('SELECT company_id, direction, is_refund FROM payments WHERE id = $1', [m[1]])).rows[0];
+    if (!r) return null;
+    const sales = (r.direction === 'received') !== r.is_refund;
+    return { companyId: r.company_id, modules: sales ? ['Sales'] : ['Purchases', 'Expenses'] };
   }],
+  ['GET', new RegExp(`^/api/companies/${UUID}/refundable$`), c(['Sales', 'Purchases', 'Expenses'])],
   ['GET', new RegExp(`^/api/companies/${UUID}/overview$`), (_db, m, req) => ({ companyId: m[1]!, modules: [query(req).side === 'purchases' ? 'Purchases' : 'Sales'] })],
   // expenses
   ['*', new RegExp(`^/api/companies/${UUID}/(recurring|expense-categories|expense-overview)(/.*)?$`), c(['Expenses'])],

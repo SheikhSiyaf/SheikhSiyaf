@@ -255,6 +255,11 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
       }
       if (sub === 'payments-received' || sub === 'payments-made') {
         const dir = sub === 'payments-received' ? 'received' : 'made';
+        // Paying money back goes the other way to its page: a customer refund is cash OUT on the sales page (0055).
+        if (item === 'refund') {
+          return <PaymentForm key={`refund-${extra}-${extra2}`} books={books} direction={dir === 'received' ? 'made' : 'received'}
+            refund presetContactId={extra} presetDocId={extra2} />;
+        }
         if (item === 'new') return <PaymentForm key={`${extra}-${extra2}`} books={books} direction={dir} presetContactId={extra} presetDocId={extra2} />;
         return item ? <PaymentView key={item} books={books} direction={dir} id={item} /> : <PaymentList books={books} direction={dir} />;
       }

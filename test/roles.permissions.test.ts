@@ -103,6 +103,34 @@ describe('Roles and permissions', () => {
     expect((await get(c, `/api/companies/${f.a.id}/summary`)).statusCode).toBe(200);
   });
 
+  // Refunds (0055) move cash the opposite way to their side, so the module rights must follow the LEDGER SIDE. If
+  // they followed the cash, somebody with only Purchases could pay money out to a customer, and the sales
+  // accountant whose job it is could not.
+  it('refunding a customer needs Sales, not Purchases, even though the money goes out', async () => {
+    const a = await signIn('admin');
+    const salesOnly = (await post(a, '/api/admin/roles', { name: 'Sales only', permissions: { Sales: 'edit' } })).json().id;
+    const buyOnly = (await post(a, '/api/admin/roles', { name: 'Purchases only', permissions: { Purchases: 'edit' } })).json().id;
+    const customer = await as(f.staff, (db) => S.saveContact(db, f.a.id, { isCustomer: true, name: 'Refund Co' }));
+    await owner.query('UPDATE accounts SET is_bank = true WHERE id = $1', [f.a.cash]);
+    const refund = (cookie: string) => post(cookie, `/api/companies/${f.a.id}/payments`,
+      { direction: 'made', refund: true, contactId: customer, date: '2026-03-10', amount: '10.00', accountId: f.a.cash });
+
+    // Purchases only: refused, because paying a customer back is not purchases work.
+    expect((await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: buyOnly })).statusCode).toBe(200);
+    expect((await refund(await signIn('clientA'))).statusCode).toBe(403);
+
+    // Sales only: allowed through the permission layer (the refund itself still has to be legitimate money owed
+    // back, which the database decides; 400 and not 403 is what proves the rights were granted).
+    expect((await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: salesOnly })).statusCode).toBe(200);
+    const sales = await signIn('clientA');
+    expect((await refund(sales)).statusCode).toBe(200);
+    expect((await get(sales, `/api/companies/${f.a.id}/refundable?contactId=${customer}`)).statusCode).toBe(200);
+    // The refund is listed with the sales ledger, where an accountant looks for it, not under purchases.
+    const received = (await get(sales, `/api/companies/${f.a.id}/payments?direction=received`)).json();
+    expect(received.some((p: { isRefund: boolean }) => p.isRefund)).toBe(true);
+    expect((await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: cashier })).statusCode).toBe(200);
+  });
+
   it('a role without Reports or Ledger (front desk) does not see the company figures on the home page', async () => {
     const a = await signIn('admin');
     const desk = (await post(a, '/api/admin/roles', { name: 'Front desk', permissions: { Rooms: 'edit', Sales: 'edit' } })).json().id;

@@ -111,6 +111,12 @@ export function ContactPage({ books, side, id }: { books: CompanyBooks; side: Si
           <>
             <button className="b p" onClick={() => go(m, side === 'sales' ? 'invoices' : 'bills', 'new', id)}>{t(side === 'sales' ? 'ov.newInvoice' : 'ov.newBill')}</button>
             <button className="b" onClick={() => go(m, side === 'sales' ? 'payments-received' : 'payments-made', 'new', id)}>{t(side === 'sales' ? 'ov.recordReceipt' : 'ov.recordPayment')}</button>
+            {/* In credit: we are holding money that belongs to them, so offer to pay it back (0055). */}
+            {balance < 0n && (
+              <button className="b" id="contact-refund" onClick={() => go(m, side === 'sales' ? 'payments-received' : 'payments-made', 'refund', id)}>
+                {t(side === 'sales' ? 'pay.refundCustomer' : 'pay.refundSupplier')}
+              </button>
+            )}
           </>
         )}
       </div>

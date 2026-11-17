@@ -53,18 +53,31 @@ export function PaymentList({ books, direction }: { books: CompanyBooks; directi
   );
 }
 
-interface OpenDoc { id: string; number: string; issueDate: string; dueDate: string | null; grossTotal: string; amountDue: string }
+// Open documents carry a due date; refundable ones (0055) do not, and their amountDue is what we hold for the contact.
+interface OpenDoc { id: string; number: string; issueDate: string; dueDate?: string | null; grossTotal?: string; amountDue: string }
 
-export function PaymentForm({ books, direction, presetContactId, presetDocId }: { books: CompanyBooks; direction: Direction; presetContactId?: string; presetDocId?: string }) {
+/** Records a payment. `direction` is the way the cash moves; `refund` means it moves against its side, so the money
+ *  belongs to the other ledger: paid back to a customer ('made' + refund) or received back from a supplier. */
+export function PaymentForm({ books, direction, refund, presetContactId, presetDocId }: {
+  books: CompanyBooks; direction: Direction; refund?: boolean; presetContactId?: string; presetDocId?: string;
+}) {
   const { t, has } = useI18n();
   const local = useLocalName();
   const go = useGo(books.company.id);
-  const m = moduleOfSide(sideOfDir(direction));
-  const contacts = useApi<Contact[]>(`/api/companies/${books.company.id}/contacts?role=${direction === 'received' ? 'customer' : 'payee'}`);
+  // The ledger side the money belongs to, which is what the screen and the back button follow.
+  const side: 'sales' | 'purchases' = (direction === 'received') !== Boolean(refund) ? 'sales' : 'purchases';
+  const m = moduleOfSide(side);
+  const contacts = useApi<Contact[]>(`/api/companies/${books.company.id}/contacts?role=${side === 'sales' ? 'customer' : 'payee'}`);
   const banks = bankAccounts(books);
   const approvalRules = useApprovalRules(books);
   const [contactId, setContactId] = useState(presetContactId ?? '');
-  const open = useApi<OpenDoc[]>(contactId ? `/api/companies/${books.company.id}/open-documents?contactId=${contactId}&direction=${direction}` : null);
+  // A refund settles what we are HOLDING for them (a credit note on an invoice already paid); an ordinary payment
+  // settles what is still owed.
+  const open = useApi<OpenDoc[]>(contactId
+    ? refund
+      ? `/api/companies/${books.company.id}/refundable?contactId=${contactId}`
+      : `/api/companies/${books.company.id}/open-documents?contactId=${contactId}&direction=${direction}`
+    : null);
   const [date, setDate] = useState(today());
   const [amount, setAmount] = useState('');
   const [accountId, setAccountId] = useState(banks[0]?.id ?? '');
@@ -96,18 +109,21 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
   const amt = isAmount(amount) ? toMinor(normalise(amount)) : null;
   const allocated = Object.values(alloc).reduce((s, v) => s + (isAmount(v) ? toMinor(normalise(v)) : 0n), 0n);
   const problems: string[] = [];
-  if (!contactId) problems.push(t(direction === 'received' ? 'doc.pickCustomer' : 'doc.pickSupplier'));
+  if (!contactId) problems.push(t(side === 'sales' ? 'doc.pickCustomer' : 'doc.pickSupplier'));
   if (!amt || amt <= 0n) problems.push(t('err.amount'));
   if (!accountId) problems.push(t('err.bankAccount'));
   if (date && isLocked(books, date)) problems.push(t('journal.dateLocked', { date: lockedUpTo(books) ?? '' }));
   for (const d of open.data ?? []) {
     const v = alloc[d.id];
-    if (v && (!isAmount(v) || toMinor(normalise(v)) > toMinor(d.amountDue))) problems.push(t('pay.tooMuchOn', { number: d.number, due: fmt(d.amountDue) }));
+    if (v && (!isAmount(v) || toMinor(normalise(v)) > toMinor(d.amountDue))) {
+      problems.push(t(refund ? 'pay.tooMuchBack' : 'pay.tooMuchOn', { number: d.number, due: fmt(d.amountDue) }));
+    }
   }
   if (amt !== null && allocated > amt) problems.push(t('err.overAllocated'));
   const onAccount = amt !== null && allocated <= amt ? amt - allocated : 0n;
 
-  const needsApproval = direction === 'made' && amt !== null && approvalRules.needs('payment', amt);
+  // Approval rules are written for supplier payments; a refund of the customer's own money is not one.
+  const needsApproval = direction === 'made' && !refund && amt !== null && approvalRules.needs('payment', amt);
   const sendForApproval = async () => {
     setTried(true);
     if (problems.length) return;
@@ -126,10 +142,10 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
     setBusy(true); setError(undefined);
     try {
       const r = await api<{ id: string }>(`/api/companies/${books.company.id}/payments`, { body: {
-        direction, contactId, date, amount: normalise(amount), accountId, method, reference,
+        direction, refund: Boolean(refund), contactId, date, amount: normalise(amount), accountId, method, reference,
         allocations: Object.entries(alloc).filter(([, v]) => isAmount(v) && toMinor(normalise(v)) > 0n).map(([documentId, v]) => ({ documentId, amount: normalise(v) })),
       } });
-      go(m, pageOf(direction), r.id);
+      go(m, pageOf(side === 'sales' ? 'received' : 'made'), r.id);
     } catch (e) { setError(errorText(t, has, e)); } finally { setBusy(false); }
   };
 
@@ -137,15 +153,17 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
   return (
     <>
       <div className="actions" style={{ marginBottom: 10 }}>
-        <button className="b" onClick={() => go(m, pageOf(direction))}>{t(direction === 'received' ? 'pay.backReceived' : 'pay.backMade')}</button>
-        <h2 style={{ margin: 0 }}>{t(direction === 'received' ? 'ov.recordReceipt' : 'ov.recordPayment')}</h2>
+        <button className="b" onClick={() => go(m, pageOf(side === 'sales' ? 'received' : 'made'))}>{t(side === 'sales' ? 'pay.backReceived' : 'pay.backMade')}</button>
+        <h2 style={{ margin: 0 }}>{t(refund ? (side === 'sales' ? 'pay.refundCustomer' : 'pay.refundSupplier') : direction === 'received' ? 'ov.recordReceipt' : 'ov.recordPayment')}</h2>
       </div>
       {error && <div className="notice bad" role="alert">{error}</div>}
+      {refund && <p className="mut small" style={{ marginTop: 0 }}>{t(side === 'sales' ? 'pay.refundCustomerHint' : 'pay.refundSupplierHint')}</p>}
       <div className="card">
         <div className="row">
-          <label className="f" style={{ flex: '2 1 240px' }}>{t(direction === 'received' ? 'pay.from' : 'pay.to')}
+          {/* Who the money moves between. On a refund it moves the other way, so the label must not say "Received from". */}
+          <label className="f" style={{ flex: '2 1 240px' }}>{t(refund ? (side === 'sales' ? 'pay.refundTo' : 'pay.refundFrom') : side === 'sales' ? 'pay.from' : 'pay.to')}
             <select id="pay-contact" value={contactId} onChange={(e) => onContact(e.target.value)}>
-              <option value="">{t(direction === 'received' ? 'doc.pickCustomer' : 'doc.pickSupplier')}</option>
+              <option value="">{t(side === 'sales' ? 'doc.pickCustomer' : 'doc.pickSupplier')}</option>
               {(contacts.data ?? []).filter((c) => c.status === 'active').map((c) => (
                 <option key={c.id} value={c.id}>{local(c.name, c.nameAr)}{c.balanceDue && toMinor(c.balanceDue) > 0n ? ` · ${fmt(c.balanceDue)}` : ''}</option>
               ))}
@@ -155,7 +173,7 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
           <label className="f">{t('doc.date')}<input id="pay-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         </div>
         <div className="row">
-          <label className="f">{t(direction === 'received' ? 'pay.intoAccount' : 'pay.fromAccount')}
+          <label className="f">{t(direction === 'received' ? 'pay.intoAccount' : 'pay.fromAccount')}{/* follows the cash, not the side */}
             <select id="pay-account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
               {banks.map((a) => <option key={a.id} value={a.id}>{a.code} {local(a.name, a.nameAr)}</option>)}
             </select>
@@ -172,22 +190,23 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
       {contactId && (
         <div className="card">
           <div className="actions" style={{ marginBottom: 8 }}>
-            <h2 style={{ margin: 0 }}>{t(direction === 'received' ? 'pay.whichInvoices' : toEmployee ? 'pay.whichClaims' : 'pay.whichBills')}</h2>
+            <h2 style={{ margin: 0 }}>{t(refund ? 'pay.whichToRefund' : direction === 'received' ? 'pay.whichInvoices' : toEmployee ? 'pay.whichClaims' : 'pay.whichBills')}</h2>
             <span className="spacer" />
-            {open.data && open.data.length > 0 && <button className="link small" onClick={() => { setManual(false); autoFill(amount); }}>{t('pay.oldestFirst')}</button>}
+            {!refund && open.data && open.data.length > 0 && <button className="link small" onClick={() => { setManual(false); autoFill(amount); }}>{t('pay.oldestFirst')}</button>}
           </div>
-          {!open.data ? <Loading /> : open.data.length === 0 ? <div className="mut">{t(direction === 'received' ? 'pay.nothingOpenSales' : toEmployee ? 'pay.nothingOpenClaims' : 'pay.nothingOpenPurchases')}</div> : (
+          {!open.data ? <Loading /> : open.data.length === 0 ? <div className="mut">{t(refund ? 'pay.nothingToRefund' : direction === 'received' ? 'pay.nothingOpenSales' : toEmployee ? 'pay.nothingOpenClaims' : 'pay.nothingOpenPurchases')}</div> : (
             <div className="wrap">
               <table className="stack">
-                <thead><tr><th>{t('doc.number')}</th><th>{t('doc.dueDate')}</th><th className="num">{t('doc.amountDue')}</th><th className="num">{t('pay.settle')}</th></tr></thead>
+                <thead><tr><th>{t('doc.number')}</th>{!refund && <th>{t('doc.dueDate')}</th>}
+                  <th className="num">{t(refund ? 'pay.owedBack' : 'doc.amountDue')}</th><th className="num">{t(refund ? 'pay.refundNow' : 'pay.settle')}</th></tr></thead>
                 <tbody>
                   {open.data.map((d) => (
                     <tr key={d.id}>
                       <td>{d.number}<div className="mut small">{d.issueDate}</div></td>
-                      <td data-label={t('doc.dueDate')} className={d.dueDate && d.dueDate < today() ? 'bad' : ''}>{d.dueDate ?? '—'}</td>
-                      <td className="num ltr" data-label={t('doc.amountDue')}>{fmt(d.amountDue)}</td>
-                      <td className="num" data-label={t('pay.settle')}>
-                        <input inputMode="decimal" className="num ltr amount" style={{ width: 160 }} value={alloc[d.id] ?? ''} aria-label={`${t('pay.settle')} ${d.number}`}
+                      {!refund && <td data-label={t('doc.dueDate')} className={d.dueDate && d.dueDate < today() ? 'bad' : ''}>{d.dueDate ?? '—'}</td>}
+                      <td className="num ltr" data-label={t(refund ? 'pay.owedBack' : 'doc.amountDue')}>{fmt(d.amountDue)}</td>
+                      <td className="num" data-label={t(refund ? 'pay.refundNow' : 'pay.settle')}>
+                        <input inputMode="decimal" className="num ltr amount" style={{ width: 160 }} value={alloc[d.id] ?? ''} aria-label={`${t(refund ? 'pay.refundNow' : 'pay.settle')} ${d.number}`}
                           onChange={(e) => { setManual(true); setAlloc({ ...alloc, [d.id]: e.target.value }); }} placeholder="0.00" />
                       </td>
                     </tr>
@@ -198,11 +217,11 @@ export function PaymentForm({ books, direction, presetContactId, presetDocId }: 
           )}
           <table className="totals">
             <tbody>
-              <tr><td>{t('pay.settling')}</td><td className="num ltr">{fmt(fromMinor(allocated))}</td></tr>
-              {onAccount > 0n && <tr><td>{t('pay.onAccount')}</td><td className="num ltr">{fmt(fromMinor(onAccount))}</td></tr>}
+              <tr><td>{t(refund ? 'pay.refunding' : 'pay.settling')}</td><td className="num ltr">{fmt(fromMinor(allocated))}</td></tr>
+              {onAccount > 0n && <tr><td>{t(refund ? 'pay.refundOnAccount' : 'pay.onAccount')}</td><td className="num ltr">{fmt(fromMinor(onAccount))}</td></tr>}
             </tbody>
           </table>
-          {onAccount > 0n && <p className="mut small">{t(direction === 'received' ? 'pay.onAccountHintSales' : 'pay.onAccountHintPurchases')}</p>}
+          {onAccount > 0n && <p className="mut small">{t(refund ? 'pay.refundOnAccountHint' : direction === 'received' ? 'pay.onAccountHintSales' : 'pay.onAccountHintPurchases')}</p>}
         </div>
       )}
 

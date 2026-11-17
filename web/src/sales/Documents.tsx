@@ -409,6 +409,9 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
   };
   const due = x.status === 'issued' && (x.type === 'invoice' || x.type === 'bill' || x.type === 'debit_note');
   const canPay = books.canPost && due && toMinor(x.amountDue) > 0n;
+  // A negative amount due means we are holding their money (a credit note on a document already paid): offer to
+  // pay it back (0055). The claim side is reimbursed through Approvals, not here.
+  const canRefund = books.canPost && due && toMinor(x.amountDue) < 0n;
   const title = t(docTitle(x));
   return (
     <>
@@ -417,6 +420,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
         <span className="spacer" />
         <PdfButton id="doc-pdf" onPrint={() => printDocument(books, x.id)} />
         {canPay && <button className="b p" onClick={() => go(m, side === 'sales' ? 'payments-received' : 'payments-made', 'new', x.contactId, x.id)}>{t(side === 'sales' ? 'ov.recordReceipt' : 'ov.recordPayment')}</button>}
+        {canRefund && <button className="b p" id="doc-refund" onClick={() => go(m, side === 'sales' ? 'payments-received' : 'payments-made', 'refund', x.contactId, x.id)}>{t(side === 'sales' ? 'pay.refundCustomer' : 'pay.refundSupplier')}</button>}
         {books.canPost && due && <button className="b" disabled={busy} onClick={() => void run(async () => {
           const r = await api<{ id: string }>(`/api/documents/${x.id}/credit`, { body: {} });
           go(m, x.type === 'invoice' ? 'credit-notes' : 'supplier-credits', r.id);

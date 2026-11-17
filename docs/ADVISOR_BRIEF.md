@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-17 (the logo and brand name in the app; ZATCA proved against the official SDK validator).
+Last updated: 2026-11-17 (refunds: money can now be paid back to a customer and received back from a supplier).
 
 ---
 
@@ -70,6 +70,12 @@ console: creates customers and companies, bills them, answers support messages, 
 - **Rentals**: renting out equipment such as cranes and scaffolding as income (contracts, usage, rental bills).
 - **Rooms** (hotels, new "hospitality" industry): room types with nightly rates including VAT and seasons, rooms, bookings (never two on the same night), front desk, calendar, check-in and check-out, extras, and the guest bill as an ordinary invoice on 4200 Room revenue. Refundable security deposits (held in 2150, no VAT; returned, or used to pay the guest's bill). Advance payments: an advance invoice (ZATCA type 386, VAT on receipt, account 2160) deducted on the final invoice as ZATCA's prepaid amount; ZATCA sandbox accepted all four test cases. VAT treatment of advances on the return still to be confirmed by an accountant before real use.
   Deep Check (2026-11-15) passed: bookings never overlap (also 8 at once), entries, VAT and the trial balance recompute exactly, other companies and roles are kept out, locked months refuse postings; ZATCA sandbox accepted the hotel's guest invoice, advance invoice, final invoice with prepaid and the advance's credit note. Fixed: front-desk roles no longer see company figures on Home; an unused advance can now be credited (0047). Open: no way to pay a refund out to a customer; a part-used advance cannot be refunded; guest bill lines are English only; accountant questions on advance VAT.
+- **Refunds** (new): money can be paid back to a customer and received back from a supplier. A credit note on an
+  invoice the customer had already paid leaves the amount owed to them, and a "Refund the customer" button on that
+  invoice (or on a customer in credit) pays it out. Before this there was no way to return money at all: a refund,
+  a cancelled booking, a returned product or an overpayment had nowhere to go. The journal follows the ledger side,
+  not the direction of the cash, so a customer refund clears receivables and never payables, and the module rights
+  follow it too (refunding a customer needs Sales, not Purchases). Deep Check passed 21 of 21 checks.
 - **Reports**: trial balance, P&L, balance sheet, VAT return, aged reports, budgets, forecast, multi-currency
   ledger accounts with month-end revaluation, export of everything.
 - **Review layer**: reviewer checks and sign-off; signing off a month locks it. Year-end close.

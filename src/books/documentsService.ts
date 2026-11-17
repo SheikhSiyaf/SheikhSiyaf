@@ -412,6 +412,8 @@ export interface PaymentInput {
   allocations?: { documentId: string; amount: string }[];
   /** A supplier payment approved beforehand (approvals, 0026): the request it carries out. */
   approvalRequestId?: string;
+  /** Money going back the other way (0055): paid out to a customer, or received back from a supplier. */
+  refund?: boolean;
 }
 
 export async function recordPayment(db: Db, companyId: string, p: PaymentInput): Promise<string> {
@@ -433,17 +435,21 @@ export async function recordPayment(db: Db, companyId: string, p: PaymentInput):
   if (allocs.some((a) => a.amount <= 0n)) bad('Amounts must be more than 0.', 'err.amount');
   if (allocs.reduce((s, a) => s + a.amount, 0n) > amount) bad('The amounts settled are more than the payment.', 'err.overAllocated');
 
+  const refund = Boolean(p.refund);
+  // A refund reverses the side: money paid out to a customer is the sales side, money received back from a supplier
+  // the purchases side. The side picks the control account; the direction still picks the bank entry and the number.
+  const side: 'sales' | 'purchases' = (direction === 'received') !== refund ? 'sales' : 'purchases';
   const id = randomUUID();
   const number = await nextNumber(db, companyId, direction === 'received' ? 'receipt' : 'payment', numberPrefix(direction === 'received' ? 'receipt' : 'payment', ''));
   const contact = await getContact(db, p.contactId!);
   const entryId = await postEntry(db, {
     companyId, entryDate: p.date!, memo: `${number} · ${contact.name}`, sourceType: direction === 'received' ? 'payment_received' : 'payment_made', sourceId: id,
-    lines: postingForPayment(direction, amount, p.accountId!, await systemAccounts(db, companyId), Boolean(contact.isEmployee)),
+    lines: postingForPayment(direction, amount, p.accountId!, await systemAccounts(db, companyId), !refund && Boolean(contact.isEmployee), side),
   });
   await db.query(
-    `INSERT INTO payments (id, company_id, direction, number, contact_id, payment_date, amount, account_id, method, reference, journal_entry_id, created_by, approval_request_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, app_user_id(), $12)`,
-    [id, companyId, direction, number, p.contactId, p.date, fromMinor(amount), p.accountId, method, p.reference?.trim() || null, entryId, p.approvalRequestId || null]);
+    `INSERT INTO payments (id, company_id, direction, number, contact_id, payment_date, amount, account_id, method, reference, journal_entry_id, created_by, approval_request_id, is_refund)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, app_user_id(), $12, $13)`,
+    [id, companyId, direction, number, p.contactId, p.date, fromMinor(amount), p.accountId, method, p.reference?.trim() || null, entryId, p.approvalRequestId || null, refund]);
   for (const a of allocs) {
     await db.query('INSERT INTO payment_allocations (payment_id, document_id, amount) VALUES ($1, $2, $3)', [id, a.documentId, fromMinor(a.amount)]);
   }
@@ -461,13 +467,16 @@ export async function voidPayment(db: Db, id: string, date: string): Promise<voi
 
 const PAY_COLS = `p.id, p.direction, p.number, p.contact_id AS "contactId", c.name AS "contactName", p.payment_date::text AS date,
   p.amount::text, p.account_id AS "accountId", a.name AS "accountName", a.name_ar AS "accountNameAr", p.method, p.reference,
-  p.voided_at AS "voidedAt", p.created_at AS "createdAt",
+  p.voided_at AS "voidedAt", p.created_at AS "createdAt", p.is_refund AS "isRefund",
   (p.amount - coalesce((SELECT sum(x.amount) FROM payment_allocations x WHERE x.payment_id = p.id), 0))::numeric(18,2)::text AS unallocated`;
 
+/** Payments of one LEDGER SIDE, named by its ordinary direction: 'received' lists receipts from customers together
+ *  with refunds paid back to them, 'made' lists supplier payments together with money refunded back by suppliers.
+ *  A customer refund belongs with the sales ledger, which is where an accountant looks for it. */
 export async function listPayments(db: Db, companyId: string, direction: Direction, f: { q?: string; contactId?: string } = {}) {
   const { rows } = await db.query(
     `SELECT ${PAY_COLS} FROM payments p JOIN contacts c ON c.id = p.contact_id JOIN accounts a ON a.id = p.account_id
-     WHERE p.company_id = $1 AND p.direction = $2
+     WHERE p.company_id = $1 AND ((p.direction = $2) <> p.is_refund)
        AND ($3 = '' OR c.name ILIKE '%' || $3 || '%' OR p.number ILIKE '%' || $3 || '%' OR coalesce(p.reference, '') ILIKE '%' || $3 || '%')
        AND ($4::uuid IS NULL OR p.contact_id = $4)
      ORDER BY p.payment_date DESC, p.created_at DESC LIMIT 500`, [companyId, direction, (f.q ?? '').trim(), f.contactId || null]);
@@ -492,6 +501,19 @@ export async function openDocuments(db: Db, companyId: string, contactId: string
      FROM documents d WHERE d.company_id = $1 AND d.contact_id = $2 AND d.type = $3 AND d.status = 'issued'
        AND document_amount_due(d.id) > 0
      ORDER BY coalesce(d.due_date, d.issue_date), d.issue_date`, [companyId, contactId, direction === 'received' ? 'invoice' : (await getContact(db, contactId)).isEmployee ? 'claim' : 'bill']);
+  return rows;
+}
+
+/** Documents of a contact where WE are holding money that belongs to them, so it can be paid back (0055). A credit
+ *  note on an invoice already paid leaves a negative amount due; `amountDue` here is that amount as a positive
+ *  figure, which is the most that may be refunded against it. */
+export async function refundable(db: Db, companyId: string, contactId: string) {
+  const { rows } = await db.query(
+    `SELECT d.id, d.number, d.type, d.issue_date::text AS "issueDate",
+            (-document_amount_due(d.id))::numeric(18,2)::text AS "amountDue"
+     FROM documents d WHERE d.company_id = $1 AND d.contact_id = $2 AND d.status = 'issued'
+       AND d.type IN ('invoice', 'debit_note', 'bill', 'claim') AND document_amount_due(d.id) < 0
+     ORDER BY d.issue_date, d.number`, [companyId, contactId]);
   return rows;
 }
 

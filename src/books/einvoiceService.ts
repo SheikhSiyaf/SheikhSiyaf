@@ -218,14 +218,18 @@ export async function finishOnboarding(db: Db, deviceId: string): Promise<{ stat
 
 /** Renews the active device's certificate: a new key and CSR, and ZATCA's new certificate for a one-time password.
  *  The device, its invoice counter and the hash of its last invoice stay as they are, so the chain is unbroken. */
-export async function renew(db: Db, deviceId: string, b: { otp?: string }): Promise<{ certValidTo: string | null }> {
+export async function renew(db: Db, deviceId: string, b: { otp?: string }): Promise<{ certValidTo: string | null; resigned: number }> {
   const dev = (await db.query('SELECT * FROM einvoice_devices WHERE id = $1 FOR UPDATE', [deviceId])).rows[0] ?? notFound();
   if (dev.status !== 'active' || !dev.production_token || !dev.production_secret_enc) bad('Only a connected device can be renewed.', 'err.einvRenewState');
   if (dev.environment === 'production' && !allowProduction) bad('Connecting to ZATCA Production is switched off on this site. Use Simulation to test.', 'err.einvProdOff');
   const otp = text(b.otp, 10) ?? bad('Enter the one-time password from the Fatoora portal.', 'err.einvOtp');
   if (!/^\d{6}$/.test(otp)) bad('The one-time password has 6 digits.', 'err.einvOtp');
+  // Invoices signed with the old key must reach ZATCA before that key is replaced. The exception is when they
+  // CANNOT reach it: once the certificate has run out, ZATCA refuses the login, so waiting for them would lock the
+  // company out for good (0057). Those invoices are signed again with the new certificate below.
   const waiting = (await db.query(`SELECT count(*)::int AS n FROM einvoices WHERE device_id = $1 AND status = 'pending'`, [deviceId])).rows[0].n;
-  if (waiting) bad('Send the e-invoices that are waiting before renewing the certificate.', 'err.einvRenewPending');
+  const lockedOut = waiting > 0 && (await db.query('SELECT einvoice_device_locked_out($1) AS v', [deviceId])).rows[0].v === true;
+  if (waiting && !lockedOut) bad('Send the e-invoices that are waiting before renewing the certificate.', 'err.einvRenewPending');
   const co = await company(db, dev.company_id);
   const s = await getSettings(db, dev.company_id);
   const { privatePem } = Z.newKey();
@@ -241,7 +245,37 @@ export async function renew(db: Db, deviceId: string, b: { otp?: string }): Prom
   const validTo = Z.certInfo(ok.token).validTo;
   await db.query(`UPDATE einvoice_devices SET private_key_enc = $2, csr = $3, production_token = $4, production_secret_enc = $5, cert_valid_to = $6 WHERE id = $1`,
     [deviceId, secret(privatePem), csr.pem, ok.token, secret(ok.secret), validTo]);
-  return { certValidTo: validTo ? new Date(validTo).toISOString() : null };
+  // Anything that was waiting was signed with the key just replaced, so it could never be sent. Sign it again with
+  // the new certificate; the invoice itself does not change, so the chain stays exactly where it was.
+  const resigned = lockedOut ? await resignPending(db, deviceId, privatePem, ok.token) : 0;
+  return { certValidTo: validTo ? new Date(validTo).toISOString() : null, resigned };
+}
+
+/** Signs the e-invoices still waiting on a device with its renewed certificate (0057).
+ *
+ *  The invoice hash is taken over the invoice WITHOUT its signature and QR, so signing again leaves the hash, the
+ *  counter and the previous-invoice hash untouched: only the signature, the certificate inside it and the QR
+ *  change. That is checked here for every invoice, and the whole renewal fails rather than move the chain. */
+async function resignPending(db: Db, deviceId: string, privatePem: string, token: string): Promise<number> {
+  const waiting = (await db.query(
+    `SELECT id, document_id, uuid, icv::int, pih, invoice_hash FROM einvoices
+     WHERE device_id = $1 AND status = 'pending' AND scheme = 'zatca' ORDER BY icv`, [deviceId])).rows;
+  const key = Z.keyFrom(privatePem);
+  const cert = Z.certInfo(token);
+  const at = localParts(clock(), 'SA');
+  let n = 0;
+  for (const e of waiting) {
+    const { data } = await invoiceData(db, e.document_id, e.uuid);
+    const st = X.stampInvoice(data, { icv: Number(e.icv), pih: e.pih }, key, cert, `${at.date}T${at.time}`);
+    if (st.hash !== e.invoice_hash) {
+      // Should be impossible: the hash does not cover the signature. If it ever happened, re-signing would move
+      // the chain, so nothing is written and the renewal is refused instead.
+      bad('The invoices waiting could not be signed again without changing them, so nothing was changed. Ask for support.', 'err.einvResign');
+    }
+    await db.query(`UPDATE einvoices SET xml = $2, qr = $3, resigned_at = now() WHERE id = $1`, [e.id, st.xml, st.qr]);
+    n++;
+  }
+  return n;
 }
 
 export async function devices(db: Db, companyId: string) {

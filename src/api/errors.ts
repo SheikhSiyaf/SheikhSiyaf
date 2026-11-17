@@ -1,4 +1,6 @@
 // Turns database errors into plain-language messages. `key` lets the UI show the message in Arabic.
+import { SecretUnreadable } from '../auth/secretBox.js';
+
 export class HttpError extends Error {
   constructor(public status: number, message: string, public key?: string, public details?: string[]) {
     super(message);
@@ -185,6 +187,9 @@ interface PgError { code?: string; message: string; constraint?: string }
 
 export function toHttpError(err: unknown): HttpError {
   if (err instanceof HttpError) return err;
+  // A stored secret that will not decrypt: the server is running with a different ENCRYPTION_KEY than the one the
+  // database was written with. Say that, rather than leave an operator restoring a backup with a bare 500.
+  if (err instanceof SecretUnreadable) return new HttpError(500, err.message, err.key);
   const e = err as PgError;
   const known = e.constraint ? CONSTRAINTS[e.constraint] : undefined;
   switch (e.code) {

@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-17 (refunds; and opening balances now come in as individual open invoices and bills).
+Last updated: 2026-11-17 (refunds; opening balances as individual open invoices and bills; a way out when a ZATCA certificate expires).
 
 ---
 
@@ -85,7 +85,11 @@ console: creates customers and companies, bills them, answers support messages, 
 - **Reports**: trial balance, P&L, balance sheet, VAT return, aged reports, budgets, forecast, multi-currency
   ledger accounts with month-end revaluation, export of everything.
 - **Review layer**: reviewer checks and sign-off; signing off a month locks it. Year-end close.
-- **E-invoicing**: ZATCA (Saudi) built. Sandbox test (Stage 1, dummy data, see docs/ZATCA_SANDBOX_REPORT.md): onboarding, all 6 compliance checks and clearance of standard invoice, credit and debit notes pass; reporting of simplified invoices rejected in the sandbox (most likely the sandbox's dummy production certificate; to be settled in simulation). A device is now never switched on with a certificate that does not match its key. Code checked against ZATCA's XML and Security standards v1.2 (2023-05-19); not supported: advance-payment invoices. Stage 2 can run on a local test database. Simplified invoices are now reported automatically (every 2 minutes, retries 2/5/10/15/30 min, in order, never twice), with warnings at 12/20/24 hours, on rejection and login refusal (invoice numbers only), and an Administrator list of unsent invoices. Missing: certificate renewal. UAE Peppol: not built
+- **E-invoicing**: ZATCA (Saudi) built. Sandbox test (Stage 1, dummy data, see docs/ZATCA_SANDBOX_REPORT.md): onboarding, all 6 compliance checks and clearance of standard invoice, credit and debit notes pass; reporting of simplified invoices rejected in the sandbox (most likely the sandbox's dummy production certificate; to be settled in simulation). A device is now never switched on with a certificate that does not match its key. Code checked against ZATCA's XML and Security standards v1.2 (2023-05-19); not supported: advance-payment invoices. Stage 2 can run on a local test database. Simplified invoices are now reported automatically (every 2 minutes, retries 2/5/10/15/30 min, in order, never twice), with warnings at 12/20/24 hours, on rejection and login refusal (invoice numbers only), and an Administrator list of unsent invoices. Certificate renewal was already built. This phase closed a trap in it: if a certificate ran out while
+  e-invoices were still waiting, ZATCA refused the login so they could never be sent, and renewal refused because
+  invoices were waiting, so the company could neither send nor renew and nothing could be invoiced again. Renewal
+  is now allowed in exactly that case and the waiting invoices are signed again with the new certificate; the
+  invoices themselves do not change, so the counter and the chain stay as they were. UAE Peppol: not built
   (needs an accredited service provider).
 - **Portal, calendar of deadlines, approvals, forecast.**
 - **HRM** (payroll, GOSI and GPSSA, end of service, leave, WPS and Mudad files), **CRM**, **Restaurant**.

@@ -12,7 +12,8 @@ import * as E from '../src/books/einvoiceService.js';
 import * as Adv from '../src/books/advanceService.js';
 import * as X from '../src/einvoice/zatca/xml.js';
 import * as Z from '../src/einvoice/zatca/crypto.js';
-import { decryptSecret } from '../src/auth/secretBox.js';
+import { SecretUnreadable, decryptSecret, encryptSecret } from '../src/auth/secretBox.js';
+import { toHttpError } from '../src/api/errors.js';
 import { sendCertWarnings } from '../src/books/einvoiceSender.js';
 import { notifications } from '../src/books/toolsService.js';
 import type { Fetch } from '../src/einvoice/zatca/api.js';
@@ -20,7 +21,7 @@ import type { Fetch } from '../src/einvoice/zatca/api.js';
 let f: Fixture;
 let token: string;
 const calls: { url: string; headers: Record<string, string>; body: Record<string, string> }[] = [];
-let mode: 'ok' | 'down' | 'otherKey' = 'ok';
+let mode: 'ok' | 'down' | 'otherKey' | 'expired' = 'ok';
 let caDir: string, issued: string;
 /** Like ZATCA: the certificate is issued for the key in the CSR (signed by the stand-in CA). */
 function issueFor(csrBase64: string): string {
@@ -48,6 +49,8 @@ const fakeZatca: Fetch = async (url, init) => {
   }
   // 'otherKey': a certificate for some other key (what ZATCA's sandbox hands out at this step).
   if (p === '/production/csids') return reply(200, { requestID: 30368, binarySecurityToken: mode === 'otherKey' ? token : issued, secret: 'production-secret' });
+  // An expired certificate: ZATCA refuses the login on every invoice call (the renewal call itself still works).
+  if (mode === 'expired') return reply(401, { errors: ['Certificate expired'] });
   const xml = Buffer.from(body.invoice, 'base64').toString('utf8');
   const hash = X.invoiceHash(xml).base64;
   if (hash !== body.invoiceHash) return reply(400, { validationResults: { status: 'ERROR', errorMessages: [{ code: 'invalid-invoice-hash', message: 'hash mismatch' }] } });
@@ -340,5 +343,80 @@ describe('Renewing the certificate and the warning before it ends (0054)', () =>
     // After a renewal the new certificate is warned about afresh (a new expiry date).
     await as(f.staff, (db) => E.renew(db, d.id, { otp: '123345' }));
     expect((await active()).cert_warned_for).toBeNull();
+  });
+
+  // A certificate that runs out while e-invoices are still waiting used to lock the company out completely:
+  // ZATCA refuses the login so the invoices can never be sent, and renewal refuses because invoices are waiting.
+  // Nothing could be invoiced again, and there was no way out from inside the app.
+  describe('A certificate that expires with e-invoices still waiting', () => {
+    it('renews even though invoices are waiting, because those invoices can never be sent with the old key', async () => {
+      const d = await active();
+      const doc = await invoice(f.a, b2b);
+      const e = await einvoiceOf(doc);
+      mode = 'expired';
+      try {
+        const r = await as(f.staff, (db) => E.submit(db, e.id));
+        expect(r.status).toBe('pending');          // ZATCA refuses the login; the invoice keeps waiting
+        await owner.query(`UPDATE einvoice_devices SET cert_valid_to = now() - interval '1 day' WHERE id = $1`, [d.id]);
+        mode = 'ok';                               // the renewal call itself still works: it uses the one-time password
+        const out = await as(f.staff, (db) => E.renew(db, d.id, { otp: '123345' }));
+        expect(out.certValidTo).not.toBeNull();
+        expect(out.resigned).toBe(1);
+      } finally { mode = 'ok'; }
+    });
+
+    it('re-signs the waiting invoice with the new certificate, leaving the chain exactly where it was', async () => {
+      const d = await active();
+      const before = (await owner.query(`SELECT * FROM einvoices WHERE device_id = $1 AND status = 'pending' ORDER BY icv`, [d.id])).rows[0];
+      expect(before).toBeTruthy();
+      // The invoice hash covers the invoice WITHOUT its signature and QR, so re-signing cannot move the chain.
+      expect(before.invoice_hash).toBeTruthy();
+      const certInXml = (xml: string) => /<ds:X509Certificate>([^<]+)</.exec(xml)![1]!;
+      // The certificate carried in the signature must be the device's CURRENT one: the new key, after the renewal.
+      expect(Z.certMatchesKey(Z.certInfo(Buffer.from(certInXml(before.xml)).toString('base64')), Z.keyFrom(decryptSecret('test-key', d.private_key_enc)))).toBe(true);
+      expect(X.invoiceHash(before.xml).base64).toBe(before.invoice_hash);
+      expect(before.resigned_at).not.toBeNull();
+    });
+
+    it('the re-signed invoice is then accepted, and the next invoice carries on from it', async () => {
+      const d = await active();
+      const waiting = (await owner.query(`SELECT * FROM einvoices WHERE device_id = $1 AND status = 'pending' ORDER BY icv`, [d.id])).rows[0];
+      expect((await as(f.staff, (db) => E.submit(db, waiting.id))).status).toBe('cleared');
+      const next = await einvoiceOf(await invoice(f.a, b2b));
+      expect(next).toMatchObject({ device_id: d.id, icv: String(Number(waiting.icv) + 1), pih: waiting.invoice_hash });
+      expect((await as(f.staff, (db) => E.submit(db, next.id))).status).toBe('cleared');
+    });
+
+    it('a healthy certificate still has to send what is waiting before it may be renewed', async () => {
+      const d = await active();
+      await invoice(f.a, b2b);                      // waiting, and the certificate is fine
+      expect(Number((await owner.query('SELECT ceil(extract(epoch FROM cert_valid_to - now()) / 86400)::int AS n FROM einvoice_devices WHERE id = $1', [d.id])).rows[0].n)).toBeGreaterThan(0);
+      await expect(as(f.staff, (db) => E.renew(db, d.id, { otp: '123345' }))).rejects.toThrow(/waiting/);
+      await as(f.staff, (db) => E.submitPending(db, f.a.id));
+    });
+
+    it('an e-invoice the authority has answered for is never re-signed, and a re-sign can never change the invoice', async () => {
+      const d = await active();
+      const done = (await owner.query(`SELECT * FROM einvoices WHERE device_id = $1 AND status IN ('cleared', 'reported') ORDER BY icv DESC`, [d.id])).rows[0];
+      await expect(as(f.staff, (db) => db.query(`UPDATE einvoices SET xml = xml || ' ' WHERE id = $1`, [done.id]))).rejects.toThrow(/never changed|final/);
+      const doc = await invoice(f.a, b2b);
+      const e = await einvoiceOf(doc);
+      // Even while it waits, the invoice itself is fixed: only the signature may be redone, never the content.
+      await expect(as(f.staff, (db) => db.query(`UPDATE einvoices SET xml = $2, invoice_hash = 'other' WHERE id = $1`, [e.id, e.xml]))).rejects.toThrow(/never changed/);
+      await expect(as(f.staff, (db) => db.query(`UPDATE einvoices SET icv = icv + 1 WHERE id = $1`, [e.id]))).rejects.toThrow(/never changed/);
+      await as(f.staff, (db) => E.submitPending(db, f.a.id));
+    });
+  });
+
+  // A database restored onto a server set up with a different ENCRYPTION_KEY used to fail with an unexplained
+  // error. The key is kept outside the backups on purpose, so an operator must be told exactly what is wrong.
+  it('a secret that will not decrypt says the encryption key is the wrong one', () => {
+    const boxed = encryptSecret('the-real-key', 'a device private key');
+    expect(decryptSecret('the-real-key', boxed)).toBe('a device private key');
+    expect(() => decryptSecret('a-different-key', boxed)).toThrow(SecretUnreadable);
+    const asHttp = toHttpError(new SecretUnreadable());
+    expect(asHttp.status).toBe(500);
+    expect(asHttp.key).toBe('err.secretKey');
+    expect(asHttp.message).toMatch(/different ENCRYPTION_KEY/);
   });
 });

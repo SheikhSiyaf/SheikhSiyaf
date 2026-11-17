@@ -476,3 +476,11 @@ Every change below is covered by a test in `test/`.
 | `before_document_line_change()` sends an opening document's line to 3000 Opening balances, and refuses any VAT on it | An opening invoice is not a new sale: the revenue and the VAT belong to the previous system and were declared there, so nothing may land in income, expense or VAT |
 | `before_document_opening()`: only an invoice or a bill, exactly one line, no VAT, a number kept from the old system, and `is_opening` never changes | An ordinary document can never become an opening one, or the other way round, after the fact |
 | `before_einvoice_opening()` on `einvoices`, named to run before the other checks | An opening invoice is never sent to ZATCA or PINT AE: it was invoiced and reported in the old system, and sending it again would report the same sale twice |
+
+## 0057_cert_expiry_resign.sql
+| Change | Why |
+|---|---|
+| `einvoices.resigned_at` | Signed again with a renewed certificate. The invoice itself is unchanged: same hash, same counter, same previous-invoice hash |
+| `einvoice_device_locked_out(device)` | True when the waiting invoices cannot be sent with the device's current key: the certificate has run out, or ZATCA refuses the login (401/403) on every one of them |
+| `before_einvoice_device_change()` allows renewal with invoices waiting when the device is locked out | 0054 refused renewal while invoices waited, which is right while the certificate works and a trap once it has expired: ZATCA then refuses the login, so those invoices can never be sent, and the certificate can never be renewed. A company could neither send nor renew and nothing could be invoiced again |
+| `before_einvoice_change()` allows `xml` and `qr` to be redone on a still-waiting e-invoice, recording `resigned_at`, and nothing else to move | Re-signing with the new certificate. The invoice hash is taken over the invoice WITHOUT its signature and QR, so the hash, the counter and the previous-invoice hash all stay as they were and the chain is untouched; because the hash may not change, the invoice itself provably cannot be altered under cover of a re-sign. An invoice the authority has answered for is never re-signed |

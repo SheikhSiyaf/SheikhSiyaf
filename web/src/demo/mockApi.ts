@@ -4117,6 +4117,13 @@ routes.push(
     edb.settings.set(dev.companyId, { ...einvSettings(dev.companyId), enabled: true });
     return { status: 'active', checks: dev.checks };
   }],
+  // Renewing asks ZATCA for a new certificate with a one-time password from the Fatoora portal. The demo's device
+  // was never connected to ZATCA, so say that plainly instead of failing with a bare error.
+  ['POST', /^\/api\/einvoicing\/devices\/([\w-]+)\/renew$/, (m) => {
+    const dev = edb.devices.find((x) => x.id === m[1] && roleOf(session, x.companyId)) ?? fail(404, 'Not found.', 'err.notFound');
+    canPostIn(dev.companyId);
+    return fail(400, 'This demo device was never connected to ZATCA, so there is no certificate to renew.', 'err.einvDemoRenew');
+  }],
   ['GET', /^\/api\/companies\/([\w-]+)\/einvoices$/, (m, _b, q) => { const id = inCo(m[1]!);
     return edb.einvoices.filter((x) => x.companyId === id && (!q.get('status') || x.status === q.get('status'))).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(einvRow); }],
   ['POST', /^\/api\/companies\/([\w-]+)\/einvoices\/send-pending$/, (m) => { const id = inCo(m[1]!); canPostIn(id);

@@ -48,10 +48,11 @@ function useRun(reload: () => void) {
     setBusy(true); setMsg({});
     try { await fn(); if (ok) setMsg({ ok }); reload(); return true; } catch (e) { setMsg({ bad: errorText(t, has, e), details: (e as { details?: string[] }).details }); return false; } finally { setBusy(false); }
   };
+  const setOk = (ok: string) => setMsg({ ok });
   const notes = <>{msg.ok && <div className="notice">{msg.ok}</div>}{msg.bad && <div className="notice bad" role="alert">{msg.bad}
     {msg.details?.length ? <div className="small" style={{ marginTop: 4 }}>
       {msg.details.map((x) => (has(`einv.f.${x}`) ? t(`einv.f.${x}` as Key) : has(x) ? t(x as Key) : x)).map((line, i) => <div key={i} className={i ? 'mut ltr' : ''}>{line}</div>)}</div> : null}</div>}</>;
-  return { run, busy, notes, setMsg };
+  return { run, busy, notes, setMsg, setOk };
 }
 
 // ------------------------------------------------------------------ Saudi Arabia (ZATCA)
@@ -63,7 +64,10 @@ function Saudi({ books, o, reload }: { books: CompanyBooks; o: Overview; reload:
   const [renewing, setRenewing] = useState(false);
   const [otp, setOtp] = useState('');
   const certSoon = active && active.certDaysLeft != null && active.certDaysLeft <= (o.certWarnDays ?? 30);
-  const { run, busy, notes } = useRun(reload);
+  // The certificate has run out with invoices still waiting: they cannot be sent until it is renewed (0057).
+  const lockedOut = Boolean(active && active.certDaysLeft != null && active.certDaysLeft <= 0 && (o.counts.pending ?? 0) > 0);
+  const { run, busy, notes, setOk: setRenewOk } = useRun(reload);
+  const setRenewMsg = (n: number) => setRenewOk(n > 0 ? t('einv.renewedResigned', { n }) : t('einv.renewed'));
   const tile = (k: string, tone = '') => <div className={`card fig ${o.counts[k] && tone ? tone : ''}`}><small>{t(`einv.s.${k}` as Key)}</small><b>{o.counts[k] ?? 0}</b><small>{t(`einv.sub.${k}` as Key)}</small></div>;
   return (
     <>
@@ -84,8 +88,18 @@ function Saudi({ books, o, reload }: { books: CompanyBooks; o: Overview; reload:
           </tbody></table>
           {active.environment !== 'production' && <div className="notice warn small" style={{ marginTop: 8 }}>{t('einv.testOnly')}</div>}
           {renewing && books.canPost && (
-            <form id="einv-renew-form" style={{ marginTop: 10 }} onSubmit={(e) => { e.preventDefault(); void run(async () => { await api(`/api/einvoicing/devices/${active.id}/renew`, { body: { otp } }); setOtp(''); setRenewing(false); }, t('einv.renewed')); }}>
+            <form id="einv-renew-form" style={{ marginTop: 10 }} onSubmit={(e) => {
+              e.preventDefault();
+              let done = 0;
+              void run(async () => {
+                const r = await api<{ resigned?: number }>(`/api/einvoicing/devices/${active.id}/renew`, { body: { otp } });
+                done = r.resigned ?? 0; setOtp(''); setRenewing(false);
+              }).then((okNow) => { if (okNow) setRenewMsg(done); });
+            }}>
               <ol className="small" style={{ marginTop: 0 }}><li>{t('einv.renew1')}</li><li>{t('einv.renew2')}</li><li>{t('einv.renew3')}</li></ol>
+              {/* Once the certificate has ended, ZATCA refuses the login, so whatever is waiting can never be sent
+                  with the old certificate. Renewing signs those invoices again with the new one (0057). */}
+              {lockedOut && <div className="notice warn small" id="einv-renew-stuck" style={{ marginBottom: 8 }}>{t('einv.renewStuck', { n: o.counts.pending ?? 0 })}</div>}
               <div className="small mut" style={{ marginBottom: 6 }}>{t('einv.noPassword')}</div>
               <div className="actions">
                 <label className="f">{t('einv.otp')}<input id="einv-renew-otp" dir="ltr" inputMode="numeric" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} /></label>

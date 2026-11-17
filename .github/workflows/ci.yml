@@ -37,17 +37,11 @@ jobs:
 
     env:
       TEST_PG_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
-      # Nothing may leave the runner: no ZATCA, no email provider, no bank, no rate feed.
-      OUTSIDE_CALLS: 'off'
-      # Every background job off. The checks build the server in process and never start them, so this only makes
-      # sure a future change cannot have CI reaching outside by accident.
-      EINVOICE_JOBS: 'off'
-      EMAIL_JOBS: 'off'
-      BANK_FEED_JOBS: 'off'
-      AUTH_PURGE_JOBS: 'off'
-      FX_JOBS: 'off'
-      BILLING_JOBS: 'off'
-      TOOL_JOBS: 'off'
+      # Do NOT add OUTSIDE_CALLS=off or any *_JOBS=off here. They look like harmless safety, but they belong to the
+      # tests: test/outside.test.ts sets and restores them itself, and every other test passes its own stand-in for
+      # each outside service. Setting them in the job made 26 tests fail and quietly SKIPPED 22 more, which is how
+      # the first run of this workflow failed. Nothing in the suite calls a real outside service: every ZATCA,
+      # email, bank and exchange-rate call goes to a stand-in the test supplies.
 
     steps:
       - uses: actions/checkout@v4
@@ -76,12 +70,11 @@ jobs:
       - name: Browser checks
         run: npm run test:browser
 
-      - name: Keep the screenshots and output of a failed browser check
+      - name: Keep the screenshots of a failed browser check
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-check-output
-          path: |
-            test-browser/output/
+          name: browser-check-screenshots
+          path: test-browser/output/
           if-no-files-found: ignore
           retention-days: 7

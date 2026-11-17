@@ -51,5 +51,6 @@ At the end of every phase, run docs/DEEP_CHECK.md before reporting.
 ## Commands
 - First run: `npm install`, `cp .env.example .env`, `npm run db:up`, `npm run setup`, `npm start` -> http://localhost:3000.
 - Dev: `npm run dev` -> http://localhost:5173. Tests: `npm test`. Types: `npm run typecheck`.
+- Browser checks: `npm run test:browser` (real screens, test-browser/). Everything CI runs: `npm run test:all`.
 - If Postgres is down in a cloud session: `service postgresql start`.
 - Background jobs and outside calls have off switches (`*_JOBS=off`, `OUTSIDE_CALLS=off`); see src/api/main.ts.

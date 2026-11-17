@@ -1,0 +1,87 @@
+# Every push and pull request: the types, the database tests, and the browser checks.
+#
+# The browser checks are here on purpose. The database tests can all pass while a screen is broken — proved by
+# hiding the converted total on a foreign-currency invoice: all 672 database tests still passed and only the
+# browser checks caught it. So a change to a screen cannot reach main on the strength of `npm test` alone.
+name: Checks
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        # The same major version the application runs on: the tests rely on its row-level security and its rounding.
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      TEST_PG_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Nothing may leave the runner: no ZATCA, no email provider, no bank, no rate feed.
+      OUTSIDE_CALLS: 'off'
+      # Every background job off. The checks build the server in process and never start them, so this only makes
+      # sure a future change cannot have CI reaching outside by accident.
+      EINVOICE_JOBS: 'off'
+      EMAIL_JOBS: 'off'
+      BANK_FEED_JOBS: 'off'
+      AUTH_PURGE_JOBS: 'off'
+      FX_JOBS: 'off'
+      BILLING_JOBS: 'off'
+      TOOL_JOBS: 'off'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check the types
+        run: npm run typecheck
+
+      - name: Database and rule tests
+        run: npm test
+
+      # Not in package.json: it is only needed for the browser checks, and keeping it out means a normal install
+      # never downloads a browser. --no-save leaves package.json and the lock file alone.
+      - name: Install Chromium for the browser checks
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.63.0
+          npx playwright install --with-deps chromium
+
+      - name: Browser checks
+        run: npm run test:browser
+
+      - name: Keep the screenshots and output of a failed browser check
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-check-output
+          path: |
+            test-browser/output/
+          if-no-files-found: ignore
+          retention-days: 7

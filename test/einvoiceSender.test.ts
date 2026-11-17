@@ -16,6 +16,9 @@ import type { Fetch } from '../src/einvoice/zatca/api.js';
 let f: Fixture;
 let caDir: string, issued: string;
 let mode: 'ok' | 'down' | 'login' | 'slow' = 'ok';
+/** Called the moment the sender is inside ZATCA (slow mode only), so a test can start a second sender while the
+ *  first provably still holds the device, instead of hoping the two overlap. */
+let onReport: (() => void) | undefined;
 const reported: string[] = [];   // uuids sent to the reporting API, in order
 const reply = (status: number, body: unknown) => ({ status, text: async () => JSON.stringify(body) });
 function issueFor(csrBase64: string): string {
@@ -33,7 +36,7 @@ const fakeZatca: Fetch = async (url, init) => {
   if (p !== '/invoices/reporting/single') return reply(404, {});
   if (mode === 'down') throw new Error('connect ETIMEDOUT');
   if (mode === 'login') return reply(401, {});
-  if (mode === 'slow') await new Promise((r) => setTimeout(r, 150));
+  if (mode === 'slow') { onReport?.(); await new Promise((r) => setTimeout(r, 150)); }
   reported.push(body.uuid);
   if (Buffer.from(body.invoice, 'base64').toString('utf8').includes('Reject Me'))
     return reply(400, { validationResults: { status: 'ERROR', errorMessages: [{ code: 'BR-KSA-25', message: 'Buyer name not allowed' }] }, reportingStatus: 'NOT_REPORTED' });
@@ -93,7 +96,7 @@ describe('When ZATCA cannot be reached', () => {
     let e1 = await einvoiceOf(d1), e2 = await einvoiceOf(d2);
     expect([e1.status, e1.attempts, e2.attempts]).toEqual(['pending', 1, 0]);   // the second was not tried: order is kept
     expect((new Date(e1.next_attempt_at).getTime() - new Date(e1.last_attempt_at).getTime()) / 60_000).toBeCloseTo(2, 5);
-    await run();                                                               // not due yet: no attempt
+    await run({ now: later(1) });                                              // a minute later: not due yet, no attempt
     expect((await einvoiceOf(d1)).attempts).toBe(1);
     await run({ now: later(3) });                                              // due, still down
     e1 = await einvoiceOf(d1);
@@ -123,7 +126,16 @@ describe('When ZATCA cannot be reached', () => {
     reported.length = 0;
     mode = 'slow';
     const docs = [await sale(walkIn), await sale(walkIn), await sale(walkIn)];
-    const [r1, r2] = await Promise.all([run(), run()]);
+    // The second sender must start while the first is still working on the device, or there is no contention to
+    // test. So wait for the first to be inside ZATCA rather than hoping the two happen to overlap: on a loaded
+    // machine the first could otherwise finish before the second began, and the test would fail for the wrong
+    // reason.
+    const inside = new Promise<void>((resolve) => { onReport = () => { onReport = undefined; resolve(); }; });
+    const first = run();
+    await inside;
+    const second = run();   // starts while the first is still holding the device
+    const [r1, r2] = await Promise.all([first, second]);
+    onReport = undefined;
     mode = 'ok';
     expect(r1.reported + r2.reported).toBe(3);
     expect(r1.skippedDevices + r2.skippedDevices).toBe(1);

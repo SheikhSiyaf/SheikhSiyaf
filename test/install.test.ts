@@ -9,6 +9,7 @@ import { createOwner } from '../src/db/install.js';
 import { seed as demoSeed } from '../src/db/seed.js';
 import { buildServer } from '../src/api/server.js';
 import { PG_ADMIN_URL, APP_PASSWORD } from './config.js';
+import { testPool } from './helpers.js';
 
 const DB = `nusuh_install_${process.pid}`;
 const url = (user: string, pw: string) => { const u = new URL(PG_ADMIN_URL); u.pathname = `/${DB}`; if (user) { u.username = user; u.password = pw; } return u.toString(); };
@@ -20,7 +21,7 @@ beforeAll(async () => {
   admin = new pg.Client({ connectionString: PG_ADMIN_URL }); await admin.connect();
   await admin.query(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`); await admin.query(`CREATE DATABASE ${DB}`);
   await migrate(ownerUrl(), APP_PASSWORD);
-  pool = new pg.Pool({ connectionString: url('nusuh_app', APP_PASSWORD), max: 3 });
+  pool = testPool(url('nusuh_app', APP_PASSWORD), 3);
   server = buildServer({ pool, sessionSecret: SECRET, encryptionKey: '2e8b51d7a94c06f3b8e1d52a7c49f06b3d81e57a2c', production: true, publicUrl: 'https://books.example.com', demoLogins: true });
 });
 afterAll(async () => {

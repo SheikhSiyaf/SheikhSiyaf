@@ -3,7 +3,7 @@
 // error reports that are off by default.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import { app as appPool, owner, seed, type Fixture } from './helpers.js';
+import { app as appPool, owner, seed, type Fixture, testPool } from './helpers.js';
 import { buildServer } from '../src/api/server.js';
 import pg from 'pg';
 import { runExclusive, releaseJobs } from '../src/jobs/runJob.js';
@@ -29,7 +29,7 @@ afterAll(async () => { delete process.env.ERROR_REPORT_URL; await releaseJobs(ap
 
 describe('Background jobs run in one server copy only', () => {
   it('two server copies: the first to ask owns the job and runs it every time; the other skips until the owner stops', async () => {
-    const copyA = new pg.Pool({ connectionString: APP_URL, max: 3 }), copyB = new pg.Pool({ connectionString: APP_URL, max: 3 });
+    const copyA = testPool(APP_URL, 3), copyB = testPool(APP_URL, 3);
     try {
       let inside = 0, most = 0;
       const work = async () => { inside++; most = Math.max(most, inside); await new Promise((r) => setTimeout(r, 100)); inside--; return 'done'; };

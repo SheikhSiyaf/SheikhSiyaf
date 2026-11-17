@@ -4,10 +4,27 @@ import { afterAll } from 'vitest';
 import { withUser, type Db } from '../src/db/session.js';
 import { OWNER_URL, APP_URL } from './config.js';
 
+/**
+ * A connection pool for the tests, with the error listener every long-lived pg pool needs (src/db/session.ts does the
+ * same for the real one). Without it, a connection the SERVER closes — which is exactly what dropping a test database
+ * with (FORCE) does during teardown — arrives as an 'error' event with no listener, and node ends the whole run with
+ * an unhandled exception. That is what made a full test run report an error even though every test passed.
+ * Teardown terminations are expected and stay quiet; anything else is printed, because it would be a real fault.
+ */
+export function testPool(connectionString: string, max: number): pg.Pool {
+  const p = new pg.Pool({ connectionString, max });
+  p.on('error', (err) => {
+    if (!/terminating connection due to administrator command|Connection terminated/i.test(err.message)) {
+      console.error('Test database connection lost:', err.message);
+    }
+  });
+  return p;
+}
+
 // Owner connection: bypasses RLS. Used only to seed fixtures and to inspect raw state.
-export const owner = new pg.Pool({ connectionString: OWNER_URL, max: 3 });
+export const owner = testPool(OWNER_URL, 3);
 // Application connection: role nusuh_app, subject to RLS. Every rule is tested through this.
-export const app = new pg.Pool({ connectionString: APP_URL, max: 5 });
+export const app = testPool(APP_URL, 5);
 
 afterAll(async () => {
   await owner.end();

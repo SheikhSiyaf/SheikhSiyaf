@@ -6,3 +6,4 @@ coverage/
 web/dist/
 web/dist-demo/
 zatca-sandbox-run/
+test-browser/output/

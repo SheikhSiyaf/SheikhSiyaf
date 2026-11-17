@@ -129,6 +129,15 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
   restating open foreign receivables and payables at the closing rate at period end (unrealised differences); the
   month-end revaluation from 0029 covers accounts kept in another currency, not per-invoice balances.
 
+- **The checks that guard every change (2026-11-17)**: 672 automated tests and the type check run on every push,
+  and so do browser checks that drive the real screens (sign in, issue an invoice, an invoice in another currency,
+  Arabic right to left, a phone, and one company trying to read another's). Those browser checks were added because
+  the database tests cannot see a broken screen: hiding the converted total on a foreign-currency invoice left all
+  672 tests passing, and only the browser checks caught it. Two intermittent test failures were tracked to their
+  causes and fixed — a bank-feed fixture whose pretend bank gave different transactions every run, and test
+  connection pools missing the error listener a pool needs when the server closes a connection — and the suite then
+  ran 25 times in a row with no failures and no errors, where before a problem appeared in roughly one run in three.
+
 ## 6. Decisions already made (do not reopen without a reason)
 
 - Login decides everything: no client or role switcher in the app.

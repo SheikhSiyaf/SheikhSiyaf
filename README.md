@@ -123,6 +123,8 @@ Then open **http://localhost:5173**. Edits to the screens appear straight away. 
 | Command | What it does |
 |---|---|
 | `npm test` | Runs every accounting-rule, data-separation and API test against a throwaway `nusuh_test` database. |
+| `npm run test:browser` | Builds the web app, starts the server on a throwaway database with demo data, and checks the real screens in a browser (English and Arabic, desktop and phone). Slower; needs Chromium. |
+| `npm run test:all` | The types, the tests and the browser checks: what the CI workflow runs on every push. |
 | `npm run typecheck` | Type-checks the server and the web app. |
 | `npm run build` | Rebuilds the web app into `web/dist` (needed after changing screens before `npm start`). |
 | `npm run db:migrate` | Applies new database migrations. Run it after pulling new changes, then `npm run build`. |

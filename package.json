@@ -21,7 +21,9 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p web",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:demo": "vite build --config web/vite.config.ts --mode demo && node scripts/demo-page.mjs"
+    "build:demo": "vite build --config web/vite.config.ts --mode demo && node scripts/demo-page.mjs",
+    "test:browser": "npm run build && vitest run --config vitest.browser.config.ts",
+    "test:all": "npm run typecheck && npm test && npm run test:browser"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.8.15",

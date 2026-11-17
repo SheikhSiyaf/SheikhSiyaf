@@ -51,6 +51,12 @@ jobs:
           node-version: '22'
           cache: npm
 
+      # xmllint, for the e-invoice tests: they canonicalise the invoice with an independent tool and compare it with
+      # our own C14N, which is how the ZATCA hash input is verified rather than taken on trust. GitHub's runners
+      # carry openssl but not xmllint, and its absence failed three tests on the second run of this workflow.
+      - name: Install xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+
       - name: Install dependencies
         run: npm ci
 

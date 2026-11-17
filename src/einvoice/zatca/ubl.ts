@@ -23,6 +23,8 @@ export function el(name: string, attrs: Record<string, string> | null, ...kids: 
 }
 export const text = (s: string) => esc(s);
 const amt = (cur: string) => ({ currencyID: cur });
+/** ZATCA accounts for VAT in SAR whatever currency the invoice is written in (BR-KSA-EN16931-02). */
+const TAX_CUR = 'SAR';
 const CAT: Record<VatCode, string> = { standard: 'S', zero: 'Z', exempt: 'E', out_of_scope: 'O' };
 
 function party(p: EParty): string {
@@ -63,6 +65,9 @@ export function invoiceXml(d: EInvoiceData, chain: Chain, qr?: string, signature
   const doc = (d.type === 'credit_note' || d.type === 'debit_note');
   const pre = d.prepayments ?? [];
   const prepaid = pre.reduce((t, p) => t + toCents(p.net) + toCents(p.vat), 0n);
+  const taxTotalInTaxCurrency = el('cac:TaxTotal', null, el('cbc:TaxAmount', amt(TAX_CUR), d.vatTotalInTaxCurrency ?? d.vatTotal));
+  const taxBreakdown = el('cac:TaxTotal', null, el('cbc:TaxAmount', amt(cur), d.vatTotal),
+    ...[...groups.values()].map((g) => el('cac:TaxSubtotal', null, el('cbc:TaxableAmount', amt(cur), fromCents(g.net)), el('cbc:TaxAmount', amt(cur), fromCents(g.vat)), category(g.code, g.rate, 'cac:TaxCategory'))));
   const body = [
     signatureBlock ?? null,
     el('cbc:ProfileID', null, 'reporting:1.0'),
@@ -73,7 +78,7 @@ export function invoiceXml(d: EInvoiceData, chain: Chain, qr?: string, signature
     el('cbc:InvoiceTypeCode', { name: kind === 'standard' ? '0100000' : '0200000' }, d.advance ? '386' : TYPE_CODE[d.type]),
     el('cbc:DocumentCurrencyCode', null, cur),
     // BR-KSA-EN16931-02: VAT is always accounted for in SAR, whatever currency the invoice is written in.
-    el('cbc:TaxCurrencyCode', null, 'SAR'),
+    el('cbc:TaxCurrencyCode', null, TAX_CUR),
     doc && d.original && el('cac:BillingReference', null, el('cac:InvoiceDocumentReference', null, el('cbc:ID', null, text(d.original.number)))),
     el('cac:AdditionalDocumentReference', null, el('cbc:ID', null, 'ICV'), el('cbc:UUID', null, String(chain.icv))),
     el('cac:AdditionalDocumentReference', null, el('cbc:ID', null, 'PIH'), el('cac:Attachment', null, el('cbc:EmbeddedDocumentBinaryObject', { mimeCode: 'text/plain' }, chain.pih))),
@@ -83,9 +88,16 @@ export function invoiceXml(d: EInvoiceData, chain: Chain, qr?: string, signature
     el('cac:AccountingCustomerParty', null, d.buyer ? party(d.buyer) : ''),
     el('cac:Delivery', null, el('cbc:ActualDeliveryDate', null, d.supplyDate)),
     el('cac:PaymentMeans', null, el('cbc:PaymentMeansCode', null, text(d.paymentMeans)), doc && el('cbc:InstructionNote', null, text(d.reason || 'Correction'))),
-    el('cac:TaxTotal', null, el('cbc:TaxAmount', amt(cur), d.vatTotal)),
-    el('cac:TaxTotal', null, el('cbc:TaxAmount', amt(cur), d.vatTotal),
-      ...[...groups.values()].map((g) => el('cac:TaxSubtotal', null, el('cbc:TaxableAmount', amt(cur), fromCents(g.net)), el('cbc:TaxAmount', amt(cur), fromCents(g.vat)), category(g.code, g.rate, 'cac:TaxCategory')))),
+    // Two tax totals, as ZATCA's XML Implementation Standard v1.2 requires:
+    //   BT-110, the VAT total with the breakdown by category and rate, in the currency the invoice is written in;
+    //   BT-111, the VAT total in the ACCOUNTING currency, which BR-KSA-EN16931-02 fixes as SAR, demanded by BR-53
+    //           whenever the accounting currency code is given (we always give it).
+    // Both map to the same element name, so the one carrying the breakdown is BT-110 and the standalone one is
+    // BT-111. For a riyal invoice the two are the same number in the same currency, and the order below is the one
+    // ZATCA's validator already accepted, so the XML of every riyal invoice is byte-for-byte what it always was and
+    // no stored invoice hash moves (foreignCurrency.test.ts holds that). When the invoice is written in another
+    // currency the two differ, so the breakdown is put first, which is the order EN16931 documents.
+    ...(cur === TAX_CUR ? [taxTotalInTaxCurrency, taxBreakdown] : [taxBreakdown, taxTotalInTaxCurrency]),
     el('cac:LegalMonetaryTotal', null,
       el('cbc:LineExtensionAmount', amt(cur), d.netTotal), el('cbc:TaxExclusiveAmount', amt(cur), d.netTotal), el('cbc:TaxInclusiveAmount', amt(cur), d.grossTotal),
       el('cbc:AllowanceTotalAmount', amt(cur), '0.00'), el('cbc:PrepaidAmount', amt(cur), fromCents(prepaid)),

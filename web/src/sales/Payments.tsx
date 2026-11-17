@@ -6,7 +6,8 @@ import { fmt, fromMinor, isAmount, normalise, toMinor } from '../money.ts';
 import { today } from '../router.ts';
 import { ConfirmBar, ErrorNote, Loading, errorText } from '../ui.tsx';
 import { isLocked, lockedUpTo } from '../books/Workspace.tsx';
-import { autoAllocate } from '../../../src/books/documents.ts';
+import { autoAllocate, convertMinor, rateToScaled, rateToString } from '../../../src/books/documents.ts';
+import { CURRENCIES } from '../../../src/books/fx.ts';
 import { useApprovalRules } from '../approvals/Approvals.tsx';
 import { StateBadge, bankAccounts, moduleOfSide, useGo, type Contact, type Direction, type PaymentRow } from './common.tsx';
 
@@ -54,7 +55,11 @@ export function PaymentList({ books, direction }: { books: CompanyBooks; directi
 }
 
 // Open documents carry a due date; refundable ones (0055) do not, and their amountDue is what we hold for the contact.
-interface OpenDoc { id: string; number: string; issueDate: string; dueDate?: string | null; grossTotal?: string; amountDue: string }
+interface OpenDoc {
+  id: string; number: string; issueDate: string; dueDate?: string | null; grossTotal?: string; amountDue: string;
+  /** Written in another currency (0058): what is still owed IN THAT CURRENCY, which is what gets settled. */
+  currency?: string | null; fxRate?: string | null; fxAmountDue?: string | null;
+}
 
 /** Records a payment. `direction` is the way the cash moves; `refund` means it moves against its side, so the money
  *  belongs to the other ledger: paid back to a customer ('made' + refund) or received back from a supplier. */
@@ -84,6 +89,11 @@ export function PaymentForm({ books, direction, refund, presetContactId, presetD
   const [method, setMethod] = useState<(typeof METHODS)[number]>('bank_transfer');
   const [reference, setReference] = useState('');
   const [alloc, setAlloc] = useState<Record<string, string>>({});
+  // Another currency (0058): the amount and every settlement below are then read in THAT currency, and only
+  // documents written in it can be settled, because a payment never spans two currencies.
+  const [currency, setCurrency] = useState('');
+  const [fxRate, setFxRate] = useState('');
+  const [rateTouched, setRateTouched] = useState(false);
   const [manual, setManual] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -96,14 +106,28 @@ export function PaymentForm({ books, direction, refund, presetContactId, presetD
     if (preset && !amount) { setAmount(preset.amountDue); setAlloc({ [preset.id]: preset.amountDue }); setManual(true); }
   }, [open.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Only documents written in the payment's currency can be settled by it, and what is owed on each is read in
+  // that same currency.
+  const openList = (open.data ?? []).filter((d) => (d.currency ?? '') === currency);
+  const dueOf = (d: OpenDoc) => (currency ? d.fxAmountDue ?? '0.00' : d.amountDue);
+  const rateOk = (() => { try { return currency ? rateToScaled(fxRate) : null; } catch { return null; } })();
+  const suggested = useApi<{ rate: { rate: string; rateDate: string; source: string } | null }>(
+    currency ? `/api/companies/${books.company.id}/fx/rate?currency=${currency}&date=${date}` : null);
+
   // Settle oldest first as the amount is typed, until the person changes a line themselves.
   const autoFill = (amt: string) => {
-    if (!open.data || !isAmount(amt)) { setAlloc({}); return; }
-    const parts = autoAllocate(toMinor(normalise(amt)), open.data.map((d) => ({ id: d.id, due: toMinor(d.amountDue) })));
+    if (!isAmount(amt)) { setAlloc({}); return; }
+    const parts = autoAllocate(toMinor(normalise(amt)), openList.map((d) => ({ id: d.id, due: toMinor(dueOf(d)) })));
     setAlloc(Object.fromEntries(parts.map((p) => [p.id, fromMinor(p.amount)])));
   };
   const onAmount = (v: string) => { setAmount(v); if (!manual) autoFill(v); };
   const onContact = (id: string) => { setContactId(id); setAlloc({}); setManual(false); setAmount(''); };
+  const onCurrency = (c: string) => { setCurrency(c); setFxRate(''); setRateTouched(false); setAlloc({}); setManual(false); setAmount(''); };
+
+  // The feed's rate is offered, not imposed: once the person has touched the field it is theirs to clear and retype.
+  useEffect(() => {
+    if (currency && !rateTouched && !fxRate && suggested.data?.rate) setFxRate(suggested.data.rate.rate);
+  }, [suggested.data, currency]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toEmployee = Boolean(contacts.data?.find((c) => c.id === contactId)?.isEmployee);
   const amt = isAmount(amount) ? toMinor(normalise(amount)) : null;
@@ -113,14 +137,20 @@ export function PaymentForm({ books, direction, refund, presetContactId, presetD
   if (!amt || amt <= 0n) problems.push(t('err.amount'));
   if (!accountId) problems.push(t('err.bankAccount'));
   if (date && isLocked(books, date)) problems.push(t('journal.dateLocked', { date: lockedUpTo(books) ?? '' }));
-  for (const d of open.data ?? []) {
+  for (const d of openList) {
     const v = alloc[d.id];
-    if (v && (!isAmount(v) || toMinor(normalise(v)) > toMinor(d.amountDue))) {
-      problems.push(t(refund ? 'pay.tooMuchBack' : 'pay.tooMuchOn', { number: d.number, due: fmt(d.amountDue) }));
+    if (v && (!isAmount(v) || toMinor(normalise(v)) > toMinor(dueOf(d)))) {
+      problems.push(t(refund ? 'pay.tooMuchBack' : 'pay.tooMuchOn', { number: d.number, due: fmt(dueOf(d)) }));
     }
   }
   if (amt !== null && allocated > amt) problems.push(t('err.overAllocated'));
   const onAccount = amt !== null && allocated <= amt ? amt - allocated : 0n;
+  if (currency && !rateOk) problems.push(t('err.fxRate'));
+  // Nothing may be left over on a payment in another currency: the exchange difference is worked out from what it
+  // settles, so there has to be nothing unsettled (0058).
+  if (currency && onAccount > 0n) problems.push(t('err.fxAllocateAll'));
+  // What actually reaches the bank, in the company's own currency.
+  const cash = amt !== null && rateOk ? convertMinor(amt, rateOk) : null;
 
   // Approval rules are written for supplier payments; a refund of the customer's own money is not one.
   const needsApproval = direction === 'made' && !refund && amt !== null && approvalRules.needs('payment', amt);
@@ -131,6 +161,7 @@ export function PaymentForm({ books, direction, refund, presetContactId, presetD
     try {
       await api(`/api/companies/${books.company.id}/approvals/payments`, { body: {
         direction, contactId, date, amount: normalise(amount), accountId, method, reference,
+        currency: currency || null, fxRate: rateOk ? rateToString(rateOk) : null,
         allocations: Object.entries(alloc).filter(([, v]) => isAmount(v) && toMinor(normalise(v)) > 0n).map(([documentId, v]) => ({ documentId, amount: normalise(v) })),
       } });
       go('Approvals', 'waiting');
@@ -143,6 +174,7 @@ export function PaymentForm({ books, direction, refund, presetContactId, presetD
     try {
       const r = await api<{ id: string }>(`/api/companies/${books.company.id}/payments`, { body: {
         direction, refund: Boolean(refund), contactId, date, amount: normalise(amount), accountId, method, reference,
+        currency: currency || null, fxRate: rateOk ? rateToString(rateOk) : null,
         allocations: Object.entries(alloc).filter(([, v]) => isAmount(v) && toMinor(normalise(v)) > 0n).map(([documentId, v]) => ({ documentId, amount: normalise(v) })),
       } });
       go(m, pageOf(side === 'sales' ? 'received' : 'made'), r.id);
@@ -169,8 +201,24 @@ export function PaymentForm({ books, direction, refund, presetContactId, presetD
               ))}
             </select>
           </label>
-          <label className="f">{t('pay.amount')} ({cur})<input id="pay-amount" inputMode="decimal" className="num ltr" value={amount} onChange={(e) => onAmount(e.target.value)} placeholder="0.00" /></label>
+          <label className="f">{t('pay.amount')} ({currency || cur})<input id="pay-amount" inputMode="decimal" className="num ltr" value={amount} onChange={(e) => onAmount(e.target.value)} placeholder="0.00" />
+            {cash !== null && currency && <span className="mut small" id="pay-cash">{t('pay.reachesBank', { amount: fmt(fromMinor(cash)), cur })}</span>}
+          </label>
           <label className="f">{t('doc.date')}<input id="pay-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        </div>
+        <div className="row">
+          <label className="f">{t('doc.currency')}
+            <select id="pay-currency" value={currency} onChange={(e) => onCurrency(e.target.value)}>
+              <option value="">{cur} · {t('doc.ownCurrency')}</option>
+              {CURRENCIES.filter((c) => c.code !== cur).map((c) => <option key={c.code} value={c.code}>{c.code} · {local(c.en, c.ar)}</option>)}
+            </select>
+          </label>
+          {currency && (
+            <label className="f">{t('doc.fxRate', { cur: currency, base: cur })}
+              <input id="pay-fx-rate" inputMode="decimal" className="num ltr" value={fxRate} onChange={(e) => { setFxRate(e.target.value); setRateTouched(true); }} placeholder="0.00000000" />
+              {suggested.data?.rate && <span className="mut small">{t('doc.fxRateFeed', { rate: suggested.data.rate.rate, date: suggested.data.rate.rateDate })}</span>}
+            </label>
+          )}
         </div>
         <div className="row">
           <label className="f">{t(direction === 'received' ? 'pay.intoAccount' : 'pay.fromAccount')}{/* follows the cash, not the side */}
@@ -192,19 +240,24 @@ export function PaymentForm({ books, direction, refund, presetContactId, presetD
           <div className="actions" style={{ marginBottom: 8 }}>
             <h2 style={{ margin: 0 }}>{t(refund ? 'pay.whichToRefund' : direction === 'received' ? 'pay.whichInvoices' : toEmployee ? 'pay.whichClaims' : 'pay.whichBills')}</h2>
             <span className="spacer" />
-            {!refund && open.data && open.data.length > 0 && <button className="link small" onClick={() => { setManual(false); autoFill(amount); }}>{t('pay.oldestFirst')}</button>}
+            {!refund && openList.length > 0 && <button className="link small" onClick={() => { setManual(false); autoFill(amount); }}>{t('pay.oldestFirst')}</button>}
           </div>
-          {!open.data ? <Loading /> : open.data.length === 0 ? <div className="mut">{t(refund ? 'pay.nothingToRefund' : direction === 'received' ? 'pay.nothingOpenSales' : toEmployee ? 'pay.nothingOpenClaims' : 'pay.nothingOpenPurchases')}</div> : (
+          {!open.data ? <Loading /> : openList.length === 0 ? (
+            <div className="mut" id="pay-nothing-open">
+              {currency ? t('pay.nothingInCurrency', { cur: currency })
+                : t(refund ? 'pay.nothingToRefund' : direction === 'received' ? 'pay.nothingOpenSales' : toEmployee ? 'pay.nothingOpenClaims' : 'pay.nothingOpenPurchases')}
+            </div>
+          ) : (
             <div className="wrap">
               <table className="stack">
                 <thead><tr><th>{t('doc.number')}</th>{!refund && <th>{t('doc.dueDate')}</th>}
                   <th className="num">{t(refund ? 'pay.owedBack' : 'doc.amountDue')}</th><th className="num">{t(refund ? 'pay.refundNow' : 'pay.settle')}</th></tr></thead>
                 <tbody>
-                  {open.data.map((d) => (
+                  {openList.map((d) => (
                     <tr key={d.id}>
                       <td>{d.number}<div className="mut small">{d.issueDate}</div></td>
                       {!refund && <td data-label={t('doc.dueDate')} className={d.dueDate && d.dueDate < today() ? 'bad' : ''}>{d.dueDate ?? '—'}</td>}
-                      <td className="num ltr" data-label={t(refund ? 'pay.owedBack' : 'doc.amountDue')}>{fmt(d.amountDue)}</td>
+                      <td className="num ltr" data-label={t(refund ? 'pay.owedBack' : 'doc.amountDue')}>{fmt(dueOf(d))}</td>
                       <td className="num" data-label={t(refund ? 'pay.refundNow' : 'pay.settle')}>
                         <input inputMode="decimal" className="num ltr amount" style={{ width: 160 }} value={alloc[d.id] ?? ''} aria-label={`${t(refund ? 'pay.refundNow' : 'pay.settle')} ${d.number}`}
                           onChange={(e) => { setManual(true); setAlloc({ ...alloc, [d.id]: e.target.value }); }} placeholder="0.00" />

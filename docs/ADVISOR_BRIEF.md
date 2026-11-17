@@ -113,6 +113,22 @@ console: creates customers and companies, bills them, answers support messages, 
 Technology (for vendor conversations): PostgreSQL database, Node.js (TypeScript) server, React web front end. One
 codebase for all customers; per-customer settings, never copies. Code is in GitHub.
 
+- **Invoices, bills and payments in another currency (2026-11-17)**: an invoice or bill can now be written in USD, EUR
+  or any other currency, and settled by a payment in that same currency. The rule that keeps the books provable is
+  that **the ledger stays in one currency, the company's own**: a foreign document carries the amounts as written
+  (what the customer reads, and what goes on the e-invoice) beside the same amounts converted at its own rate (what
+  posts, and what every report, the aged list, statements and the amount due already read). When a foreign invoice is
+  settled, the receivable is relieved at the rate the INVOICE was booked at, the bank gets what actually arrived, and
+  the difference is a realised exchange gain or loss in account 4951 — the whole of realisation under IAS 21. A
+  payment in another currency must settle in full, so there is never an unmeasured exchange exposure sitting on the
+  books. ZATCA: a foreign invoice is reported in its own currency with the VAT total also given in SAR (BT-111, as
+  BR-53 requires when the accounting currency is stated), and the XML of every riyal invoice is byte-for-byte what it
+  always was, so no stored invoice hash moves. Proven by seeding the demo books with the previous code and with this
+  one and comparing all 151 figures: identical. **Still only in the company's own currency**, on purpose: opening
+  balances, expenses, employee claims, advance invoices, and bank accounts held in another currency. **Not yet done**:
+  restating open foreign receivables and payables at the closing rate at period end (unrealised differences); the
+  month-end revaluation from 0029 covers accounts kept in another currency, not per-invoice balances.
+
 ## 6. Decisions already made (do not reopen without a reason)
 
 - Login decides everything: no client or role switcher in the app.

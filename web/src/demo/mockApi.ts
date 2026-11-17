@@ -12,7 +12,7 @@ import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../../../src/books/chartTemplat
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_SELF, DEMO_SELF_ROLES, DEMO_USERS } from '../../../src/db/demoData.ts';
 import { accessTo, cleanModules, DEFAULT_MODULES, isIndustry, ROLE_MODULES, type AccessLevel, type Industry } from '../../../src/books/modules.ts';
 import {
-  addDays, AGE_BUCKETS, ageBucket, nextOccurrence, type Frequency, documentTotals, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, sideOf,
+  addDays, AGE_BUCKETS, ageBucket, nextOccurrence, type Frequency, convertLine, convertMinor, documentTotals, foreignCurrency, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, rateToScaled, rateToString, sideOf,
   type AgeBucket, type Direction, type DocType, type LineInput, type PricedLine,
 } from '../../../src/books/documents.ts';
 import { autoAllocate, netFromGross, milliToString, quantityToMilli } from '../../../src/books/documents.ts';
@@ -294,12 +294,18 @@ interface MDoc {
   submittedBy?: string | null; decidedBy?: string | null; rejectionReason?: string | null;
   /** Brought in from the client's previous system as an already-open invoice or bill (0056). */
   isOpening?: boolean;
+  /** Written in another currency (0058). `lines` always holds the CONVERTED lines, so every total, every posting
+   *  and amountDue below stay in the company's currency exactly as before; `written` holds the lines as typed. */
+  currency?: string | null; fxRate?: string | null; written?: (PricedLine & { id: string })[];
 }
 interface MPayment {
   id: string; companyId: string; direction: Direction; number: string; contactId: string; date: string; amount: bigint; accountId: string;
-  method: string; reference: string | null; journalEntryId: string; voidedAt: string | null; allocations: { documentId: string; amount: bigint }[]; createdAt: string;
+  method: string; reference: string | null; journalEntryId: string; voidedAt: string | null;
+  allocations: { documentId: string; amount: bigint; fxAmount?: bigint | null }[]; createdAt: string;
   /** Money going back the other way (0055): paid out to a customer, or received back from a supplier. */
   isRefund?: boolean;
+  /** Made in another currency (0058): `amount` is always what reached the bank, in the company's currency. */
+  currency?: string | null; fxRate?: string | null; fxAmount?: bigint | null;
 }
 interface MRecurring {
   id: string; companyId: string; name: string; contactId: string | null; payee: string | null; paidFromAccountId: string; frequency: string;
@@ -320,9 +326,22 @@ function nextNo(companyId: string, seq: string, prefix: string) {
 }
 const sysAccts = (companyId: string) => {
   const a = (code: string) => db.accounts.find((x) => x.companyId === companyId && x.code === code)!.id;
-  return { receivables: a('1100'), payables: a('2000'), outputVat: a('2100'), inputVat: a('1200'), claimsPayable: a('2200') };
+  const opt = (code: string) => db.accounts.find((x) => x.companyId === companyId && x.code === code)?.id;
+  return { receivables: a('1100'), payables: a('2000'), outputVat: a('2100'), inputVat: a('1200'), claimsPayable: a('2200'), fxGainLoss: opt('4951') };
 };
 const docTotals = (d: MDoc) => documentTotals(d.lines);
+/** The totals as written, for a document in another currency (0058). */
+const docFxTotals = (d: MDoc) => (d.currency && d.written ? documentTotals(d.written) : null);
+/** What is still owed in the currency the document is written in: the mirror of amountDue, figure for figure. */
+function fxAmountDue(d: MDoc): bigint {
+  if (!['invoice', 'debit_note', 'bill', 'claim'].includes(d.type) || d.status !== 'issued') return 0n;
+  const own = (x: MDoc) => docFxTotals(x)?.gross ?? docTotals(x).gross;
+  const paid = sdb.payments.filter((p) => !p.voidedAt)
+    .flatMap((p) => p.allocations.map((a) => ({ ...a, sign: p.isRefund ? -1n : 1n })))
+    .filter((a) => a.documentId === d.id).reduce((t, a) => t + a.sign * (a.fxAmount ?? a.amount), 0n);
+  const credited = sdb.docs.filter((c) => c.originalId === d.id && isCredit(c.type) && c.status === 'issued').reduce((t, c) => t + own(c), 0n);
+  return own(d) - paid - credited;
+}
 function amountDue(d: MDoc): bigint {
   if (!['invoice', 'debit_note', 'bill', 'claim'].includes(d.type) || d.status !== 'issued') return 0n;   // expenses are paid at once
   // An ordinary allocation reduces what is due; a refund allocation adds it back (0055).
@@ -344,11 +363,15 @@ function stateOfDoc(d: MDoc): string {
 function docRow(d: MDoc) {
   const c = sdb.contacts.find((x) => x.id === d.contactId);
   const t = docTotals(d);
+  const fx = docFxTotals(d);
   const pa = db.accounts.find((a) => a.id === d.paidFromAccountId);
   return { id: d.id, companyId: d.companyId, type: d.type, status: d.status, state: stateOfDoc(d), number: d.number, contactId: d.contactId, contactName: c?.name ?? d.payee ?? '',
     contactNameAr: c?.nameAr ?? null, payee: d.payee ?? null, paidFromAccountId: d.paidFromAccountId ?? null, paidFromName: pa?.name ?? null, paidFromNameAr: pa?.nameAr ?? null,
     recurringId: d.recurringId ?? null, voidedAt: d.voidedAt ?? null, issueDate: d.issueDate, dueDate: d.dueDate, reference: d.reference, notes: d.notes, originalId: d.originalId,
     journalEntryId: d.journalEntryId, netTotal: s(t.net), vatTotal: s(t.vat), grossTotal: s(t.gross), amountDue: s(amountDue(d)), createdAt: d.createdAt,
+    currency: d.currency ?? null, fxRate: d.fxRate ?? null,
+    fxNetTotal: fx ? s(fx.net) : null, fxVatTotal: fx ? s(fx.vat) : null, fxGrossTotal: fx ? s(fx.gross) : null,
+    fxAmountDue: d.currency ? s(fxAmountDue(d)) : null,
     submittedBy: d.submittedBy ?? null, submittedByName: db.users.find((u) => u.id === d.submittedBy)?.name ?? null,
     decidedByName: db.users.find((u) => u.id === d.decidedBy)?.name ?? null, rejectionReason: d.rejectionReason ?? null };
 }
@@ -406,8 +429,21 @@ function saveDraftM(companyId: string, b: Record<string, unknown>, id?: string):
   if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) fail(400, 'Enter the date.', 'err.date');
   const dueDate = b.dueDate ? String(b.dueDate) : null;
   if (dueDate && dueDate < issueDate) fail(400, 'The due date cannot be before the document date.', 'err.dueDate');
-  const lines = priceLinesM(companyId, sideOf(type), b.lines as LineInput[]);
+  const written = priceLinesM(companyId, sideOf(type), b.lines as LineInput[]);
+  // Another currency (0058): the prices were typed in that currency, so the lines that post are the converted ones.
+  const company = db.companies.find((c) => c.id === companyId)!;
+  let currency: string | null = null;
+  try { currency = foreignCurrency(b.currency as string, company.currency); }
+  catch { fail(400, 'A currency is three letters, such as USD or EUR.', 'err.currencyCode'); }
+  if (currency && (isExpense || type === 'claim')) fail(400, 'An expense or an employee claim is recorded in the company\u2019s own currency.', 'err.fxNotHere');
+  let rateScaled: bigint | null = null;
+  if (currency) {
+    try { rateScaled = rateToScaled(String(b.fxRate ?? '')); }
+    catch { fail(400, 'Enter the exchange rate for this currency.', 'err.fxRate'); }
+  }
+  const lines = rateScaled ? written.map((l) => ({ ...convertLine(l, rateScaled!, company.vatRate), id: l.id })) : written;
   const head = { contactId: contact?.id ?? null, issueDate, dueDate: isExpense ? null : dueDate, reference: (b.reference as string)?.trim() || null, notes: (b.notes as string)?.trim() || null, lines,
+    currency, fxRate: rateScaled ? rateToString(rateScaled) : null, written: currency ? written : undefined,
     payee: isExpense ? (b.payee as string)?.trim() || null : null, paidFromAccountId: isExpense ? (b.paidFromAccountId as string) || null : null };
   if (existing) { Object.assign(existing, { ...head, dueDate: type === 'claim' ? null : head.dueDate }); return existing.id; }
   const nid = uid();
@@ -559,32 +595,65 @@ function payM(companyId: string, b: Record<string, unknown>) {
   if (!contact) fail(400, 'Choose the customer or supplier.', 'err.contact');
   const bank = db.accounts.find((a) => a.id === b.accountId && a.companyId === companyId && a.isBank);
   if (!bank) fail(400, 'Choose the bank or cash account.', 'err.bankAccount');
-  let amount: bigint; let allocs: { documentId: string; amount: bigint }[];
+  let amount: bigint; let allocs: { documentId: string; amount: bigint; fxAmount?: bigint | null }[];
   try {
     amount = toMinor(String(b.amount ?? '').replace(/,/g, ''));
     allocs = ((b.allocations as { documentId: string; amount: string }[]) ?? []).map((a) => ({ documentId: a.documentId, amount: toMinor(String(a.amount)) }));
   } catch { return fail(400, 'Amounts must be numbers with at most 2 decimals.', 'err.amountFormat'); }
   if (amount <= 0n) fail(400, 'Enter the amount.', 'err.amount');
   if (allocs.reduce((x, a) => x + a.amount, 0n) > amount) fail(400, 'The amounts settled are more than the payment.', 'err.overAllocated');
-  if (direction === 'made' && !isRefund) aprPaymentM(companyId, contact!.id, amount, b.approvalRequestId as string | undefined);
+  // Another currency (0058): the amount and the settlements above are read in THAT currency. The control account
+  // gives up each document's share AT THE DOCUMENT'S OWN RATE, the bank gets what actually arrived, and the gap is
+  // the realised exchange gain or loss.
+  const company = db.companies.find((c) => c.id === companyId)!;
+  let currency: string | null = null;
+  try { currency = foreignCurrency(b.currency as string, company.currency); }
+  catch { fail(400, 'A currency is three letters, such as USD or EUR.', 'err.currencyCode'); }
+  let payRate: bigint | null = null;
+  if (currency) {
+    try { payRate = rateToScaled(String(b.fxRate ?? '')); }
+    catch { fail(400, 'Enter the exchange rate for this currency.', 'err.fxRate'); }
+  }
+  const sys = sysAccts(companyId);
+  const fxAmount = currency ? amount : null;
+  const cash = payRate ? convertMinor(amount, payRate) : amount;
+  if (currency && allocs.reduce((x, a) => x + a.amount, 0n) !== amount) {
+    fail(400, `A payment in ${currency} is settled in full against the invoices it pays.`, 'err.fxAllocateAll');
+  }
+  if (currency && !sys.fxGainLoss) fail(400, "This client's chart of accounts has no account 4951.", 'err.chart');
+  if (direction === 'made' && !isRefund) aprPaymentM(companyId, contact!.id, cash, b.approvalRequestId as string | undefined);
+  let settled = 0n;
   for (const a of allocs) {
     const d = sdb.docs.find((x) => x.id === a.documentId);
     if (!d || d.contactId !== contact!.id || d.status !== 'issued' || !(salesSide ? ['invoice', 'debit_note'] : contact!.isEmployee ? ['claim'] : ['bill']).includes(d.type))
       fail(400, 'A payment can only settle issued invoices (or bills) of the same customer (or supplier).', 'err.contact');
+    if ((d!.currency ?? null) !== currency) {
+      fail(400, `This payment is in ${currency ?? company.currency}: settle it against invoices written in the same currency.`, 'err.fxMismatch');
+    }
     // A refund may only pay back money we are holding, which is a negative amount due.
-    if (a.amount <= 0n || a.amount > (isRefund ? -amountDue(d!) : amountDue(d!))) {
+    const owed = currency ? (isRefund ? -fxAmountDue(d!) : fxAmountDue(d!)) : (isRefund ? -amountDue(d!) : amountDue(d!));
+    if (a.amount <= 0n || a.amount > owed) {
       fail(400, isRefund ? 'This is more than is owed back on the document.' : 'This is more than is due on the invoice.', 'err.overDue');
+    }
+    if (currency) {
+      // Settling the last of what is owed hands over exactly what is left, so the document closes on both sides.
+      const due = isRefund ? -amountDue(d!) : amountDue(d!);
+      const mine = a.amount === owed ? due : convertMinor(a.amount, rateToScaled(d!.fxRate!));
+      a.fxAmount = a.amount;
+      a.amount = isRefund ? -mine : mine;
+      settled += a.amount;
     }
   }
   const date = String(b.date ?? '');
   const id = uid();
   const seq = direction === 'received' ? 'receipt' : 'payment';
   const number = nextNo(companyId, seq, numberPrefix(seq, ''));
-  const entry = postingForPayment(direction, amount, bank!.id, sysAccts(companyId), !isRefund && contact!.isEmployee,
-    salesSide ? 'sales' : 'purchases');
+  const entry = postingForPayment(direction, cash, bank!.id, sys, !isRefund && contact!.isEmployee,
+    salesSide ? 'sales' : 'purchases', currency ? { settled, accountId: sys.fxGainLoss! } : undefined);
   const je = post(session!, companyId, date, `${number} · ${contact!.name}`, entry.map((l) => ({ accountId: l.accountId, costCentreId: null, debit: toMinor(l.debit ?? '0'), credit: toMinor(l.credit ?? '0') })));
-  sdb.payments.push({ id, companyId, direction, number, contactId: contact!.id, date, amount, accountId: bank!.id, method: String(b.method ?? 'bank_transfer'),
-    reference: (b.reference as string)?.trim() || null, journalEntryId: je, voidedAt: null, allocations: allocs, createdAt: new Date().toISOString(), isRefund });
+  sdb.payments.push({ id, companyId, direction, number, contactId: contact!.id, date, amount: cash, accountId: bank!.id, method: String(b.method ?? 'bank_transfer'),
+    reference: (b.reference as string)?.trim() || null, journalEntryId: je, voidedAt: null, allocations: allocs, createdAt: new Date().toISOString(), isRefund,
+    currency, fxRate: payRate ? rateToString(payRate) : null, fxAmount });
   if (direction === 'made' && !isRefund && b.approvalRequestId) aprPaidM(String(b.approvalRequestId), id);
   return id;
 }
@@ -594,6 +663,7 @@ function payRow(p: MPayment) {
   return { id: p.id, direction: p.direction, number: p.number, contactId: p.contactId, contactName: sdb.contacts.find((c) => c.id === p.contactId)!.name,
     date: p.date, amount: s(p.amount), accountId: a.id, accountName: a.name, accountNameAr: a.nameAr, method: p.method, reference: p.reference,
     voidedAt: p.voidedAt, unallocated: s(p.amount - p.allocations.reduce((x, y) => x + y.amount, 0n)), createdAt: p.createdAt,
+    currency: p.currency ?? null, fxRate: p.fxRate ?? null, fxAmount: p.fxAmount == null ? null : s(p.fxAmount),
     isRefund: Boolean(p.isRefund) };
 }
 function contactRow(c: MContact) {
@@ -1809,8 +1879,12 @@ const routes: [string, RegExp, Handler][] = [
     return { ...docRow(d), contact: c, seller: { ...sellerOf(co), originalNumber: sdb.docs.find((o) => o.id === d.originalId)?.number ?? null }, issuedAt: d.journalEntryId ? db.entries.find((e) => e.id === d.journalEntryId)?.createdAt ?? null : null,
       lines: d.lines.map((l, i) => { const a = db.accounts.find((x) => x.id === l.accountId)!; const cc = db.costCentres.find((x) => x.id === l.costCentreId);
         return { id: l.id, lineNo: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, accountId: a.id, accountCode: a.code, accountName: a.name, accountNameAr: a.nameAr,
-          costCentreId: l.costCentreId ?? null, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null, vatCode: l.vatCode, vatRate: l.vatRate, net: s(l.net), vat: s(l.vat) }; }),
-      payments: sdb.payments.filter((p) => p.allocations.some((a) => a.documentId === d.id)).map((p) => ({ id: p.id, number: p.number, date: p.date, amount: s(p.allocations.find((a) => a.documentId === d.id)!.amount), method: p.method, voidedAt: p.voidedAt })),
+          costCentreId: l.costCentreId ?? null, costCentre: cc?.name ?? null, costCentreAr: cc?.nameAr ?? null, vatCode: l.vatCode, vatRate: l.vatRate, net: s(l.net), vat: s(l.vat),
+          fxUnitPrice: d.written?.[i]?.unitPrice ?? null, fxNet: d.written?.[i] ? s(d.written[i]!.net) : null, fxVat: d.written?.[i] ? s(d.written[i]!.vat) : null }; }),
+      payments: sdb.payments.filter((p) => p.allocations.some((a) => a.documentId === d.id)).map((p) => {
+        const a = p.allocations.find((x) => x.documentId === d.id)!;
+        return { id: p.id, number: p.number, date: p.date, amount: s(a.amount), fxAmount: a.fxAmount == null ? null : s(a.fxAmount), currency: p.currency ?? null, method: p.method, voidedAt: p.voidedAt };
+      }),
       related: sdb.docs.filter((x) => (x.originalId === d.id || x.id === d.originalId) && x.id !== d.id).map((x) => ({ id: x.id, type: x.type, status: x.status, number: x.number, issueDate: x.issueDate, grossTotal: s(docTotals(x).gross) })),
       counter: (() => { const k = counterLinks.find((x) => x.documentId === d.id); const n = k && odb.notes.find((x) => x.id === k.noteId); return n ? { id: n.id, type: n.type, number: n.number } : null; })() };
   }],
@@ -1971,7 +2045,9 @@ const routes: [string, RegExp, Handler][] = [
   ['GET', /^\/api\/payments\/([\w-]+)$/, (m) => {
     const p = payOf(m[1]!);
     return { ...payRow(p), allocations: p.allocations.map((a) => { const d = sdb.docs.find((x) => x.id === a.documentId)!;
-      return { documentId: d.id, number: d.number, type: d.type, issueDate: d.issueDate, grossTotal: s(docTotals(d).gross), amount: s(a.amount) }; }) };
+      return { documentId: d.id, number: d.number, type: d.type, issueDate: d.issueDate, grossTotal: s(docTotals(d).gross),
+        currency: d.currency ?? null, fxGrossTotal: docFxTotals(d) ? s(docFxTotals(d)!.gross) : null,
+        amount: s(a.amount), fxAmount: a.fxAmount == null ? null : s(a.fxAmount) }; }) };
   }],
   ['POST', /^\/api\/payments\/([\w-]+)\/void$/, (m, b) => {
     const p = payOf(m[1]!); canPostIn(p.companyId);
@@ -1982,7 +2058,9 @@ const routes: [string, RegExp, Handler][] = [
     const id = inCo(m[1]!); const emp = sdb.contacts.find((c) => c.id === q.get('contactId'))?.isEmployee; const type = q.get('direction') === 'made' ? (emp ? 'claim' : 'bill') : 'invoice';
     return sdb.docs.filter((d) => d.companyId === id && d.contactId === q.get('contactId') && d.type === type && d.status === 'issued' && amountDue(d) > 0n)
       .sort((a, b) => (a.dueDate ?? a.issueDate).localeCompare(b.dueDate ?? b.issueDate))
-      .map((d) => ({ id: d.id, number: d.number, issueDate: d.issueDate, dueDate: d.dueDate, grossTotal: s(docTotals(d).gross), amountDue: s(amountDue(d)) }));
+      .map((d) => ({ id: d.id, number: d.number, issueDate: d.issueDate, dueDate: d.dueDate, grossTotal: s(docTotals(d).gross), amountDue: s(amountDue(d)),
+        currency: d.currency ?? null, fxRate: d.fxRate ?? null, fxGrossTotal: docFxTotals(d) ? s(docFxTotals(d)!.gross) : null,
+        fxAmountDue: d.currency ? s(fxAmountDue(d)) : null }));
   }],
   // What we are holding for a contact and can pay back: a negative amount due, shown as a positive figure (0055).
   ['GET', /^\/api\/companies\/([\w-]+)\/refundable$/, (m, _b, q) => {
@@ -1990,7 +2068,8 @@ const routes: [string, RegExp, Handler][] = [
     return sdb.docs.filter((d) => d.companyId === id && d.contactId === q.get('contactId') && d.status === 'issued'
       && ['invoice', 'debit_note', 'bill', 'claim'].includes(d.type) && amountDue(d) < 0n)
       .sort((a, b) => a.issueDate.localeCompare(b.issueDate))
-      .map((d) => ({ id: d.id, number: d.number, type: d.type, issueDate: d.issueDate, amountDue: s(-amountDue(d)) }));
+      .map((d) => ({ id: d.id, number: d.number, type: d.type, issueDate: d.issueDate, amountDue: s(-amountDue(d)),
+        currency: d.currency ?? null, fxRate: d.fxRate ?? null, fxAmountDue: d.currency ? s(-fxAmountDue(d)) : null }));
   }],
   ['GET', /^\/api\/companies\/([\w-]+)\/overview$/, (m, _b, q) => {
     const id = inCo(m[1]!); const sales = q.get('side') !== 'purchases'; const main = sales ? 'invoice' : 'bill'; const credit = sales ? 'credit_note' : 'supplier_credit';
@@ -4030,14 +4109,16 @@ function einvData(d: MDoc): EInvoiceData {
   const co = db.companies.find((c) => c.id === d.companyId)!; const st = einvSettings(co.id);
   const c = sdb.contacts.find((x) => x.id === d.contactId);
   const t = docTotals(d);
+  // An invoice in another currency is reported AS WRITTEN; the VAT is still accounted for in the company's own.
+  const fxT = docFxTotals(d) ?? t;
   const buyer: EParty | null = !c || (!c.vatNumber && /walk-?in/i.test(c.name)) ? null : { name: c.name, vatNumber: c.vatNumber, crNumber: c.crNumber, street: c.address, building: c.buildingNumber,
     district: c.district, city: c.city, postalCode: c.postalCode, country: c.country ?? co.country, email: c.email };
   const orig = d.originalId ? sdb.docs.find((x) => x.id === d.originalId) : null;
   return { number: d.number ?? '', uuid: uid(), type: d.type === 'credit_note' ? 'credit_note' : d.type === 'debit_note' ? 'debit_note' : 'invoice', issueDate: d.issueDate, issueTime: new Date().toISOString().slice(11, 19), supplyDate: d.issueDate,
-    dueDate: d.dueDate, currency: co.currency, buyer,
+    dueDate: d.dueDate, currency: d.currency ?? co.currency, vatTotalInTaxCurrency: d.currency ? s(t.vat) : null, buyer,
     seller: { name: co.name, vatNumber: co.vatNumber, crNumber: co.crNumber, street: st.street ?? co.fields.address ?? '', building: st.buildingNumber, district: st.district, city: co.city, postalCode: st.postalCode, country: co.country },
-    lines: d.lines.map((l, i) => ({ no: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, net: s(l.net), vat: s(l.vat), vatCode: l.vatCode, vatRate: l.vatRate })),
-    netTotal: s(t.net), vatTotal: s(t.vat), grossTotal: s(t.gross), original: orig ? { number: orig.number ?? '', issueDate: orig.issueDate } : null,
+    lines: (d.written ?? d.lines).map((l, i) => ({ no: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, net: s(l.net), vat: s(l.vat), vatCode: l.vatCode, vatRate: l.vatRate })),
+    netTotal: s(fxT.net), vatTotal: s(fxT.vat), grossTotal: s(fxT.gross), original: orig ? { number: orig.number ?? '', issueDate: orig.issueDate } : null,
     reason: d.type === 'credit_note' ? (d.notes || 'Correction of the invoice') : null, paymentMeans: '30',
     exemption: { zero: { code: st.zeroReasonCode, text: st.zeroReason }, exempt: { code: st.exemptReasonCode, text: st.exemptReason }, out_of_scope: { code: 'VATEX-SA-OOS', text: st.oosReason } } };
 }

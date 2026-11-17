@@ -17,17 +17,23 @@ export interface DocRow {
   id: string; type: DocType; status: string; state: string; number: string | null; einvoiceFlag?: 'not_cleared' | 'rejected' | null; contactId: string; contactName: string; contactNameAr: string | null;
   issueDate: string; dueDate: string | null; reference: string | null; notes: string | null; originalId: string | null; journalEntryId: string | null;
   netTotal: string; vatTotal: string; grossTotal: string; amountDue: string;
+  /** Written in another currency (0058): the code, the rate, and the totals as written. The totals above are always
+   *  in the company's own currency, which is what the ledger and every report hold. */
+  currency?: string | null; fxRate?: string | null; fxNetTotal?: string | null; fxVatTotal?: string | null;
+  fxGrossTotal?: string | null; fxAmountDue?: string | null;
   payee?: string | null; paidFromAccountId?: string | null; paidFromName?: string | null; paidFromNameAr?: string | null; recurringId?: string | null; voidedAt?: string | null;
 }
 export interface DocLine {
   id: string; lineNo: number; description: string; quantity: string; unitPrice: string; accountId: string; accountCode: string; accountName: string;
   accountNameAr: string | null; costCentreId: string | null; costCentre: string | null; costCentreAr: string | null; vatCode: string; vatRate: string; net: string; vat: string;
+  /** The price and amounts as written, when the document is in another currency (0058). */
+  fxUnitPrice?: string | null; fxNet?: string | null; fxVat?: string | null;
 }
 export interface DocDetail extends DocRow {
   lines: DocLine[];
   /** An advance-payment invoice (ZATCA 386), and the advances deducted on a final invoice (0046). */
   isAdvance?: boolean; advances?: { advanceId: string; number: string; issueDate: string; total: string }[];
-  payments: { id: string; number: string; date: string; amount: string; method: string; voidedAt: string | null }[];
+  payments: { id: string; number: string; date: string; amount: string; fxAmount?: string | null; currency?: string | null; method: string; voidedAt: string | null }[];
   related: { id: string; type: DocType; status: string; number: string | null; issueDate: string; grossTotal: string }[];
   /** The goods note made with it at the warehouse counter. */
   counter?: { id: string; type: 'grn' | 'gdn'; number: string } | null;
@@ -37,6 +43,8 @@ export interface DocDetail extends DocRow {
 export interface PaymentRow {
   id: string; direction: Direction; number: string; contactId: string; contactName: string; date: string; amount: string; accountId: string;
   accountName: string; accountNameAr: string | null; method: string; reference: string | null; voidedAt: string | null; unallocated: string;
+  /** Made in another currency (0058): amount above is always what reached the bank, in the company's currency. */
+  currency?: string | null; fxRate?: string | null; fxAmount?: string | null; isRefund?: boolean;
 }
 
 export const sideOf = (t: DocType): Side => (t === 'quotation' || t === 'invoice' || t === 'credit_note' || t === 'debit_note' ? 'sales' : 'purchases');

@@ -10,7 +10,8 @@ import { today } from '../router.ts';
 import { ConfirmBar, ErrorNote, Loading, errorText } from '../ui.tsx';
 import { isLocked, lockedUpTo } from '../books/Workspace.tsx';
 import { moduleForType, pageForType } from '../books/nav.ts';
-import { documentTotals, priceLine, type VatCode } from '../../../src/books/documents.ts';
+import { convertLine, documentTotals, priceLine, rateToScaled, rateToString, type VatCode } from '../../../src/books/documents.ts';
+import { CURRENCIES } from '../../../src/books/fx.ts';
 import { AttachmentsCard, PdfButton, printDocument } from '../print/Attachments.tsx';
 import { docTitle } from '../print/Pdf.tsx';
 import { StateBadge, bankAccounts, lineAccounts, sideOf, useGo, type Contact, type DocDetail, type DocRow, type DocType } from './common.tsx';
@@ -140,7 +141,7 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
   const registered = books.company.vatStatus !== 'unregistered';
   const blankLine = (): EditLine => ({ description: '', quantity: '1', unitPrice: '', accountId: defaultAccount, costCentreId: '', vatCode: registered ? 'standard' : 'out_of_scope' });
 
-  const [form, setForm] = useState<{ contactId: string; issueDate: string; dueDate: string; dueTouched: boolean; reference: string; notes: string; lines: EditLine[]; payee: string; paidFrom: string }>();
+  const [form, setForm] = useState<{ contactId: string; issueDate: string; dueDate: string; dueTouched: boolean; reference: string; notes: string; lines: EditLine[]; payee: string; paidFrom: string; currency: string; fxRate: string; rateTouched: boolean }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -157,10 +158,13 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
     setForm(d ? {
       contactId, issueDate: d.issueDate, dueDate: d.dueDate ?? '', dueTouched: true, reference: d.reference ?? '', notes: d.notes ?? '',
       payee: d.payee ?? '', paidFrom: d.paidFromAccountId ?? banks[0]?.id ?? '',
-      lines: d.lines.map((l) => ({ description: l.description, quantity: l.quantity.replace(/\.?0+$/, ''), unitPrice: l.unitPrice, accountId: l.accountId, costCentreId: l.costCentreId ?? '', vatCode: l.vatCode as VatCode })),
+      currency: d.currency ?? '', fxRate: d.fxRate ?? '', rateTouched: Boolean(d.fxRate),
+      // A draft in another currency shows the prices as they were typed, in that currency (0058).
+      lines: d.lines.map((l) => ({ description: l.description, quantity: l.quantity.replace(/\.?0+$/, ''), unitPrice: d.currency ? l.fxUnitPrice ?? l.unitPrice : l.unitPrice, accountId: l.accountId, costCentreId: l.costCentreId ?? '', vatCode: l.vatCode as VatCode })),
     } : {
       contactId, issueDate: today(), dueDate: hasDue ? addDays(today(), contactId ? termsFor(contactId) : books.company.paymentTermsDays ?? 30) : '',
       dueTouched: false, reference: '', notes: '', lines: [blankLine()], payee: '', paidFrom: banks[0]?.id ?? '',
+      currency: '', fxRate: '', rateTouched: false,
     });
   }
 
@@ -172,11 +176,26 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
   }), [form, books.company.vatRate]);
   const totals = documentTotals(priced.filter((x) => x !== null));
 
+  // Another currency (0058). The prices above are read in the chosen currency, so the company-currency totals that
+  // will post to the ledger are worked out the same way the server does it: the rate on each unit price, then the
+  // ordinary line arithmetic. Showing both means nobody issues an invoice without seeing what it books.
+  const canFx = !isExpense && !isClaim;
+  const docCur = canFx ? form?.currency ?? '' : '';
+  const rateOk = (() => { try { return docCur ? rateToScaled(form!.fxRate) : null; } catch { return null; } })();
+  const suggested = useApi<{ rate: { rate: string; rateDate: string; source: string } | null }>(
+    docCur ? `/api/companies/${books.company.id}/fx/rate?currency=${docCur}&date=${form?.issueDate ?? today()}` : null);
+  const converted = useMemo(() => (rateOk
+    ? documentTotals(priced.filter((x) => x !== null).map((l) => convertLine(l, rateOk, books.company.vatRate)))
+    : null), [priced, rateOk, books.company.vatRate]);
+
   if (id && existing.error) return <ErrorNote error={existing.error} onRetry={existing.reload} />;
   if (!form) return <Loading />;
   if (existing.data && existing.data.status !== 'draft') return <DocView books={books} id={id!} />;
 
   const set = (patch: Partial<typeof form>) => setForm({ ...form, ...patch });
+  // Offer the rate the daily feed has, so the usual case needs no typing. Only until the person touches the field:
+  // once they have, it is theirs, and clearing it to retype must not be undone under their hands.
+  if (docCur && !form.rateTouched && !form.fxRate && suggested.data?.rate) setForm({ ...form, fxRate: suggested.data.rate.rate });
   const setLine = (i: number, patch: Partial<EditLine>) => set({ lines: form.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) });
   const setContact = (contactId: string) => {
     // A claim takes the employee's usual cost centre on lines that have none yet.
@@ -194,6 +213,7 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
   } else if (!form.contactId) problems.push(t(side === 'sales' ? 'doc.pickCustomer' : isClaim ? 'claim.pickEmployee' : 'doc.pickSupplier'));
   if (!form.issueDate) problems.push(t('err.date'));
   if (form.dueDate && form.issueDate && form.dueDate < form.issueDate) problems.push(t('err.dueDate'));
+  if (docCur && !rateOk) problems.push(t('err.fxRate'));
   if (form.lines.length === 0) problems.push(t('err.noLines'));
   form.lines.forEach((l, i) => {
     const n = i + 1;
@@ -209,6 +229,7 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
   const body = () => ({
     type, contactId: form.contactId || null, issueDate: form.issueDate, dueDate: form.dueDate || null, reference: form.reference, notes: form.notes,
     ...(isExpense ? { payee: form.contactId ? null : form.payee, paidFromAccountId: form.paidFrom } : {}),
+    ...(canFx ? { currency: form.currency || null, fxRate: rateOk ? rateToString(rateOk) : null } : {}),
     lines: form.lines.map((l) => ({ ...l, unitPrice: normalise(l.unitPrice || '0'), costCentreId: l.costCentreId || null })),
   });
   const openRequest = request.data && ['pending', 'approved'].includes(request.data.status);
@@ -291,6 +312,24 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
           <label className="f">{t(side === 'sales' ? 'doc.referenceSales' : isExpense ? 'exp.receiptNo' : isClaim ? 'claim.receipts' : 'doc.referencePurchases')}
             <input id="doc-ref" value={form.reference} onChange={(e) => set({ reference: e.target.value })} dir="ltr" disabled={isCreditDoc} />
           </label>
+          {canFx && (
+            <label className="f">{t('doc.currency')}
+              <select id="doc-currency" value={form.currency} onChange={(e) => set({ currency: e.target.value, fxRate: '', rateTouched: false })} disabled={isCreditDoc}>
+                <option value="">{books.company.currency} · {t('doc.ownCurrency')}</option>
+                {CURRENCIES.filter((c) => c.code !== books.company.currency).map((c) => (
+                  <option key={c.code} value={c.code}>{c.code} · {local(c.en, c.ar)}</option>))}
+              </select>
+            </label>
+          )}
+          {canFx && docCur && (
+            <label className="f">{t('doc.fxRate', { cur: docCur, base: books.company.currency })}
+              <input id="doc-fx-rate" inputMode="decimal" className="num ltr" value={form.fxRate} disabled={isCreditDoc}
+                onChange={(e) => set({ fxRate: e.target.value, rateTouched: true })} placeholder="0.00000000" />
+              {suggested.data?.rate && (
+                <span className="mut small">{t('doc.fxRateFeed', { rate: suggested.data.rate.rate, date: suggested.data.rate.rateDate })}</span>
+              )}
+            </label>
+          )}
         </div>
         {!isCreditDoc && books.canPost && (
           <button type="button" className="link small" onClick={() => (isClaim ? go('HRM', 'employees', 'new') : go(m, side === 'sales' ? 'customers' : 'suppliers', 'new'))}>
@@ -339,7 +378,8 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
           </table>
         </div>
         <button className="b" style={{ marginTop: 8 }} onClick={() => set({ lines: [...form.lines, blankLine()] })}>{t('journal.addLine')}</button>
-        <Totals net={fromMinor(totals.net)} vat={fromMinor(totals.vat)} gross={fromMinor(totals.gross)} cur={cur} />
+        <Totals net={fromMinor(totals.net)} vat={fromMinor(totals.vat)} gross={fromMinor(totals.gross)} cur={docCur || cur}
+          converted={converted ? { gross: fromMinor(converted.gross), cur } : undefined} />
         <label className="f" style={{ marginTop: 10 }}>{t('doc.notes')}<textarea id="doc-notes" rows={2} value={form.notes} onChange={(e) => set({ notes: e.target.value })} placeholder={t('doc.notesHint')} /></label>
       </div>
 
@@ -365,7 +405,7 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
   );
 }
 
-function Totals({ net, vat, gross, cur, due, advances }: { net: string; vat: string; gross: string; cur: string; due?: string; advances?: { number: string; total: string }[] }) {
+function Totals({ net, vat, gross, cur, due, advances, converted }: { net: string; vat: string; gross: string; cur: string; due?: string; advances?: { number: string; total: string }[]; converted?: { gross: string; cur: string } }) {
   const { t } = useI18n();
   return (
     <table className="totals">
@@ -375,6 +415,9 @@ function Totals({ net, vat, gross, cur, due, advances }: { net: string; vat: str
         <tr className="total"><td>{t('doc.total')} ({cur})</td><td className="num ltr">{fmt(gross)}</td></tr>
         {(advances ?? []).map((a) => <tr key={a.number}><td>{t('doc.lessAdvance', { n: a.number })}</td><td className="num ltr">−{fmt(a.total)}</td></tr>)}
         {due !== undefined && <tr className="total"><td>{t('doc.amountDue')}</td><td className="num ltr">{fmt(due)}</td></tr>}
+        {converted && (
+          <tr id="doc-converted"><td className="mut">{t('doc.booksAs', { cur: converted.cur })}</td><td className="num ltr mut">{fmt(converted.gross)}</td></tr>
+        )}
       </tbody>
     </table>
   );
@@ -563,15 +606,20 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
                 <tr key={l.id}>
                   <td>{l.description}<div className="mut small">{l.accountCode} {local(l.accountName, l.accountNameAr)}{l.costCentre ? ` · ${local(l.costCentre, l.costCentreAr)}` : ''}</div></td>
                   <td className="num ltr" data-label={t('doc.qty')}>{l.quantity.replace(/\.?0+$/, '')}</td>
-                  <td className="num ltr" data-label={t('doc.price')}>{fmt(l.unitPrice)}</td>
-                  <td className="num ltr" data-label={t('doc.vat')}>{fmt(l.vat)} <span className="mut small">({l.vatCode === 'standard' ? `${Number(l.vatRate)}%` : t(`vat.${l.vatCode}` as Key)})</span></td>
-                  <td className="num ltr" data-label={t('doc.amount')}>{fmt(l.net)}</td>
+                  <td className="num ltr" data-label={t('doc.price')}>{fmt(x.currency ? l.fxUnitPrice ?? l.unitPrice : l.unitPrice)}</td>
+                  <td className="num ltr" data-label={t('doc.vat')}>{fmt(x.currency ? l.fxVat ?? l.vat : l.vat)} <span className="mut small">({l.vatCode === 'standard' ? `${Number(l.vatRate)}%` : t(`vat.${l.vatCode}` as Key)})</span></td>
+                  <td className="num ltr" data-label={t('doc.amount')}>{fmt(x.currency ? l.fxNet ?? l.net : l.net)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <Totals net={x.netTotal} vat={x.vatTotal} gross={x.grossTotal} cur={cur} due={due || (isClaim && x.status === 'issued') ? x.amountDue : undefined} advances={x.advances} />
+        {/* A document written in another currency is SHOWN as written; the converted total says what it books (0058). */}
+        <Totals net={x.currency ? x.fxNetTotal ?? x.netTotal : x.netTotal} vat={x.currency ? x.fxVatTotal ?? x.vatTotal : x.vatTotal}
+          gross={x.currency ? x.fxGrossTotal ?? x.grossTotal : x.grossTotal} cur={x.currency ?? cur}
+          due={due || (isClaim && x.status === 'issued') ? (x.currency ? x.fxAmountDue ?? x.amountDue : x.amountDue) : undefined}
+          advances={x.advances} converted={x.currency ? { gross: x.grossTotal, cur } : undefined} />
+        {x.currency && <p className="mut small" id="doc-fx-note">{t('doc.fxNote', { cur: x.currency, rate: x.fxRate ?? '', base: cur, total: fmt(x.grossTotal) })}</p>}
         {x.notes && <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{x.notes}</p>}
         {x.status === 'issued' && <p className="mut small">{t('doc.postedNote')}</p>}
         {x.type === 'invoice' && x.status === 'issued' && books.company.country === 'OM' && <p className="mut small">{t('doc.einvoiceLater', { einv: t(`einv.${books.company.country}`) })}</p>}

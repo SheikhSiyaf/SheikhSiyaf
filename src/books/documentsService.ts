@@ -8,8 +8,9 @@ import { fromMinor, toMinor } from '../money.js';
 import { HttpError } from '../api/errors.js';
 import { SYSTEM_ACCOUNTS } from './chartTemplate.js';
 import {
-  addDays, ageBucket, AGE_BUCKETS, documentTotals, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment,
-  priceLine, sideOf, VAT_CODES, PAYMENT_METHODS, type AgeBucket, type Direction, type DocType, type LineInput, type PricedLine,
+  addDays, ageBucket, AGE_BUCKETS, convertLine, convertMinor, documentTotals, foreignCurrency, formatNumber, isCredit,
+  numberPrefix, postingFor, postingForPayment, priceLine, rateToScaled, rateToString, sideOf, VAT_CODES, PAYMENT_METHODS,
+  type AgeBucket, type Direction, type DocType, type LineInput, type PricedLine,
 } from './documents.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
@@ -19,7 +20,7 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 async function companyInfo(db: Db, companyId: string) {
   const { rows } = await db.query(
-    `SELECT id, vat_rate::text AS "vatRate", invoice_prefix AS "invoicePrefix", payment_terms_days AS "paymentTermsDays"
+    `SELECT id, currency, vat_rate::text AS "vatRate", invoice_prefix AS "invoicePrefix", payment_terms_days AS "paymentTermsDays"
      FROM companies WHERE id = $1`, [companyId]);
   return rows[0] ?? notFound();
 }
@@ -32,6 +33,8 @@ export async function systemAccounts(db: Db, companyId: string) {
     receivables: need(SYSTEM_ACCOUNTS.receivables), payables: need(SYSTEM_ACCOUNTS.payables),
     outputVat: need(SYSTEM_ACCOUNTS.outputVat), inputVat: need(SYSTEM_ACCOUNTS.inputVat),
     claimsPayable: byCode.get(SYSTEM_ACCOUNTS.claimsPayable) as string | undefined,
+    // Only a payment in another currency needs it, so it is looked up but not demanded here (0058).
+    fxGainLoss: byCode.get(SYSTEM_ACCOUNTS.realisedFx) as string | undefined,
   };
 }
 
@@ -123,6 +126,29 @@ export interface DocumentInput {
   originalId?: string | null; lines?: LineInput[];
   /** Expenses only: who was paid when there is no supplier record, and the bank or cash account it came from. */
   payee?: string | null; paidFromAccountId?: string | null; recurringId?: string | null;
+  /** Written in another currency (0058): the three-letter code and how much of the company's currency one unit of
+   *  it is worth. Line unit prices are then read in that currency. Empty, or the company's own code, means an
+   *  ordinary document and nothing changes. */
+  currency?: string | null; fxRate?: string | null;
+}
+
+/** The currency a document or payment is written in, or null for the company's own (0058). */
+function currencyOf(given: string | null | undefined, companyCurrency: string): string | null {
+  try {
+    return foreignCurrency(given, companyCurrency);
+  } catch {
+    return bad('A currency is three letters, such as USD or EUR.', 'err.currencyCode');
+  }
+}
+
+/** The exchange rate for a document or payment in another currency: required, and more than zero. */
+function ratePart(given: string | null | undefined): bigint {
+  if (!String(given ?? '').trim()) bad('Enter the exchange rate for this currency.', 'err.fxRate');
+  try {
+    return rateToScaled(String(given));
+  } catch {
+    return bad('The exchange rate must be more than 0, with at most 8 decimals.', 'err.fxRate');
+  }
 }
 
 function priceAll(lines: LineInput[] | undefined, vatRate: string): PricedLine[] {
@@ -147,34 +173,47 @@ export async function saveDraft(db: Db, companyId: string, d: DocumentInput, id?
   if (!d.issueDate || !DATE.test(d.issueDate)) bad('Enter the date.', 'err.date');
   if (d.dueDate && !DATE.test(d.dueDate)) bad('Some values are not in the right format.', 'err.format');
   if (d.dueDate && d.dueDate < d.issueDate!) bad('The due date cannot be before the document date.', 'err.dueDate');
-  const lines = priceAll(d.lines, company.vatRate);
+  // Another currency (0058): the prices typed in are in THAT currency, so each line is priced twice — once as it is
+  // written on the document, and once converted at the document's rate, which is what posts to the ledger.
+  const currency = currencyOf(d.currency, company.currency);
+  if (currency && (isExpense || type === 'claim')) {
+    bad('An expense or an employee claim is recorded in the company\'s own currency.', 'err.fxNotHere');
+  }
+  const rateScaled = currency ? ratePart(d.fxRate) : null;
+  const written = priceAll(d.lines, company.vatRate);
+  const lines = rateScaled ? written.map((l) => convertLine(l, rateScaled, company.vatRate)) : written;
   const totals = documentTotals(lines);
+  const fxTotals = currency ? documentTotals(written) : null;
   const head = [d.contactId || null, d.issueDate, isExpense ? null : d.dueDate || null, d.reference?.trim() || null, d.notes?.trim() || null,
     fromMinor(totals.net), fromMinor(totals.vat), fromMinor(totals.gross),
-    isExpense ? d.payee?.trim() || null : null, isExpense ? d.paidFromAccountId || null : null];
+    isExpense ? d.payee?.trim() || null : null, isExpense ? d.paidFromAccountId || null : null,
+    currency, rateScaled ? rateToString(rateScaled) : null,
+    fxTotals ? fromMinor(fxTotals.net) : null, fxTotals ? fromMinor(fxTotals.vat) : null, fxTotals ? fromMinor(fxTotals.gross) : null];
   let docId = id;
   if (docId) {
     const { rowCount } = await db.query(
       `UPDATE documents SET contact_id=$2, issue_date=$3, due_date=$4, reference=$5, notes=$6, net_total=$7, vat_total=$8, gross_total=$9,
-         payee=$10, paid_from_account_id=$11
-       WHERE id = $1 AND company_id = $12 AND status = 'draft'`, [docId, ...head, companyId]);
+         payee=$10, paid_from_account_id=$11, currency=$12, fx_rate=$13, fx_net_total=$14, fx_vat_total=$15, fx_gross_total=$16
+       WHERE id = $1 AND company_id = $17 AND status = 'draft'`, [docId, ...head, companyId]);
     if (!rowCount) bad('Only drafts can be changed.', 'err.notDraft');
     await db.query('DELETE FROM document_lines WHERE document_id = $1', [docId]);
   } else {
     if (!d.type || !['quotation', 'invoice', 'credit_note', 'debit_note', 'bill', 'supplier_credit', 'expense', 'claim', 'purchase_order'].includes(d.type)) bad('Choose the document type.', 'err.format');
     const { rows } = await db.query(
       `INSERT INTO documents (company_id, type, contact_id, issue_date, due_date, reference, notes, net_total, vat_total, gross_total,
-         payee, paid_from_account_id, original_id, recurring_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, app_user_id()) RETURNING id`,
+         payee, paid_from_account_id, currency, fx_rate, fx_net_total, fx_vat_total, fx_gross_total, original_id, recurring_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, app_user_id()) RETURNING id`,
       [companyId, d.type, ...head, d.originalId || null, isExpense ? d.recurringId || null : null]);
     docId = rows[0].id as string;
   }
   let n = 1;
-  for (const l of lines) {
+  for (const [i, l] of lines.entries()) {
+    const w = currency ? written[i]! : null;
     await db.query(
       `INSERT INTO document_lines (document_id, line_no, description, quantity, unit_price, account_id, cost_centre_id, vat_code, vat_rate,
-         net_amount, vat_amount) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [docId, n++, l.description, l.quantity, l.unitPrice, l.accountId, l.costCentreId || null, l.vatCode, l.vatRate, fromMinor(l.net), fromMinor(l.vat)]);
+         net_amount, vat_amount, fx_unit_price, fx_net_amount, fx_vat_amount) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [docId, n++, l.description, l.quantity, l.unitPrice, l.accountId, l.costCentreId || null, l.vatCode, l.vatRate, fromMinor(l.net), fromMinor(l.vat),
+       w ? w.unitPrice : null, w ? fromMinor(w.net) : null, w ? fromMinor(w.vat) : null]);
   }
   return docId!;
 }
@@ -312,6 +351,8 @@ const DOC_COLS = `d.id, d.company_id AS "companyId", d.type, d.status, d.number,
   person_name(d.submitted_by) AS "submittedByName", person_name(d.decided_by) AS "decidedByName", d.issue_date::text AS "issueDate", d.due_date::text AS "dueDate", d.reference, d.notes,
   d.original_id AS "originalId", d.journal_entry_id AS "journalEntryId",
   d.net_total::text AS "netTotal", d.vat_total::text AS "vatTotal", d.gross_total::text AS "grossTotal",
+  d.currency, d.fx_rate::text AS "fxRate", d.fx_net_total::text AS "fxNetTotal", d.fx_vat_total::text AS "fxVatTotal",
+  d.fx_gross_total::text AS "fxGrossTotal", document_fx_due(d.id)::numeric(18,2)::text AS "fxAmountDue",
   document_amount_due(d.id)::numeric(18,2)::text AS "amountDue", d.created_at AS "createdAt", d.issued_at AS "issuedAt"`;
 
 export async function listDocuments(db: Db, companyId: string, type: DocType, f: { status?: string; q?: string; contactId?: string } = {}) {
@@ -345,11 +386,13 @@ export async function getDocument(db: Db, id: string) {
     `SELECT l.id, l.line_no AS "lineNo", l.description, l.quantity::text, l.unit_price::text AS "unitPrice", l.account_id AS "accountId",
             a.code AS "accountCode", a.name AS "accountName", a.name_ar AS "accountNameAr", l.cost_centre_id AS "costCentreId",
             cc.name AS "costCentre", cc.name_ar AS "costCentreAr", l.vat_code AS "vatCode", l.vat_rate::text AS "vatRate",
-            l.net_amount::text AS net, l.vat_amount::text AS vat
+            l.net_amount::text AS net, l.vat_amount::text AS vat, l.fx_unit_price::text AS "fxUnitPrice",
+            l.fx_net_amount::text AS "fxNet", l.fx_vat_amount::text AS "fxVat"
      FROM document_lines l JOIN accounts a ON a.id = l.account_id LEFT JOIN cost_centres cc ON cc.id = l.cost_centre_id
      WHERE l.document_id = $1 ORDER BY l.line_no`, [id]);
   const payments = await db.query(
-    `SELECT p.id, p.number, p.payment_date::text AS date, a.amount::text, p.method, p.voided_at AS "voidedAt"
+    `SELECT p.id, p.number, p.payment_date::text AS date, a.amount::text, a.fx_amount::text AS "fxAmount", p.currency,
+            p.method, p.voided_at AS "voidedAt"
      FROM payment_allocations a JOIN payments p ON p.id = a.payment_id WHERE a.document_id = $1 ORDER BY p.payment_date`, [id]);
   const related = await db.query(
     `SELECT d.id, d.type, d.status, d.number, d.issue_date::text AS "issueDate", d.gross_total::text AS "grossTotal"
@@ -414,6 +457,9 @@ export interface PaymentInput {
   approvalRequestId?: string;
   /** Money going back the other way (0055): paid out to a customer, or received back from a supplier. */
   refund?: boolean;
+  /** Made in another currency (0058). `amount` and every allocation amount are then read in THAT currency; what
+   *  reaches the bank is worked out from the rate. */
+  currency?: string | null; fxRate?: string | null;
 }
 
 export async function recordPayment(db: Db, companyId: string, p: PaymentInput): Promise<string> {
@@ -439,19 +485,66 @@ export async function recordPayment(db: Db, companyId: string, p: PaymentInput):
   // A refund reverses the side: money paid out to a customer is the sales side, money received back from a supplier
   // the purchases side. The side picks the control account; the direction still picks the bank entry and the number.
   const side: 'sales' | 'purchases' = (direction === 'received') !== refund ? 'sales' : 'purchases';
+  const sys = await systemAccounts(db, companyId);
+
+  // Another currency (0058): the amount and the allocations above are in the payment's currency. What reaches the
+  // bank is that amount at the payment's rate; what the control account gives up is each document's share at the
+  // rate THAT DOCUMENT was booked at. The gap between the two is the realised exchange gain or loss.
+  const company = await companyInfo(db, companyId);
+  const currency = currencyOf(p.currency, company.currency);
+  let cash = amount;
+  let fx: { settled: bigint; accountId: string } | undefined;
+  let fxAmount: bigint | null = null;
+  let payRate: bigint | null = null;
+  const settledOf = new Map<string, bigint>();
+  if (currency) {
+    payRate = ratePart(p.fxRate);
+    fxAmount = amount;
+    cash = convertMinor(fxAmount, payRate);
+    if (cash <= 0n) bad('Enter the amount.', 'err.amount');
+    if (allocs.reduce((s, a) => s + a.amount, 0n) !== fxAmount) {
+      bad(`A payment in ${currency} is settled in full against the invoices it pays, so the exchange difference can be worked out.`, 'err.fxAllocateAll');
+    }
+    if (!sys.fxGainLoss) {
+      bad("This client's chart of accounts has no account 4951 Realised exchange gains and losses.", 'err.chart');
+    }
+    let settled = 0n;
+    for (const a of allocs) {
+      const r = (await db.query(
+        `SELECT d.currency, d.fx_rate::text AS "fxRate", document_fx_due(d.id)::numeric(18,2)::text AS "fxDue",
+                document_amount_due(d.id)::numeric(18,2)::text AS "due" FROM documents d WHERE d.id = $1`, [a.documentId])).rows[0] ?? notFound();
+      if (r.currency !== currency) {
+        bad(`This payment is in ${currency}: settle it against invoices written in the same currency.`, 'err.fxMismatch');
+      }
+      const fxDue = toMinor(r.fxDue);
+      const due = toMinor(r.due);
+      // Settling the last of what is owed hands over exactly what is left in the company's currency, so the
+      // document closes to zero on both sides with no rounding left behind.
+      const owed = refund ? -fxDue : fxDue;
+      const mine = refund ? (a.amount === owed ? -due : -convertMinor(a.amount, rateToScaled(r.fxRate)))
+                          : (a.amount === owed ? due : convertMinor(a.amount, rateToScaled(r.fxRate)));
+      settledOf.set(a.documentId, mine);
+      settled += mine;
+    }
+    fx = { settled, accountId: sys.fxGainLoss! };
+  }
+
   const id = randomUUID();
   const number = await nextNumber(db, companyId, direction === 'received' ? 'receipt' : 'payment', numberPrefix(direction === 'received' ? 'receipt' : 'payment', ''));
   const contact = await getContact(db, p.contactId!);
   const entryId = await postEntry(db, {
     companyId, entryDate: p.date!, memo: `${number} · ${contact.name}`, sourceType: direction === 'received' ? 'payment_received' : 'payment_made', sourceId: id,
-    lines: postingForPayment(direction, amount, p.accountId!, await systemAccounts(db, companyId), !refund && Boolean(contact.isEmployee), side),
+    lines: postingForPayment(direction, cash, p.accountId!, sys, !refund && Boolean(contact.isEmployee), side, fx),
   });
   await db.query(
-    `INSERT INTO payments (id, company_id, direction, number, contact_id, payment_date, amount, account_id, method, reference, journal_entry_id, created_by, approval_request_id, is_refund)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, app_user_id(), $12, $13)`,
-    [id, companyId, direction, number, p.contactId, p.date, fromMinor(amount), p.accountId, method, p.reference?.trim() || null, entryId, p.approvalRequestId || null, refund]);
+    `INSERT INTO payments (id, company_id, direction, number, contact_id, payment_date, amount, account_id, method, reference, journal_entry_id, created_by, approval_request_id, is_refund, currency, fx_rate, fx_amount)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, app_user_id(), $12, $13, $14, $15, $16)`,
+    [id, companyId, direction, number, p.contactId, p.date, fromMinor(cash), p.accountId, method, p.reference?.trim() || null, entryId, p.approvalRequestId || null, refund,
+     currency, payRate ? rateToString(payRate) : null, fxAmount === null ? null : fromMinor(fxAmount)]);
   for (const a of allocs) {
-    await db.query('INSERT INTO payment_allocations (payment_id, document_id, amount) VALUES ($1, $2, $3)', [id, a.documentId, fromMinor(a.amount)]);
+    const mine = settledOf.get(a.documentId);
+    await db.query('INSERT INTO payment_allocations (payment_id, document_id, amount, fx_amount) VALUES ($1, $2, $3, $4)',
+      [id, a.documentId, fromMinor(mine === undefined ? a.amount : mine), currency ? fromMinor(a.amount) : null]);
   }
   return id;
 }
@@ -468,6 +561,7 @@ export async function voidPayment(db: Db, id: string, date: string): Promise<voi
 const PAY_COLS = `p.id, p.direction, p.number, p.contact_id AS "contactId", c.name AS "contactName", p.payment_date::text AS date,
   p.amount::text, p.account_id AS "accountId", a.name AS "accountName", a.name_ar AS "accountNameAr", p.method, p.reference,
   p.voided_at AS "voidedAt", p.created_at AS "createdAt", p.is_refund AS "isRefund",
+  p.currency, p.fx_rate::text AS "fxRate", p.fx_amount::text AS "fxAmount",
   (p.amount - coalesce((SELECT sum(x.amount) FROM payment_allocations x WHERE x.payment_id = p.id), 0))::numeric(18,2)::text AS unallocated`;
 
 /** Payments of one LEDGER SIDE, named by its ordinary direction: 'received' lists receipts from customers together
@@ -488,7 +582,8 @@ export async function getPayment(db: Db, id: string) {
     `SELECT ${PAY_COLS}, p.company_id AS "companyId" FROM payments p JOIN contacts c ON c.id = p.contact_id JOIN accounts a ON a.id = p.account_id WHERE p.id = $1`, [id]);
   const p = rows[0] ?? notFound();
   const allocations = await db.query(
-    `SELECT d.id AS "documentId", d.number, d.type, d.issue_date::text AS "issueDate", d.gross_total::text AS "grossTotal", x.amount::text
+    `SELECT d.id AS "documentId", d.number, d.type, d.issue_date::text AS "issueDate", d.gross_total::text AS "grossTotal",
+            d.currency, d.fx_gross_total::text AS "fxGrossTotal", x.amount::text, x.fx_amount::text AS "fxAmount"
      FROM payment_allocations x JOIN documents d ON d.id = x.document_id WHERE x.payment_id = $1 ORDER BY d.issue_date`, [id]);
   return { ...p, allocations: allocations.rows };
 }
@@ -497,6 +592,8 @@ export async function getPayment(db: Db, id: string) {
 export async function openDocuments(db: Db, companyId: string, contactId: string, direction: Direction) {
   const { rows } = await db.query(
     `SELECT d.id, d.number, d.issue_date::text AS "issueDate", d.due_date::text AS "dueDate", d.gross_total::text AS "grossTotal",
+            d.currency, d.fx_rate::text AS "fxRate", d.fx_gross_total::text AS "fxGrossTotal",
+            document_fx_due(d.id)::numeric(18,2)::text AS "fxAmountDue",
             document_amount_due(d.id)::numeric(18,2)::text AS "amountDue"
      FROM documents d WHERE d.company_id = $1 AND d.contact_id = $2 AND d.type = $3 AND d.status = 'issued'
        AND document_amount_due(d.id) > 0
@@ -567,8 +664,9 @@ export async function addOpeningDocument(db: Db, companyId: string, o: OpeningDo
  *  figure, which is the most that may be refunded against it. */
 export async function refundable(db: Db, companyId: string, contactId: string) {
   const { rows } = await db.query(
-    `SELECT d.id, d.number, d.type, d.issue_date::text AS "issueDate",
-            (-document_amount_due(d.id))::numeric(18,2)::text AS "amountDue"
+    `SELECT d.id, d.number, d.type, d.issue_date::text AS "issueDate", d.currency, d.fx_rate::text AS "fxRate",
+            (-document_amount_due(d.id))::numeric(18,2)::text AS "amountDue",
+            (-document_fx_due(d.id))::numeric(18,2)::text AS "fxAmountDue"
      FROM documents d WHERE d.company_id = $1 AND d.contact_id = $2 AND d.status = 'issued'
        AND d.type IN ('invoice', 'debit_note', 'bill', 'claim') AND document_amount_due(d.id) < 0
      ORDER BY d.issue_date, d.number`, [companyId, contactId]);

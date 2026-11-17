@@ -20,6 +20,10 @@ export interface EInvoiceData {
   supplyDate: string;
   dueDate?: string | null;
   currency: string;
+  /** ZATCA: VAT is always accounted for in SAR (BR-KSA-EN16931-02). When the invoice itself is written in another
+   *  currency, the VAT total in SAR has to be given as well (EN16931 BT-111). Empty for an invoice already in the
+   *  accounting currency, where the two are the same number. */
+  vatTotalInTaxCurrency?: string | null;
   seller: EParty;
   buyer: EParty | null;
   lines: ELine[];

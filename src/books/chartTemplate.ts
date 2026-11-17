@@ -29,6 +29,8 @@ export const SYSTEM_ACCOUNTS = {
   accumulatedDepreciation: '1590',
   depreciation: '5050',
   disposalGainLoss: '4900',
+  unrealisedFx: '4950',
+  realisedFx: '4951',
   equipment: '1500',
   employeeLoans: '1150',
   salariesPayable: '2210',

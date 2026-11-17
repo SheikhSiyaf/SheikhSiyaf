@@ -49,6 +49,40 @@ export interface PricedLine extends LineInput {
   vat: Minor;
 }
 
+// ------------------------------------------------------------------ another currency (0058)
+const RATE_SCALE = 100000000n;   // rates carry 8 decimals, as exchange_rates.rate does
+
+/** "3.75" -> the rate in eight-decimal units. One unit of the foreign currency is worth this much of the company's. */
+export function rateToScaled(rate: string): bigint {
+  const m = /^(\d{1,10})(?:\.(\d{1,8}))?$/.exec(String(rate).trim());
+  if (!m) throw new Error('rate');
+  const v = BigInt(m[1]!) * RATE_SCALE + BigInt((m[2] ?? '').padEnd(8, '0'));
+  if (v <= 0n) throw new Error('rate');
+  return v;
+}
+export const rateToString = (v: bigint) => `${v / RATE_SCALE}.${(v % RATE_SCALE).toString().padStart(8, '0')}`;
+
+/** An amount in the document's currency, in the company's currency. Rounded half away from zero, like all money. */
+export const convertMinor = (amount: Minor, rateScaled: bigint): Minor => divRoundHalfUp(amount * rateScaled, RATE_SCALE);
+
+/**
+ * The same line, priced in the company's currency.
+ * The rate is applied to the UNIT PRICE and the line amounts then follow the ordinary arithmetic (net = quantity x
+ * price, VAT = net x rate). So a converted line satisfies exactly the same checks as any company-currency line, and
+ * the document's totals still add up on their own: that is what stops a trial balance drifting (0058).
+ */
+export function convertLine(l: PricedLine, rateScaled: bigint, companyVatRate: string): PricedLine {
+  return priceLine({ ...l, unitPrice: fromMinor(convertMinor(toMinor(l.unitPrice), rateScaled)) }, companyVatRate);
+}
+
+/** A currency a document can be written in: three capital letters, and not the company's own. */
+export function foreignCurrency(given: string | null | undefined, companyCurrency: string): string | null {
+  const c = String(given ?? '').trim().toUpperCase();
+  if (!c || c === companyCurrency) return null;
+  if (!/^[A-Z]{3}$/.test(c)) throw new Error('currency');
+  return c;
+}
+
 /** Net = quantity x price, VAT = net x rate; each rounded half away from zero to 2 decimals. */
 export function priceLine(l: LineInput, companyVatRate: string): PricedLine {
   const qty = quantityToMilli(l.quantity);
@@ -65,7 +99,7 @@ export function documentTotals(lines: { net: Minor; vat: Minor }[]) {
   return { net, vat, gross: net + vat };
 }
 
-export interface SystemAccounts { receivables: string; payables: string; outputVat: string; inputVat: string; claimsPayable?: string }
+export interface SystemAccounts { receivables: string; payables: string; outputVat: string; inputVat: string; claimsPayable?: string; fxGainLoss?: string }
 export interface PostingLine { accountId: string; costCentreId?: string | null; debit?: string; credit?: string }
 
 /**
@@ -103,14 +137,33 @@ export function postingFor(type: DocType, lines: PricedLine[], sys: SystemAccoun
 /** The journal for a payment. The LEDGER SIDE picks the control account, not the direction the cash moves: a refund
  *  paid out to a customer still clears receivables (money we were holding for them), never payables. The bank is
  *  debited when money comes in and credited when it goes out, whichever side it belongs to. */
+/** A payment in another currency (0058): `settled` is what the control account gives up, in the company's currency,
+ *  valued at the rate each DOCUMENT was booked at. The bank still gets what actually arrived or left, and the gap
+ *  between the two is the realised exchange gain or loss. */
 export function postingForPayment(direction: Direction, amount: Minor, bankAccountId: string, sys: SystemAccounts,
-  toEmployee = false, side: 'sales' | 'purchases' = direction === 'received' ? 'sales' : 'purchases'): PostingLine[] {
+  toEmployee = false, side: 'sales' | 'purchases' = direction === 'received' ? 'sales' : 'purchases',
+  fx?: { settled: Minor; accountId: string }): PostingLine[] {
   const a = fromMinor(amount);
   if (toEmployee && !sys.claimsPayable) throw new Error('claims payable');
   const control = side === 'sales' ? sys.receivables : toEmployee ? sys.claimsPayable! : sys.payables;
-  return direction === 'received'
-    ? [{ accountId: bankAccountId, debit: a }, { accountId: control, credit: a }]
-    : [{ accountId: control, debit: a }, { accountId: bankAccountId, credit: a }];
+  if (!fx) {
+    return direction === 'received'
+      ? [{ accountId: bankAccountId, debit: a }, { accountId: control, credit: a }]
+      : [{ accountId: control, debit: a }, { accountId: bankAccountId, credit: a }];
+  }
+  const s = fromMinor(fx.settled);
+  // More of the company's currency than the invoice was booked at means a gain on money coming in, and a loss on
+  // money going out. The entry balances either way: the exchange line is always exactly the gap.
+  const gap = amount - fx.settled;
+  const out: PostingLine[] = direction === 'received'
+    ? [{ accountId: bankAccountId, debit: a }, { accountId: control, credit: s }]
+    : [{ accountId: control, debit: s }, { accountId: bankAccountId, credit: a }];
+  if (gap !== 0n) {
+    const size = fromMinor(gap > 0n ? gap : -gap);
+    const creditIt = (direction === 'received') === (gap > 0n);
+    out.push({ accountId: fx.accountId, ...(creditIt ? { credit: size } : { debit: size }) });
+  }
+  return out;
 }
 
 /** Spreads a payment over open documents, oldest due first. */

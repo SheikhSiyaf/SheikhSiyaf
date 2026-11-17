@@ -85,9 +85,14 @@ function Totals({ rows, currency }: { rows: [Key, string, boolean?, string?][]; 
 export interface SaleDoc {
   type: string; status: string; number: string | null; issueDate: string; dueDate: string | null; reference: string | null; notes: string | null;
   netTotal: string; vatTotal: string; grossTotal: string; amountDue: string;
+  /** Written in another currency (0058): the invoice is PRINTED as written, and the VAT is also shown in the
+   *  company's own currency, which is the currency the VAT is accounted for in. */
+  currency?: string | null; fxRate?: string | null;
+  fxNetTotal?: string | null; fxVatTotal?: string | null; fxGrossTotal?: string | null; fxAmountDue?: string | null;
   contact: { name: string; nameAr: string | null; vatNumber: string | null; crNumber: string | null; address: string | null; city: string | null } | null;
   seller: Seller & { originalNumber?: string | null };
-  lines: { lineNo: number; description: string; quantity: string; unitPrice: string; vatCode: string; vatRate: string; net: string; vat: string }[];
+  lines: { lineNo: number; description: string; quantity: string; unitPrice: string; vatCode: string; vatRate: string; net: string; vat: string;
+    fxUnitPrice?: string | null; fxNet?: string | null; fxVat?: string | null }[];
   payments: { voidedAt: string | null; amount: string }[];
   /** An advance-payment invoice (ZATCA 386), and the advances deducted on a final invoice. */
   isAdvance?: boolean; advances?: { number: string; total: string }[];
@@ -114,6 +119,8 @@ export function docTitle(d: { type: string; isAdvance?: boolean; seller?: { coun
 export function SalePdf({ d, qr }: { d: SaleDoc; qr?: string | null }) {
   const c = d.contact;
   const due = d.type === 'invoice' && d.status === 'issued';
+  // The invoice is printed in the currency it was written in; the company's own currency when there is none (0058).
+  const docCur = d.currency ?? d.seller.currency;
   return (
     <div className="pdf" dir="ltr">
       <Head seller={d.seller} title={saleTitle(d)} number={d.number} status={d.status}>
@@ -124,18 +131,24 @@ export function SalePdf({ d, qr }: { d: SaleDoc; qr?: string | null }) {
             [d.type === 'quotation' ? 'pdf.quoteNo' : d.type === 'credit_note' ? 'pdf.creditNo' : 'pdf.invoiceNo', <b>{d.number ?? en('pdf.draft')}</b>],
             ['pdf.issueDate', d.issueDate], [d.type === 'quotation' ? 'pdf.validUntil' : 'pdf.supplyDate', d.type === 'quotation' ? d.dueDate : d.issueDate],
             ['pdf.dueDate', d.type === 'invoice' ? d.dueDate : null], ['pdf.originalInvoice', d.type === 'credit_note' ? d.seller.originalNumber ?? d.reference : null],
-            ['pdf.customerRef', d.type !== 'credit_note' ? d.reference : null], ['pdf.currency', d.seller.currency],
+            ['pdf.customerRef', d.type !== 'credit_note' ? d.reference : null], ['pdf.currency', docCur],
+            ['pdf.fxRate', d.currency ? `1 ${d.currency} = ${d.fxRate ?? ''} ${d.seller.currency}` : null],
           ]} />
         </div>
       </Head>
       <table className="pdf-lines">
         <thead><tr><th>#</th><th className="desc"><Bi k="pdf.description" /></th><th><Bi k="pdf.qty" /></th><th><Bi k="pdf.unitPrice" /></th>
           <th><Bi k="pdf.taxable" /></th><th><Bi k="pdf.vatRate" /></th><th><Bi k="pdf.vatAmount" /></th><th><Bi k="pdf.lineTotal" /></th></tr></thead>
-        <tbody>{d.lines.map((l) => (
-          <tr key={l.lineNo}><td>{l.lineNo}</td><td className="desc">{l.description}</td><td className="num">{qtyText(l.quantity)}</td><td><Num v={l.unitPrice} /></td>
-            <td><Num v={l.net} /></td><td className="num">{l.vatCode === 'standard' ? `${Number(l.vatRate)}%` : <Bi k={`vat.${l.vatCode}` as Key} v={{ rate: Number(l.vatRate) }} />}</td>
-            <td><Num v={l.vat} /></td><td><Num v={addMoney(l.net, l.vat)} /></td></tr>
-        ))}</tbody>
+        <tbody>{d.lines.map((l) => {
+          const price = d.currency ? l.fxUnitPrice ?? l.unitPrice : l.unitPrice;
+          const net = d.currency ? l.fxNet ?? l.net : l.net;
+          const vat = d.currency ? l.fxVat ?? l.vat : l.vat;
+          return (
+          <tr key={l.lineNo}><td>{l.lineNo}</td><td className="desc">{l.description}</td><td className="num">{qtyText(l.quantity)}</td><td><Num v={price} /></td>
+            <td><Num v={net} /></td><td className="num">{l.vatCode === 'standard' ? `${Number(l.vatRate)}%` : <Bi k={`vat.${l.vatCode}` as Key} v={{ rate: Number(l.vatRate) }} />}</td>
+            <td><Num v={vat} /></td><td><Num v={addMoney(net, vat)} /></td></tr>
+          );
+        })}</tbody>
       </table>
       <div className="pdf-row bottom">
         <div className="pdf-left">
@@ -146,11 +159,16 @@ export function SalePdf({ d, qr }: { d: SaleDoc; qr?: string | null }) {
           )}
           {d.notes && <div className="pdf-box"><div className="pdf-party-label"><Bi k="pdf.notes" /></div><div className="pdf-small pre">{d.notes}</div></div>}
         </div>
-        <Totals currency={d.seller.currency} rows={[
-          ['pdf.totalExVat', d.netTotal], ['pdf.totalVat', d.vatTotal], ['pdf.totalIncVat', d.grossTotal, true],
+        <Totals currency={docCur} rows={[
+          ['pdf.totalExVat', d.currency ? d.fxNetTotal ?? d.netTotal : d.netTotal],
+          ['pdf.totalVat', d.currency ? d.fxVatTotal ?? d.vatTotal : d.vatTotal],
+          ['pdf.totalIncVat', d.currency ? d.fxGrossTotal ?? d.grossTotal : d.grossTotal, true],
           ...(d.advances ?? []).map((a) => ['pdf.lessAdvance', `-${a.total}`, false, a.number] as [Key, string, boolean, string]),
-          ...(due ? [['pdf.amountDue', d.amountDue] as [Key, string]] : []),
+          ...(due ? [['pdf.amountDue', d.currency ? d.fxAmountDue ?? d.amountDue : d.amountDue] as [Key, string]] : []),
         ]} />
+        {/* The VAT is accounted for in the company's own currency, so a foreign-currency invoice states it there as
+            well (ZATCA R-KSA-12 and BR-53: the VAT accounting currency and the VAT total in it). */}
+        {d.currency && <Totals currency={d.seller.currency} rows={[['pdf.totalVatInBase', d.vatTotal, true]]} />}
       </div>
       <Footer number={d.number} />
     </div>

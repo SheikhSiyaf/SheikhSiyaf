@@ -84,13 +84,15 @@ export async function invoiceData(db: Db, documentId: string, uuid: string): Pro
   const d = (await db.query(
     `SELECT d.id, d.company_id, d.type, d.status, d.number, d.issue_date::text AS issue_date, d.due_date::text AS due_date, d.issued_at, d.notes,
             d.net_total::text AS net, d.vat_total::text AS vat, d.gross_total::text AS gross, o.number AS orig_number, o.issue_date::text AS orig_date, d.is_advance,
+            d.currency AS doc_currency, d.fx_net_total::text AS fx_net, d.fx_vat_total::text AS fx_vat, d.fx_gross_total::text AS fx_gross,
             c.name, c.name_ar, c.vat_number, c.cr_number, c.address, c.city, c.country, c.email, c.building_number, c.district, c.postal_code,
             EXISTS (SELECT 1 FROM payment_allocations a WHERE a.document_id = d.id) AS paid
      FROM documents d LEFT JOIN contacts c ON c.id = d.contact_id LEFT JOIN documents o ON o.id = d.original_id WHERE d.id = $1`, [documentId])).rows[0] ?? notFound();
   const co = await company(db, d.company_id);
   const s = await getSettings(db, d.company_id);
   const lines = (await db.query(
-    `SELECT line_no, description, quantity::text, unit_price::text, net_amount::text AS net, vat_amount::text AS vat, vat_code, vat_rate::text
+    `SELECT line_no, description, quantity::text, unit_price::text, net_amount::text AS net, vat_amount::text AS vat, vat_code, vat_rate::text,
+            fx_unit_price::text AS fx_unit_price, fx_net_amount::text AS fx_net, fx_vat_amount::text AS fx_vat
      FROM document_lines WHERE document_id = $1 ORDER BY line_no`, [documentId])).rows;
   const at = localParts(d.issued_at ? new Date(d.issued_at) : clock(), co.country);
   // Advances deducted (0046): each advance invoice's number, date and time as they are on its own e-invoice.
@@ -104,9 +106,15 @@ export async function invoiceData(db: Db, documentId: string, uuid: string): Pro
     district: d.district, city: d.city, postalCode: d.postal_code, country: d.country ?? co.country, email: d.email };
   const data: EInvoiceData = {
     number: d.number, uuid, type: d.type === 'credit_note' ? 'credit_note' : d.type === 'debit_note' ? 'debit_note' : 'invoice', issueDate: d.issue_date, issueTime: at.time, supplyDate: d.issue_date, dueDate: d.due_date,
-    currency: co.currency, seller, buyer,
-    lines: lines.map((l) => ({ no: l.line_no, description: l.description, quantity: l.quantity, unitPrice: l.unit_price, net: l.net, vat: l.vat, vatCode: l.vat_code as VatCode, vatRate: l.vat_rate })),
-    netTotal: d.net, vatTotal: d.vat, grossTotal: d.gross, advance: Boolean(d.is_advance), prepayments,
+    // An invoice written in another currency (0058) is REPORTED in that currency: the figures the customer reads are
+    // the ones on the invoice. The VAT is still accounted for in SAR, so the company-currency VAT total goes
+    // alongside it as BT-111. Nothing changes for an invoice in the company's own currency.
+    currency: d.doc_currency ?? co.currency, vatTotalInTaxCurrency: d.doc_currency ? d.vat : null, seller, buyer,
+    lines: lines.map((l) => ({ no: l.line_no, description: l.description, quantity: l.quantity,
+      unitPrice: d.doc_currency ? l.fx_unit_price : l.unit_price, net: d.doc_currency ? l.fx_net : l.net,
+      vat: d.doc_currency ? l.fx_vat : l.vat, vatCode: l.vat_code as VatCode, vatRate: l.vat_rate })),
+    netTotal: d.doc_currency ? d.fx_net : d.net, vatTotal: d.doc_currency ? d.fx_vat : d.vat,
+    grossTotal: d.doc_currency ? d.fx_gross : d.gross, advance: Boolean(d.is_advance), prepayments,
     original: d.orig_number ? { number: d.orig_number, issueDate: d.orig_date } : null, reason: d.type === 'credit_note' ? (text(d.notes, 300) ?? 'Correction of the invoice') : d.type === 'debit_note' ? (text(d.notes, 300) ?? 'Additional charge on the invoice') : null,
     paymentMeans: d.paid ? '10' : '30',
     exemption: { zero: { code: s.zeroReasonCode, text: s.zeroReason }, exempt: { code: s.exemptReasonCode, text: s.exemptReason }, out_of_scope: { code: 'VATEX-SA-OOS', text: s.oosReason } },

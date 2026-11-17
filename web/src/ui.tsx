@@ -4,6 +4,7 @@ import { ApiError, api, useApi } from './api.ts';
 import { useI18n } from './i18n.tsx';
 import { toggleTheme } from './theme.ts';
 import { DEMO, navigate } from './router.ts';
+import { BrandMark } from './brand.tsx';
 
 export function errorText(t: ReturnType<typeof useI18n>['t'], has: ReturnType<typeof useI18n>['has'], e: unknown): string {
   if (e instanceof ApiError && e.key && has(e.key)) return t(e.key);
@@ -54,7 +55,7 @@ export function Sidebar({ subtitle, user, roleLabel, onSignOut, children }: {
   const initials = user.name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
   return (
     <nav className="side" aria-label={t('app.name')}>
-      <div className="brand"><b>{t('app.name')}</b><span>{subtitle}</span></div>
+      <BrandMark name={t('app.name')} subtitle={subtitle} />
       <div className="side-items">{children}</div>
       {/* The signed-in person, pinned to the bottom: one compact row; details and two-factor in a small menu above it. */}
       <div className="side-user" ref={box}>

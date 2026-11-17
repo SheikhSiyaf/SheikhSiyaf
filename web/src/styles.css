@@ -1,19 +1,27 @@
+/* The brand font: rounded letterforms that match the logo. Self-hosted, so no outside request is ever
+   made for it (the site's own policy allows fonts from this site only). Both are SIL Open Font License 1.1:
+   Nunito for Latin, Baloo Bhaijaan 2 for Arabic. */
+@font-face { font-family: "Nusuh Rounded"; src: url("/fonts/nunito-latin.woff2") format("woff2");
+  font-weight: 400 900; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2000-206F, U+2122, U+2212; }
+@font-face { font-family: "Nusuh Rounded"; src: url("/fonts/baloo-arabic.woff2") format("woff2");
+  font-weight: 400 900; font-display: swap; unicode-range: U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF; }
+
 /* Teal and white, left sidebar, top bar; light and dark (from prototype/nusuhbooks.html). */
 :root {
   --bg: #f5f7f9; --card: #fff; --ink: #14213d; --mut: #5b6b7b; --teal: #0f766e; --tealbg: #e1f2f0;
   --line: #e2e8ee; --bad: #b42318; --badbg: #fbdcdc; --warn: #5c4400; --warnbg: #fdf0c8; --good: #0f5132; --goodbg: #d7f0e2;
-  --onteal: #fff;
+  --onteal: #fff; --amber: #f2b33d; --brandbar: #9fcac5;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0d1a1a; --card: #152727; --ink: #e3f1f0; --mut: #8fb0ae; --teal: #35b9bb; --tealbg: #1b3a3a;
+    --bg: #0d1a1a; --card: #152727; --ink: #e3f1f0; --mut: #8fb0ae; --teal: #35b9bb; --tealbg: #1b3a3a; --amber: #f5c05a; --brandbar: #2e6f6a;
     --line: #254242; --bad: #ff8a80; --badbg: #4a1f1f; --warn: #f5d58a; --warnbg: #3d3417; --good: #9be3bb; --goodbg: #17392a;
     --onteal: #062b2b; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0d1a1a; --card: #152727; --ink: #e3f1f0; --mut: #8fb0ae; --teal: #35b9bb; --tealbg: #1b3a3a;
+  --bg: #0d1a1a; --card: #152727; --ink: #e3f1f0; --mut: #8fb0ae; --teal: #35b9bb; --tealbg: #1b3a3a; --amber: #f5c05a; --brandbar: #2e6f6a;
   --line: #254242; --bad: #ff8a80; --badbg: #4a1f1f; --warn: #f5d58a; --warnbg: #3d3417; --good: #9be3bb; --goodbg: #17392a;
   --onteal: #062b2b; color-scheme: dark;
 }
@@ -42,9 +50,13 @@ nav.side button { display: block; width: 100%; text-align: start; border: 0; bac
 nav.side button:hover { background: var(--tealbg); }
 nav.side button.on { background: var(--teal); color: var(--onteal); font-weight: 600; }
 nav.side .soon { color: var(--mut); }
-.brand { margin: 0 6px 14px; }
-.brand b { display: block; font-size: 18px; color: var(--teal); }
-.brand span { color: var(--mut); font-size: 13px; }
+.brand { margin: 0 6px 14px; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand .mark { flex: none; }
+.brand-words { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.brand b { display: block; font-size: 19px; color: var(--teal);
+  font-family: "Nusuh Rounded", ui-rounded, "SF Pro Rounded", system-ui, sans-serif; font-weight: 800; letter-spacing: .1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand span { color: var(--mut); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 main { flex: 1; min-width: 0; padding-block: 14px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
 .top h1 { margin: 0; font-size: 20px; flex: 1 1 160px; }
@@ -99,7 +111,10 @@ tr.total td { font-weight: 700; border-bottom: 0; }
   .side-menu { bottom: auto; top: calc(100% + 6px); }
   nav.side .side-me button.me { padding: 4px; }
   .side-me .avatar { width: 30px; height: 30px; font-size: 12px; }
-  .brand { display: none; }
+  /* On phones the mark stays top left; the words and subtitle give way to the menu. */
+  .brand { margin: 0 0 6px; }
+  .brand-words { display: none; }
+  .brand .mark { width: 26px; height: 26px; }
   main { padding-block: 12px 40px; }
   nav.side { padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
 }

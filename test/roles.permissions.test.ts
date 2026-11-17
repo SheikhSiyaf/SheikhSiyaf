@@ -131,6 +131,23 @@ describe('Roles and permissions', () => {
     expect((await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: cashier })).statusCode).toBe(200);
   });
 
+  // The import kinds brought in with opening documents (0056) carry a hyphen in their name. The permission rule
+  // matched [a-z]+ only, so those two paths matched NO rule, and a rule that does not match is not checked at all:
+  // any role could have imported them.
+  it('importing unpaid invoices needs Sales and unpaid bills needs Purchases', async () => {
+    const a = await signIn('admin');
+    const salesOnly = (await post(a, '/api/admin/roles', { name: 'Sales import', permissions: { Sales: 'edit' } })).json().id;
+    expect((await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: salesOnly })).statusCode).toBe(200);
+    const c = await signIn('clientA');
+    const rows = [['Customer', 'Invoice number', 'Issue date', 'Due date', 'Amount'], ['Nobody', 'N-1', '2026-02-01', '2026-03-03', '10.00']];
+    // Sales: allowed through the permission layer (the row itself is rejected later, which is a 400, not a 403).
+    expect((await post(c, `/api/companies/${f.a.id}/import/open-invoices/preview`, { rows })).statusCode).toBe(200);
+    // Purchases: refused outright.
+    expect((await post(c, `/api/companies/${f.a.id}/import/open-bills/preview`, { rows })).statusCode).toBe(403);
+    expect((await post(c, `/api/companies/${f.a.id}/import/open-bills/run`, { rows })).statusCode).toBe(403);
+    expect((await post(a, `/api/admin/companies/${f.a.id}/users/${f.a.clientAccountant}/role`, { clientRoleId: cashier })).statusCode).toBe(200);
+  });
+
   it('a role without Reports or Ledger (front desk) does not see the company figures on the home page', async () => {
     const a = await signIn('admin');
     const desk = (await post(a, '/api/admin/roles', { name: 'Front desk', permissions: { Rooms: 'edit', Sales: 'edit' } })).json().id;

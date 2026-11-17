@@ -504,6 +504,64 @@ export async function openDocuments(db: Db, companyId: string, contactId: string
   return rows;
 }
 
+// ------------------------------------------------------------------ opening balances as open documents (0056)
+export interface OpeningDocInput {
+  type: 'invoice' | 'bill';
+  contactId: string;
+  /** The number the document had in the client's previous system: it is kept, not replaced. */
+  number: string;
+  issueDate: string;
+  dueDate?: string;
+  /** What is still owed on it today, the whole amount including whatever VAT the old system charged. */
+  amount: string;
+}
+
+/** Brings one already-open invoice or bill in from the client's previous system.
+ *
+ *  It is NOT a new sale or purchase: the revenue, the cost and the VAT belong to the old system and were declared
+ *  there. The whole amount is posted against 3000 Opening balances, so nothing lands in income, expense or VAT,
+ *  and the document is never sent to e-invoicing. After that it behaves like any issued document: it ages, it
+ *  appears on statements, and payments settle it. */
+export async function addOpeningDocument(db: Db, companyId: string, o: OpeningDocInput): Promise<string> {
+  const type = o.type === 'invoice' || o.type === 'bill' ? o.type : bad('Choose an invoice or a bill.', 'err.format');
+  const number = String(o.number ?? '').trim();
+  if (!number) bad('Enter the number this invoice had in the old system.', 'err.openingNumber');
+  if (number.length > 60) bad('That number is too long.', 'err.format');
+  let amount: bigint;
+  try { amount = toMinor(String(o.amount ?? '').replace(/,/g, '')); } catch { return bad('The amount must be a number with at most 2 decimals.', 'err.amountFormat'); }
+  if (amount <= 0n) bad('Enter the amount still owed.', 'err.amount');
+  if (!o.issueDate || !DATE.test(o.issueDate)) bad('Enter the date.', 'err.date');
+  if (o.dueDate && !DATE.test(o.dueDate)) bad('Some values are not in the right format.', 'err.format');
+  if (o.dueDate && o.dueDate < o.issueDate) bad('The due date cannot be before the document date.', 'err.dueDate');
+  if ((await db.query('SELECT 1 FROM documents WHERE company_id = $1 AND type = $2 AND number = $3', [companyId, type, number])).rows[0]) {
+    bad(`${number} is already in the books.`, 'err.openingNumberTaken');
+  }
+  const equity = (await db.query(`SELECT id FROM accounts WHERE company_id = $1 AND code = '3000'`, [companyId])).rows[0]
+    ?? bad('This client has no opening balances account (3000).', 'err.chart');
+
+  const { rows } = await db.query(
+    `INSERT INTO documents (company_id, type, contact_id, issue_date, due_date, net_total, vat_total, gross_total, is_opening, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, '0.00', $6, true, app_user_id()) RETURNING id`,
+    [companyId, type, o.contactId || null, o.issueDate, o.dueDate || null, fromMinor(amount)]);
+  const id = rows[0].id as string;
+  await db.query(
+    `INSERT INTO document_lines (document_id, line_no, description, quantity, unit_price, account_id, vat_code, vat_rate, net_amount, vat_amount)
+     VALUES ($1, 1, $2, '1', $3, $4, 'out_of_scope', 0, $3, '0.00')`,
+    [id, `Opening balance · ${number}`, fromMinor(amount), equity.id]);
+
+  const contact = await getContact(db, o.contactId);
+  const entryId = await postEntry(db, {
+    companyId, entryDate: o.issueDate, memo: `${number} · ${contact.name}`, sourceType: type, sourceId: id,
+    lines: type === 'invoice'
+      ? [{ accountId: (await systemAccounts(db, companyId)).receivables, debit: fromMinor(amount) }, { accountId: equity.id, credit: fromMinor(amount) }]
+      : [{ accountId: equity.id, debit: fromMinor(amount) }, { accountId: (await systemAccounts(db, companyId)).payables, credit: fromMinor(amount) }],
+  });
+  // The number comes from the old system, so it is set here rather than taken from this company's sequence, and
+  // afterIssue() is deliberately NOT called: an opening document is never sent to ZATCA.
+  await db.query(`UPDATE documents SET status = 'issued', number = $2, journal_entry_id = $3 WHERE id = $1`, [id, number, entryId]);
+  return id;
+}
+
 /** Documents of a contact where WE are holding money that belongs to them, so it can be paid back (0055). A credit
  *  note on an invoice already paid leaves a negative amount due; `amountDue` here is that amount as a positive
  *  figure, which is the most that may be refunded against it. */

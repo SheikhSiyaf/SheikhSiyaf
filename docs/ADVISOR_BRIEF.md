@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-17 (refunds: money can now be paid back to a customer and received back from a supplier).
+Last updated: 2026-11-17 (refunds; and opening balances now come in as individual open invoices and bills).
 
 ---
 
@@ -76,6 +76,12 @@ console: creates customers and companies, bills them, answers support messages, 
   a cancelled booking, a returned product or an overpayment had nowhere to go. The journal follows the ledger side,
   not the direction of the cash, so a customer refund clears receivables and never payables, and the module rights
   follow it too (refunding a customer needs Sales, not Purchases). Deep Check passed 21 of 21 checks.
+- **Starting a client who is already trading** (new): the bulk import has "Unpaid customer invoices" and "Unpaid
+  supplier bills". Each one comes in as its own open document, keeping the number, issue date and due date it had in
+  the client's old system, so the aged debtors report, customer statements and payment matching are right from the
+  first day. Before this the whole receivable arrived as a single lump and all three were wrong. An opening document
+  is not a new sale: the whole amount sits against 3000 Opening balances, nothing touches income, expense or VAT,
+  and it is never sent to ZATCA, because the old system already invoiced and reported it. Deep Check passed 20 of 20.
 - **Reports**: trial balance, P&L, balance sheet, VAT return, aged reports, budgets, forecast, multi-currency
   ledger accounts with month-end revaluation, export of everything.
 - **Review layer**: reviewer checks and sign-off; signing off a month locks it. Year-end close.

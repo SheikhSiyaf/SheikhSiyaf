@@ -15,7 +15,9 @@ interface PreviewRow { line: number; values: Record<string, string>; status: 'ne
 interface Preview { missing: string[]; rows: PreviewRow[]; counts: { new: number; exists: number; error: number };
   opening: { debit: string; credit: string; difference: string; date: string | null; problems: string[]; warnings: string[] } | null }
 const TONE = { new: 'good', exists: '', error: 'bad' } as const;
-const WHERE: Record<ImportKind, [string, string]> = { customers: ['Sales', 'customers'], suppliers: ['Purchases', 'suppliers'], items: ['Inventory', 'items'], accounts: ['Ledger', 'chart-of-accounts'], opening: ['Reports', 'trial-balance'] };
+const WHERE: Record<ImportKind, [string, string]> = { customers: ['Sales', 'customers'], suppliers: ['Purchases', 'suppliers'], items: ['Inventory', 'items'],
+  accounts: ['Ledger', 'chart-of-accounts'], opening: ['Reports', 'trial-balance'],
+  'open-invoices': ['Sales', 'invoices'], 'open-bills': ['Purchases', 'bills'] };
 
 function save(name: string, text: string, type: string) {
   const url = URL.createObjectURL(new Blob([text], { type }));

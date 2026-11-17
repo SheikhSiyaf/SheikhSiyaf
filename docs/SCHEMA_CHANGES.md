@@ -468,3 +468,11 @@ Every change below is covered by a test in `test/`.
 | `document_amount_due()` counts allocations with a sign: an ordinary allocation reduces what is due, a refund allocation adds it back | Lets a refund settle the negative balance a credit note leaves. Every payment that existed before this migration has `is_refund = false`, so no existing figure changes; `test/refunds.test.ts` keeps that as a regression test |
 | `before_payment_insert()` reverses which side of the contact is required when `is_refund` | A refund paid out needs a customer, a refund received needs a supplier |
 | `before_allocation_insert()` matches the document to the refund's own side and caps the amount at what is owed back (a negative amount due) | A refund can only pay back money we are actually holding; refunding an invoice that is still unpaid, or refunding twice, is refused by the database |
+
+## 0056_opening_documents.sql
+| Change | Why |
+|---|---|
+| `documents.is_opening` (default false) | A client arriving from another system is owed money on PARTICULAR invoices and owes it on PARTICULAR bills. The import could only bring the whole receivable in as one total, so aged debtors, statements and payment matching were wrong from their first day |
+| `before_document_line_change()` sends an opening document's line to 3000 Opening balances, and refuses any VAT on it | An opening invoice is not a new sale: the revenue and the VAT belong to the previous system and were declared there, so nothing may land in income, expense or VAT |
+| `before_document_opening()`: only an invoice or a bill, exactly one line, no VAT, a number kept from the old system, and `is_opening` never changes | An ordinary document can never become an opening one, or the other way round, after the fact |
+| `before_einvoice_opening()` on `einvoices`, named to run before the other checks | An opening invoice is never sent to ZATCA or PINT AE: it was invoiced and reported in the old system, and sending it again would report the same sale twice |

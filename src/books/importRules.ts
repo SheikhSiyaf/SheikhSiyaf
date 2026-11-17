@@ -2,7 +2,7 @@
 // reading the header row (English or Arabic, any order, extra columns ignored), and the checks a row must pass
 // on its own. Checks against the books (duplicates, account codes) are in importService.ts.
 
-export const IMPORT_KINDS = ['customers', 'suppliers', 'items', 'accounts', 'opening'] as const;
+export const IMPORT_KINDS = ['customers', 'suppliers', 'items', 'accounts', 'opening', 'open-invoices', 'open-bills'] as const;
 export type ImportKind = (typeof IMPORT_KINDS)[number];
 export interface Column { key: string; en: string; ar: string; required?: boolean; example: string; aliases?: string[] }
 
@@ -45,7 +45,24 @@ export const COLUMNS: Record<ImportKind, Column[]> = {
     { key: 'debit', en: 'Debit', ar: 'مدين', example: '50000.00', aliases: ['dr'] },
     { key: 'credit', en: 'Credit', ar: 'دائن', example: '0.00', aliases: ['cr'] },
   ],
+  // The unpaid invoices and bills a client arrives with, each kept as its own open document (0056).
+  'open-invoices': openDoc('customer'),
+  'open-bills': openDoc('supplier'),
 };
+function openDoc(who: 'customer' | 'supplier'): Column[] {
+  const sales = who === 'customer';
+  return [
+    { key: 'contact', en: sales ? 'Customer' : 'Supplier', ar: sales ? 'العميل' : 'المورد', required: true,
+      example: sales ? 'Gulf Steel Trading' : 'Najd Wholesale', aliases: ['name', 'customer', 'supplier', 'الاسم', 'العميل', 'المورد'] },
+    { key: 'number', en: sales ? 'Invoice number' : 'Bill number', ar: sales ? 'رقم الفاتورة' : 'رقم فاتورة المورد', required: true,
+      example: sales ? 'INV-2025-0912' : 'SUP-4471', aliases: ['number', 'invoice no', 'bill no', 'reference', 'الرقم', 'رقم المستند'] },
+    { key: 'issueDate', en: 'Issue date', ar: 'تاريخ الإصدار', required: true, example: '2026-01-15',
+      aliases: ['date', 'invoice date', 'bill date', 'التاريخ'] },
+    { key: 'dueDate', en: 'Due date', ar: 'تاريخ الاستحقاق', example: '2026-02-14', aliases: ['due', 'payment due'] },
+    { key: 'amount', en: 'Amount still owed', ar: 'المبلغ المتبقي', required: true, example: '1150.00',
+      aliases: ['amount', 'balance', 'outstanding', 'total', 'المبلغ', 'الرصيد'] },
+  ];
+}
 export const ACCOUNT_TYPE_WORDS: Record<string, string> = {
   asset: 'asset', assets: 'asset', 'أصل': 'asset', 'أصول': 'asset',
   liability: 'liability', liabilities: 'liability', 'التزام': 'liability', 'التزامات': 'liability', 'خصوم': 'liability',
@@ -127,6 +144,16 @@ export function rowProblems(kind: ImportKind, v: Record<string, string>, country
     const type = ACCOUNT_TYPE_WORDS[(v.type ?? '').toLowerCase().trim()];
     if (!type) out.push('imp.p.type');
     else if (/^[1-9]\d{3}$/.test(v.code ?? '') && !({ asset: '1', liability: '2', equity: '3', income: '4', expense: '56789' } as Record<string, string>)[type]!.includes(v.code![0]!)) out.push('imp.p.codeType');
+  } else if (kind === 'open-invoices' || kind === 'open-bills') {
+    // An already-open document from the previous system: who it is for, its own number, its dates and what is left.
+    if (!v.contact) out.push('imp.p.contact');
+    if (!(v.number ?? '').trim()) out.push('imp.p.number');
+    if (!DATE.test((v.issueDate ?? '').trim())) out.push('imp.p.date');
+    if (v.dueDate && !DATE.test(v.dueDate.trim())) out.push('imp.p.dueDate');
+    else if (v.dueDate && v.dueDate.trim() < (v.issueDate ?? '').trim()) out.push('imp.p.dueBefore');
+    const a = amount(v.amount ?? '');
+    if (a === null) out.push('imp.p.amount');
+    else if (a <= 0n) out.push('imp.p.amountPositive');
   } else {
     if (!v.code) out.push('imp.p.code');
     const d = amount(v.debit ?? ''), c = amount(v.credit ?? '');
@@ -136,4 +163,6 @@ export function rowProblems(kind: ImportKind, v: Record<string, string>, country
   }
   return out;
 }
+/** A date as the import wants it: 2026-01-15. */
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
 export const isYes = yes;

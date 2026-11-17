@@ -6,7 +6,7 @@ import type { Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
 import { fromMinor } from '../money.js';
 import { postEntry } from '../ledger/ledger.js';
-import { saveContact } from './documentsService.js';
+import { addOpeningDocument, saveContact } from './documentsService.js';
 import { saveItem } from './inventoryService.js';
 import { saveAccount } from './setupService.js';
 import { SYSTEM_ACCOUNTS } from './chartTemplate.js';
@@ -32,6 +32,7 @@ export async function preview(db: Db, companyId: string, kind: ImportKind, rows:
   const existing = await existingKeys(db, companyId, kind);
   const accounts = kind === 'opening' ? new Map((await db.query(
     `SELECT code, id, name, cost_centre_required AS ccr FROM accounts WHERE company_id = $1`, [companyId])).rows.map((r) => [r.code as string, r])) : new Map();
+  const contacts = isOpenDocs(kind) ? await contactsByName(db, companyId, kind) : new Map<string, string>();
   for (const r of m.records) {
     const problems = rowProblems(kind, r.values, co.country);
     const key = keyOf(kind, r.values);
@@ -42,6 +43,8 @@ export async function preview(db: Db, companyId: string, kind: ImportKind, rows:
       if (!a) problems.push('imp.p.noAccount');
       else if (a.ccr) problems.push('imp.p.costCentre');
     }
+    // The customer or supplier must already be in the books: import them first, so nothing is created by guesswork.
+    if (isOpenDocs(kind) && r.values.contact && !contacts.has(r.values.contact.trim().toLowerCase())) problems.push('imp.p.noContact');
     const exists = kind !== 'opening' && !problems.length && (existing.has(key) || (r.values.vatNumber && existing.has(`vat:${r.values.vatNumber.replace(/\s/g, '')}`)));
     out.push({ line: r.line, values: r.values, status: problems.length ? 'error' : exists ? 'exists' : 'new', problems });
   }
@@ -66,8 +69,11 @@ export async function preview(db: Db, companyId: string, kind: ImportKind, rows:
 function keyOf(kind: ImportKind, v: Record<string, string>): string {
   if (kind === 'customers' || kind === 'suppliers') return `name:${(v.name ?? '').trim().toLowerCase()}`;
   if (kind === 'items') return `sku:${(v.sku ?? '').trim().toLowerCase()}`;
+  // An open document is known by its number: the same number twice is the same document.
+  if (kind === 'open-invoices' || kind === 'open-bills') return `number:${(v.number ?? '').trim().toLowerCase()}`;
   return `code:${(v.code ?? '').trim()}`;
 }
+const isOpenDocs = (k: ImportKind): k is 'open-invoices' | 'open-bills' => k === 'open-invoices' || k === 'open-bills';
 async function existingKeys(db: Db, companyId: string, kind: ImportKind): Promise<Set<string>> {
   if (kind === 'customers' || kind === 'suppliers') {
     const rows = (await db.query(`SELECT lower(name) AS n, vat_number AS v FROM contacts WHERE company_id = $1 AND ${kind === 'customers' ? 'is_customer' : 'is_supplier'}`, [companyId])).rows;
@@ -75,7 +81,21 @@ async function existingKeys(db: Db, companyId: string, kind: ImportKind): Promis
   }
   if (kind === 'items') return new Set((await db.query('SELECT lower(sku) AS s FROM items WHERE company_id = $1', [companyId])).rows.map((r) => `sku:${r.s}`));
   if (kind === 'accounts') return new Set((await db.query('SELECT code FROM accounts WHERE company_id = $1', [companyId])).rows.map((r) => `code:${r.code}`));
+  if (isOpenDocs(kind)) {
+    // A document number already in the books is left alone, never brought in twice.
+    const rows = (await db.query('SELECT lower(number) AS n FROM documents WHERE company_id = $1 AND type = $2 AND number IS NOT NULL',
+      [companyId, kind === 'open-invoices' ? 'invoice' : 'bill'])).rows;
+    return new Set(rows.map((r) => `number:${r.n}`));
+  }
   return new Set();
+}
+
+/** The customers (or suppliers) a list of open documents names, by lower-case name. */
+async function contactsByName(db: Db, companyId: string, kind: 'open-invoices' | 'open-bills'): Promise<Map<string, string>> {
+  const { rows } = await db.query(
+    `SELECT id, lower(name) AS n FROM contacts WHERE company_id = $1 AND status = 'active' AND ${kind === 'open-invoices' ? 'is_customer' : 'is_supplier'}`,
+    [companyId]);
+  return new Map(rows.map((r) => [r.n as string, r.id as string]));
 }
 
 export async function run(db: Db, companyId: string, kind: ImportKind, rows: unknown, o: Options = {}) {
@@ -98,12 +118,18 @@ export async function run(db: Db, companyId: string, kind: ImportKind, rows: unk
   }
   const todo = p.rows.filter((r) => r.status === 'new');
   if (!todo.length) bad('There is nothing new to import.', 'err.importNothing');
+  const contacts = isOpenDocs(kind) ? await contactsByName(db, companyId, kind) : new Map<string, string>();
   for (const r of todo) {
     const v = r.values;
     if (kind === 'customers' || kind === 'suppliers') {
       await saveContact(db, companyId, { isCustomer: kind === 'customers', isSupplier: kind === 'suppliers', name: v.name, nameAr: v.nameAr, vatNumber: v.vatNumber, crNumber: v.crNumber,
         email: v.email, phone: v.phone, address: v.address, city: v.city, country: v.country?.toUpperCase() || undefined, paymentTermsDays: v.paymentTermsDays || null,
         buildingNumber: v.buildingNumber, district: v.district, postalCode: v.postalCode });
+    } else if (isOpenDocs(kind)) {
+      // Each row is one already-open document from the previous system, kept with its own number and dates.
+      await addOpeningDocument(db, companyId, { type: kind === 'open-invoices' ? 'invoice' : 'bill',
+        contactId: contacts.get(v.contact!.trim().toLowerCase())!, number: v.number!.trim(),
+        issueDate: v.issueDate!.trim(), dueDate: v.dueDate?.trim() || undefined, amount: fromMinor(amount(v.amount!)!) });
     } else if (kind === 'items') {
       const price = v.salePrice ? fromMinor(amount(v.salePrice)!) : null;
       await saveItem(db, companyId, { sku: v.sku, name: v.name, nameAr: v.nameAr, unit: v.unit || 'pcs', salePrice: price, reorderLevel: v.reorderLevel || null });

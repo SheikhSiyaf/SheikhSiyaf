@@ -292,6 +292,8 @@ interface MDoc {
   reference: string | null; notes: string | null; originalId: string | null; journalEntryId: string | null; lines: (PricedLine & { id: string })[]; createdAt: string;
   payee?: string | null; paidFromAccountId?: string | null; recurringId?: string | null; voidedAt?: string | null;
   submittedBy?: string | null; decidedBy?: string | null; rejectionReason?: string | null;
+  /** Brought in from the client's previous system as an already-open invoice or bill (0056). */
+  isOpening?: boolean;
 }
 interface MPayment {
   id: string; companyId: string; direction: Direction; number: string; contactId: string; date: string; amount: bigint; accountId: string;
@@ -444,6 +446,35 @@ function issueM(id: string) {
   d.number = number; d.status = 'issued';
   aprDoneM(d.id);
   einvAfterIssueM(d);
+}
+/** One already-open invoice or bill from the client's previous system (0056). It keeps its own number and dates,
+ *  posts the whole amount against 3000 Opening balances with no income, no expense and no VAT, and is never
+ *  e-invoiced: the revenue and the VAT were declared in the old system. */
+function openingDocM(companyId: string, type: 'invoice' | 'bill', v: Record<string, string>) {
+  canPostIn(companyId);
+  const number = (v.number ?? '').trim();
+  const amount = Im.amount(v.amount ?? '');
+  if (!number) fail(400, 'Enter the number this invoice had in the old system.', 'err.openingNumber');
+  if (amount === null || amount <= 0n) fail(400, 'Enter the amount still owed.', 'err.amount');
+  if (sdb.docs.some((d) => d.companyId === companyId && d.type === type && d.number === number)) {
+    fail(400, `${number} is already in the books.`, 'err.openingNumberTaken');
+  }
+  const contact = sdb.contacts.find((c) => c.companyId === companyId && c.name.toLowerCase() === (v.contact ?? '').trim().toLowerCase())
+    ?? fail(400, 'Choose the customer or supplier.', 'err.contact');
+  const equity = db.accounts.find((a) => a.companyId === companyId && a.code === '3000')
+    ?? fail(400, "This client has no opening balances account (3000).", 'err.chart');
+  const sys = sysAccts(companyId);
+  const id = uid();
+  const line = { id: uid(), description: `Opening balance · ${number}`, quantity: '1', unitPrice: s(amount!),
+    accountId: equity.id, costCentreId: null, vatCode: 'out_of_scope' as const, vatRate: '0', net: amount!, vat: 0n };
+  const entry = type === 'invoice'
+    ? [{ accountId: sys.receivables, costCentreId: null, debit: amount!, credit: 0n }, { accountId: equity.id, costCentreId: null, debit: 0n, credit: amount! }]
+    : [{ accountId: equity.id, costCentreId: null, debit: amount!, credit: 0n }, { accountId: sys.payables, costCentreId: null, debit: 0n, credit: amount! }];
+  const je = post(session!, companyId, v.issueDate!.trim(), `${number} · ${contact.name}`, entry);
+  sdb.docs.push({ id, companyId, type, status: 'issued', number, contactId: contact.id, issueDate: v.issueDate!.trim(),
+    dueDate: v.dueDate?.trim() || null, reference: null, notes: null, originalId: null, journalEntryId: je,
+    lines: [line], createdAt: new Date().toISOString(), isOpening: true });
+  return id;
 }
 function quoteStatusM(id: string, status: string) {
   const d = docOf(id); canPostIn(d.companyId);
@@ -4302,13 +4333,21 @@ function importPreviewM(companyId: string, kind: Im.ImportKind, rows: unknown, o
     kind === 'customers' || kind === 'suppliers' ? sdb.contacts.filter((c) => c.companyId === companyId && (kind === 'customers' ? c.isCustomer : c.isSupplier)).flatMap((c) => [`name:${c.name.toLowerCase()}`, ...(c.vatNumber ? [`vat:${c.vatNumber}`] : [])])
     : kind === 'items' ? odb.items.filter((x) => x.companyId === companyId).map((x) => `sku:${x.sku.toLowerCase()}`)
     : kind === 'accounts' ? db.accounts.filter((a) => a.companyId === companyId).map((a) => `code:${a.code}`) : []);
-  const keyOf = (v: Record<string, string>) => (kind === 'customers' || kind === 'suppliers' ? `name:${(v.name ?? '').toLowerCase()}` : kind === 'items' ? `sku:${(v.sku ?? '').toLowerCase()}` : `code:${v.code ?? ''}`);
+  const openDocs = kind === 'open-invoices' || kind === 'open-bills';
+  const docType = kind === 'open-invoices' ? 'invoice' : 'bill';
+  // An open document is known by its number; the customer or supplier must already be in the books (0056).
+  const byName = new Map(sdb.contacts.filter((c) => c.companyId === companyId && c.status !== 'archived'
+    && (kind === 'open-invoices' ? c.isCustomer : c.isSupplier)).map((c) => [c.name.toLowerCase(), c.id]));
+  if (openDocs) for (const d of sdb.docs.filter((d) => d.companyId === companyId && d.type === docType && d.number)) existing.add(`number:${d.number!.toLowerCase()}`);
+  const keyOf = (v: Record<string, string>) => (kind === 'customers' || kind === 'suppliers' ? `name:${(v.name ?? '').toLowerCase()}`
+    : kind === 'items' ? `sku:${(v.sku ?? '').toLowerCase()}` : openDocs ? `number:${(v.number ?? '').trim().toLowerCase()}` : `code:${v.code ?? ''}`);
   const seen = new Set<string>();
   const out = m.records.map((r) => {
     const problems = Im.rowProblems(kind, r.values, co.country);
     const key = keyOf(r.values);
     if (seen.has(key)) problems.push('imp.p.repeated'); seen.add(key);
     if (kind === 'opening' && r.values.code) { const a = db.accounts.find((x) => x.companyId === companyId && x.code === r.values.code); if (!a) problems.push('imp.p.noAccount'); else if (a.costCentreRequired) problems.push('imp.p.costCentre'); }
+    if (openDocs && r.values.contact && !byName.has(r.values.contact.trim().toLowerCase())) problems.push('imp.p.noContact');
     const exists = kind !== 'opening' && !problems.length && (existing.has(key) || (r.values.vatNumber && existing.has(`vat:${r.values.vatNumber}`)));
     return { line: r.line, values: r.values, status: problems.length ? 'error' : exists ? 'exists' : 'new', problems };
   });
@@ -4341,15 +4380,17 @@ function importRunM(companyId: string, kind: Im.ImportKind, rows: unknown, o: Bo
   if (!todo.length) fail(400, 'There is nothing new to import.', 'err.importNothing');
   for (const r of todo) {
     const v = r.values;
-    if (kind === 'customers' || kind === 'suppliers') saveContactM(companyId, { ...v, isCustomer: kind === 'customers', isSupplier: kind === 'suppliers', country: v.country?.toUpperCase() || '' });
+    if (kind === 'open-invoices' || kind === 'open-bills') {
+      openingDocM(companyId, kind === 'open-invoices' ? 'invoice' : 'bill', v);
+    } else if (kind === 'customers' || kind === 'suppliers') saveContactM(companyId, { ...v, isCustomer: kind === 'customers', isSupplier: kind === 'suppliers', country: v.country?.toUpperCase() || '' });
     else if (kind === 'items') saveItemM(companyId, { sku: v.sku, name: v.name, nameAr: v.nameAr, unit: v.unit || 'pcs', salePrice: v.salePrice ? s(Im.amount(v.salePrice)!) : null, reorderLevel: v.reorderLevel || null });
     else saveAccountM(companyId, { code: v.code, name: v.name, nameAr: v.nameAr, type: Im.ACCOUNT_TYPE_WORDS[(v.type ?? '').toLowerCase().trim()], costCentreRequired: Im.isYes(v.costCentreRequired ?? '') });
   }
   return { imported: todo.length, skipped: p.counts.exists + p.counts.error, entryId: null };
 }
 routes.push(
-  ['POST', /^\/api\/companies\/([\w-]+)\/import\/([a-z]+)\/preview$/, (m, b) => importPreviewM(m[1]!, (Im.IMPORT_KINDS.find((k) => k === m[2]) ?? fail(400, 'Choose what to import.', 'err.format')), b?.rows, b)],
-  ['POST', /^\/api\/companies\/([\w-]+)\/import\/([a-z]+)\/run$/, (m, b) => importRunM(m[1]!, (Im.IMPORT_KINDS.find((k) => k === m[2]) ?? fail(400, 'Choose what to import.', 'err.format')), b?.rows, b)],
+  ['POST', /^\/api\/companies\/([\w-]+)\/import\/([a-z-]+)\/preview$/, (m, b) => importPreviewM(m[1]!, (Im.IMPORT_KINDS.find((k) => k === m[2]) ?? fail(400, 'Choose what to import.', 'err.format')), b?.rows, b)],
+  ['POST', /^\/api\/companies\/([\w-]+)\/import\/([a-z-]+)\/run$/, (m, b) => importRunM(m[1]!, (Im.IMPORT_KINDS.find((k) => k === m[2]) ?? fail(400, 'Choose what to import.', 'err.format')), b?.rows, b)],
 );
 
 

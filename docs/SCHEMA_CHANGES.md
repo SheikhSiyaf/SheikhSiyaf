@@ -497,3 +497,11 @@ Every change below is covered by a test in `test/`.
 | `before_payment_insert()` requires `amount = round(fx_amount x fx_rate, 2)` | What reached the bank must be what was written, at the rate given |
 | `before_allocation_insert()` counts in the PAYMENT's currency and refuses a document in another one | A payment never spans two currencies: mixing them would convert one party's money twice and neither side would close cleanly |
 | `before_advance_deduction()` refuses a deduction when either invoice has a currency; `doc_fx_not_advance`, `doc_fx_not_opening`, `doc_fx_type` | Deliberately out of scope rather than half-built: opening balances, expenses, employee claims and advance invoices stay in the company's own currency |
+
+## 0059_vat_rounding_by_category.sql
+| Change | Why |
+|---|---|
+| `line_vat_is_net_times_rate` replaced by `line_vat_near_its_own_share` (within one halala) | ZATCA's XML Implementation Standard v1.2 section 10: "VAT category tax amount shall be rounded on document level and NOT as a summation of rounded Invoice line VAT amounts." 0005 had written the forbidden rule into the table. A line now carries its SHARE of the category's VAT, so it can sit a halala from its own amount times the rate; more than that is still refused, so a line can never hold an arbitrary figure |
+| `line_fx_vat_is_net_times_rate` replaced by `line_fx_vat_near_its_own_share` | The same, for the amounts as written on a document in another currency (0058) |
+| `check_document_complete()` now requires each VAT category's tax amount to equal its taxable amount times its rate, rounded once, for the written amounts as well | This is ZATCA's BR-CO-17 enforced where it cannot be bypassed. An invoice that fails it is arithmetically wrong and ZATCA can refuse it: a two-line invoice of 3.10 each showed 6.20 taxable with 0.94 VAT, where 6.20 at 15% is 0.93 |
+| No data is touched | The migration changes constraints and one function; it contains no INSERT, UPDATE or DELETE. Issued documents, their lines and their journal entries were already immutable, and an e-invoice keeps its own XML and hash. Seeding the demo books with the old code and the new gives byte-identical figures for all 78 issued documents, because the change only bites where line amounts round differently |

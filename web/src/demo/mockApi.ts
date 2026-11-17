@@ -12,7 +12,7 @@ import { CHART_TEMPLATE, SYSTEM_ACCOUNTS } from '../../../src/books/chartTemplat
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_SELF, DEMO_SELF_ROLES, DEMO_USERS } from '../../../src/db/demoData.ts';
 import { accessTo, cleanModules, DEFAULT_MODULES, isIndustry, ROLE_MODULES, type AccessLevel, type Industry } from '../../../src/books/modules.ts';
 import {
-  addDays, AGE_BUCKETS, ageBucket, nextOccurrence, type Frequency, convertLine, convertMinor, documentTotals, foreignCurrency, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, rateToScaled, rateToString, sideOf,
+  addDays, AGE_BUCKETS, ageBucket, nextOccurrence, type Frequency, convertLine, convertMinor, documentTotals, foreignCurrency, formatNumber, isCredit, numberPrefix, postingFor, postingForPayment, priceLine, rateToScaled, rateToString, roundVatByCategory, sideOf,
   type AgeBucket, type Direction, type DocType, type LineInput, type PricedLine,
 } from '../../../src/books/documents.ts';
 import { autoAllocate, netFromGross, milliToString, quantityToMilli } from '../../../src/books/documents.ts';
@@ -429,7 +429,9 @@ function saveDraftM(companyId: string, b: Record<string, unknown>, id?: string):
   if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) fail(400, 'Enter the date.', 'err.date');
   const dueDate = b.dueDate ? String(b.dueDate) : null;
   if (dueDate && dueDate < issueDate) fail(400, 'The due date cannot be before the document date.', 'err.dueDate');
-  const written = priceLinesM(companyId, sideOf(type), b.lines as LineInput[]);
+  // ZATCA rounding (0059): a VAT category's tax amount is rounded once on the document, not added up from rounded
+  // line amounts. roundVatByCategory copies each line, so the mock's own line id survives.
+  const written = roundVatByCategory(priceLinesM(companyId, sideOf(type), b.lines as LineInput[])) as (PricedLine & { id: string })[];
   // Another currency (0058): the prices were typed in that currency, so the lines that post are the converted ones.
   const company = db.companies.find((c) => c.id === companyId)!;
   let currency: string | null = null;
@@ -441,7 +443,9 @@ function saveDraftM(companyId: string, b: Record<string, unknown>, id?: string):
     try { rateScaled = rateToScaled(String(b.fxRate ?? '')); }
     catch { fail(400, 'Enter the exchange rate for this currency.', 'err.fxRate'); }
   }
-  const lines = rateScaled ? written.map((l) => ({ ...convertLine(l, rateScaled!, company.vatRate), id: l.id })) : written;
+  const lines = rateScaled
+    ? roundVatByCategory(written.map((l) => ({ ...convertLine(l, rateScaled!, company.vatRate), id: l.id }))) as (PricedLine & { id: string })[]
+    : written;
   const head = { contactId: contact?.id ?? null, issueDate, dueDate: isExpense ? null : dueDate, reference: (b.reference as string)?.trim() || null, notes: (b.notes as string)?.trim() || null, lines,
     currency, fxRate: rateScaled ? rateToString(rateScaled) : null, written: currency ? written : undefined,
     payee: isExpense ? (b.payee as string)?.trim() || null : null, paidFromAccountId: isExpense ? (b.paidFromAccountId as string) || null : null };

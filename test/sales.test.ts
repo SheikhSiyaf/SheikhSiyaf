@@ -98,7 +98,18 @@ describe('Invoices', () => {
   it('the database rejects line amounts that do not follow quantity x price and the VAT rate', async () => {
     const id = await as(f.staff, (db) => S.saveDraft(db, f.a.id, { type: 'invoice', contactId: customer, issueDate: '2026-03-10', lines: [line()] }));
     await expect(owner.query(`UPDATE document_lines SET net_amount = net_amount + 0.01 WHERE document_id = $1`, [id])).rejects.toThrow(/line_net_is_qty_times_price/);
-    await expect(owner.query(`UPDATE document_lines SET vat_amount = vat_amount + 0.01 WHERE document_id = $1`, [id])).rejects.toThrow(/line_vat_is_net_times_rate/);
+    // A line's VAT is its share of its VAT category's tax amount (0059), so it may sit one halala away from its
+    // own amount times the rate. Two halalas is still refused outright.
+    await expect(owner.query(`UPDATE document_lines SET vat_amount = vat_amount + 0.02 WHERE document_id = $1`, [id])).rejects.toThrow(/line_vat_near_its_own_share/);
+    // A halala out is allowed on the line, and issuing works the VAT out again, so what is posted obeys the rule.
+    await owner.query(`UPDATE document_lines SET vat_amount = vat_amount + 0.01 WHERE document_id = $1`, [id]);
+    const tampered = await as(f.staff, (db) => S.saveDraft(db, f.a.id, { type: 'invoice', contactId: customer, issueDate: '2026-03-10', lines: [line()] }));
+    await owner.query(`UPDATE document_lines SET vat_amount = vat_amount + 0.01 WHERE document_id = $1`, [tampered]);
+    await as(f.staff, (db) => S.issueDocument(db, tampered));
+    const after = (await owner.query(`SELECT sum(l.vat_amount)::text AS vat, round(sum(l.net_amount) * max(l.vat_rate) / 100, 2)::text AS should
+      FROM document_lines l WHERE l.document_id = $1`, [tampered])).rows[0];
+    expect(after.vat).toBe(after.should);
+    await owner.query(`UPDATE document_lines SET vat_amount = vat_amount - 0.01 WHERE document_id = $1`, [id]);
     await expect(owner.query(`UPDATE document_lines SET vat_rate = 5, vat_amount = 100 WHERE document_id = $1`, [id])).rejects.toThrow(/company VAT rate/);
     // Totals that do not match the lines cannot be issued.
     await owner.query(`UPDATE documents SET net_total = 1, vat_total = 0, gross_total = 1 WHERE id = $1`, [id]);

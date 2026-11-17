@@ -1,10 +1,15 @@
 // VAT calculation. Same invoice layout for every country; country e-invoicing is a separate adapter.
 //
-// ROUNDING: per line, half away from zero, to 2 decimals. This is a placeholder until the rule is
-// agreed with ZATCA / FTA (docs/ACCOUNTING_RULES.md). Change it only here, with tests.
+// ROUNDING, settled against ZATCA's Electronic Invoice XML Implementation Standard v1.2, section 10:
+// half-up to 2 decimals, and a VAT CATEGORY's tax amount is rounded once on the document, never added up from
+// rounded line amounts. vatForLine below rounds one amount; a document with several lines in the same category
+// goes through roundVatByCategory (src/books/documents.ts), which works the category total out and then shares it
+// over the lines. Change the rule only here and there, with tests.
 import { divRoundHalfUp, type Minor } from '../money.js';
 
-export const VAT_ROUNDING_RULE = 'per-line, half away from zero, 2 decimals (to confirm with ZATCA/FTA)';
+export const VAT_ROUNDING_RULE =
+  'half-up to 2 decimals; a VAT category is rounded once on the document total, then shared over its lines'
+  + ' (ZATCA XML Implementation Standard v1.2, section 10)';
 
 /** "15.00" -> 1500 (hundredths of a percent). */
 export function rateToBasisPoints(rate: string): bigint {

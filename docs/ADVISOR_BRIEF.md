@@ -138,6 +138,18 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
   connection pools missing the error listener a pool needs when the server closes a connection — and the suite then
   ran 25 times in a row with no failures and no errors, where before a problem appeared in roughly one run in three.
 
+- **VAT rounding settled against ZATCA, and the e-invoice file name (2026-11-17)**: ZATCA's XML Implementation
+  Standard v1.2 says in section 10 that a VAT category's tax amount is rounded once on the document and NOT added
+  up from rounded line amounts. Nusuh Books did the opposite, which their arithmetic rule BR-CO-17 also forbids: a
+  two-line invoice of SAR 3.10 each showed 6.20 taxable with 0.94 VAT, where 6.20 at 15% is 0.93. On random
+  multi-line invoices the two rules disagree **38.5% of the time**, by one or two halalas, and an invoice that
+  fails BR-CO-17 is one ZATCA can refuse. Each category's VAT is now worked out once on its own taxable amount and
+  then shared over its lines, so the lines still add up, the ledger still equals the document, and the database
+  itself enforces the rule when a document is issued. Invoices ALREADY ISSUED are untouched: they were immutable
+  already, a credit note still copies the invoice's own VAT, and seeding the demo books both ways gives identical
+  figures for all 78 issued documents. The e-invoice download is also named as ZATCA's section 14 requires
+  (seller VAT number, issue date and time, invoice number) instead of the invoice number alone.
+
 ## 6. Decisions already made (do not reopen without a reason)
 
 - Login decides everything: no client or role switcher in the app.

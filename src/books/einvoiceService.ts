@@ -9,6 +9,7 @@ import { HttpError } from '../api/errors.js';
 import { config } from '../config.js';
 import { decryptSecret, encryptSecret } from '../auth/secretBox.js';
 import type { EInvoiceData, EParty, VatCode } from '../einvoice/invoiceData.js';
+import { fileNamePartsFromXml, zatcaFileName } from '../einvoice/zatca/fileName.js';
 import * as Z from '../einvoice/zatca/crypto.js';
 import * as X from '../einvoice/zatca/xml.js';
 import { demoCertificate } from '../einvoice/zatca/demoCert.js';
@@ -412,10 +413,17 @@ export async function assertShareable(db: Db, documentId: string): Promise<void>
   if (e.status === 'pending' && e.fresh) bad(`ZATCA has not cleared it yet. Nusuh Books is trying again; send it in a few minutes.`, 'err.einvNotClearedYet');
 }
 
-/** The XML to download: the cleared one from ZATCA when there is one. */
+/** The XML to download: the cleared one from ZATCA when there is one.
+ *  A ZATCA file is named as their XML Implementation Standard v1.2 section 14 requires (seller VAT number, issue
+ *  date and time, invoice number), read out of the invoice itself so the name always matches the file. Peppol sets
+ *  no such rule for the UAE, so a PINT AE file keeps the plain name. */
 export async function xmlOf(db: Db, id: string): Promise<{ fileName: string; xml: string }> {
   const r = (await db.query(`SELECT e.xml, e.cleared_xml, e.scheme, d.number FROM einvoices e JOIN documents d ON d.id = e.document_id WHERE e.id = $1`, [id])).rows[0] ?? notFound();
-  return { fileName: `${String(r.number).replace(/[^\w-]+/g, '_')}${r.scheme === 'pint_ae' ? '-pint-ae' : ''}.xml`, xml: r.cleared_xml ?? r.xml };
+  const xml = r.cleared_xml ?? r.xml;
+  const plain = `${String(r.number).replace(/[^\w-]+/g, '_')}${r.scheme === 'pint_ae' ? '-pint-ae' : ''}.xml`;
+  if (r.scheme !== 'zatca') return { fileName: plain, xml };
+  const parts = fileNamePartsFromXml(xml);
+  return { fileName: parts ? zatcaFileName(parts) : plain, xml };
 }
 /** QR for the printed invoice: from the cleared XML (standard) or our own stamp (simplified). */
 export function qrFromXml(xml: string): string | null {

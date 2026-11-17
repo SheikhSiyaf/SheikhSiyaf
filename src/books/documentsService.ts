@@ -9,7 +9,7 @@ import { HttpError } from '../api/errors.js';
 import { SYSTEM_ACCOUNTS } from './chartTemplate.js';
 import {
   addDays, ageBucket, AGE_BUCKETS, convertLine, convertMinor, documentTotals, foreignCurrency, formatNumber, isCredit,
-  numberPrefix, postingFor, postingForPayment, priceLine, rateToScaled, rateToString, sideOf, VAT_CODES, PAYMENT_METHODS,
+  numberPrefix, postingFor, postingForPayment, priceLine, rateToScaled, rateToString, roundVatByCategory, sideOf, VAT_CODES, PAYMENT_METHODS,
   type AgeBucket, type Direction, type DocType, type LineInput, type PricedLine,
 } from './documents.js';
 
@@ -180,8 +180,10 @@ export async function saveDraft(db: Db, companyId: string, d: DocumentInput, id?
     bad('An expense or an employee claim is recorded in the company\'s own currency.', 'err.fxNotHere');
   }
   const rateScaled = currency ? ratePart(d.fxRate) : null;
-  const written = priceAll(d.lines, company.vatRate);
-  const lines = rateScaled ? written.map((l) => convertLine(l, rateScaled, company.vatRate)) : written;
+  // Each set of figures is a document in its own right, so each gets ZATCA's rounding: the VAT of a category is
+  // worked out on that category's net total, not added up from rounded line amounts (0059).
+  const written = roundVatByCategory(priceAll(d.lines, company.vatRate));
+  const lines = rateScaled ? roundVatByCategory(written.map((l) => convertLine(l, rateScaled, company.vatRate))) : written;
   const totals = documentTotals(lines);
   const fxTotals = currency ? documentTotals(written) : null;
   const head = [d.contactId || null, d.issueDate, isExpense ? null : d.dueDate || null, d.reference?.trim() || null, d.notes?.trim() || null,
@@ -232,6 +234,39 @@ async function storedLines(db: Db, docId: string): Promise<PricedLine[]> {
   return rows.map((r) => ({ ...r, net: toMinor(r.net), vat: toMinor(r.vat) }));
 }
 
+/**
+ * Brings a draft's VAT up to ZATCA's rounding rule before it is issued (0059).
+ *
+ * A draft saved by an earlier version has each line's VAT rounded on its own, which the rule forbids and which the
+ * database now refuses at issue. Rather than fail with a puzzling message on a draft the person did nothing wrong
+ * with, the lines are corrected here: the category totals are unchanged in net terms, only the halalas move. A
+ * draft already saved under the rule is left exactly as it is.
+ */
+async function fixVatRounding(db: Db, docId: string, lines: PricedLine[]): Promise<PricedLine[]> {
+  const fixed = roundVatByCategory(lines);
+  const changed = fixed.some((l, i) => l.vat !== lines[i]!.vat);
+  const fx = (await db.query(
+    `SELECT l.line_no AS "lineNo", l.fx_net_amount::text AS net, l.fx_vat_amount::text AS vat, l.vat_code AS "vatCode", l.vat_rate::text AS "vatRate"
+     FROM document_lines l WHERE l.document_id = $1 AND l.fx_net_amount IS NOT NULL ORDER BY l.line_no`, [docId])).rows;
+  const fxFixed = fx.length
+    ? roundVatByCategory(fx.map((r) => ({ description: '', quantity: '1', unitPrice: '0', accountId: '', vatCode: r.vatCode, vatRate: r.vatRate, net: toMinor(r.net), vat: toMinor(r.vat) })))
+    : [];
+  const fxChanged = fxFixed.some((l, i) => l.vat !== toMinor(fx[i]!.vat));
+  if (!changed && !fxChanged) return lines;
+  let n = 1;
+  for (const [i, l] of fixed.entries()) {
+    await db.query('UPDATE document_lines SET vat_amount = $2, fx_vat_amount = coalesce($3, fx_vat_amount) WHERE document_id = $1 AND line_no = $4',
+      [docId, fromMinor(l.vat), fxFixed[i] ? fromMinor(fxFixed[i]!.vat) : null, n++]);
+  }
+  const t = documentTotals(fixed);
+  const ft = fxFixed.length ? documentTotals(fxFixed) : null;
+  await db.query(
+    `UPDATE documents SET vat_total = $2, gross_total = $3, fx_vat_total = coalesce($4, fx_vat_total), fx_gross_total = coalesce($5, fx_gross_total)
+     WHERE id = $1`,
+    [docId, fromMinor(t.vat), fromMinor(t.gross), ft ? fromMinor(ft.vat) : null, ft ? fromMinor(ft.gross) : null]);
+  return fixed;
+}
+
 /** Gives the document its number, posts its journal entry and marks it issued. Never changes afterwards. */
 /** Advances deducted on a final invoice (0046): Dr 2160 Customer advances (net) / Dr Output VAT (the advance's VAT) /
  *  Cr Receivables (prepaid amount), in the invoice's own entry. Nothing for other documents. */
@@ -252,8 +287,9 @@ export async function issueDocument(db: Db, id: string): Promise<void> {
   if (d.type === 'quotation') bad('Quotations are sent, not issued.', 'err.format');
   if (d.type === 'purchase_order') bad('Purchase orders are sent, not issued.', 'err.format');
   if (d.type === 'claim') bad('Claims are submitted and approved, not issued.', 'err.format');
-  const lines = await storedLines(db, id);
+  let lines = await storedLines(db, id);
   if (!lines.length) bad('Add at least one line.', 'err.noLines');
+  lines = await fixVatRounding(db, id, lines);
   if (d.type === 'expense' && !d.paid_from_account_id) bad('Choose the bank or cash account the expense was paid from.', 'err.bankAccount');
   if (d.type === 'expense' && !d.contact_id && !String(d.payee ?? '').trim()) bad('Enter who was paid (a supplier or a payee name).', 'err.payee');
   const company = await companyInfo(db, d.company_id);

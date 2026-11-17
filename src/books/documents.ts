@@ -93,6 +93,49 @@ export function priceLine(l: LineInput, companyVatRate: string): PricedLine {
   return { ...l, quantity: milliToString(qty), unitPrice: fromMinor(price), vatRate, net, vat: vatForLine(net, vatRate) };
 }
 
+/**
+ * VAT the way ZATCA requires it on a document with more than one line.
+ *
+ * Their XML Implementation Standard v1.2, section 10 "Rounding": "Rounding shall be done on the final calculation
+ * results not on any intermediate results" and "VAT category tax amount shall be rounded on document level and not
+ * as a summation of rounded Invoice line VAT amounts." Rounding each line and adding up is the thing that forbids,
+ * and it also breaks their arithmetic rule BR-CO-17, which wants the VAT shown for a category to equal that
+ * category's taxable amount times its rate, rounded once.
+ *
+ * So each VAT category's total is worked out from the category's own net total, then handed back to its lines: the
+ * whole halalas first, and the ones left over to the lines with the largest part left over, line order breaking a
+ * tie. The lines therefore still add up to the category, which is what every report, the ledger entry and
+ * check_document_complete rely on, and no line ends up more than a halala from its own share.
+ */
+export function roundVatByCategory(lines: PricedLine[]): PricedLine[] {
+  const groups = new Map<string, number[]>();
+  lines.forEach((l, i) => {
+    const key = `${l.vatCode}|${l.vatRate}`;
+    const g = groups.get(key);
+    if (g) g.push(i); else groups.set(key, [i]);
+  });
+  const out = lines.map((l) => ({ ...l }));
+  for (const idx of groups.values()) {
+    const rate = rateToBasisPoints(lines[idx[0]!]!.vatRate);
+    if (rate === 0n) { for (const i of idx) out[i]!.vat = 0n; continue; }
+    const category = divRoundHalfUp(idx.reduce((t, i) => t + lines[i]!.net, 0n) * rate, 10_000n);
+    // Each line's exact share is net x rate / 10000. Give out the whole halalas first.
+    const share = idx.map((i) => lines[i]!.net * rate);
+    const whole = share.map((v) => v / 10_000n);
+    let left = category - whole.reduce((a, b) => a + b, 0n);
+    // Rounding the sum can never give less than the sum of the parts rounded down, so `left` is never negative,
+    // and it is below the number of lines, so every halala finds a line.
+    const byRemainder = idx.map((_, j) => j).sort((a, b) => {
+      const ra = share[a]! % 10_000n, rb = share[b]! % 10_000n;
+      return ra === rb ? a - b : rb > ra ? 1 : -1;
+    });
+    const extra = idx.map(() => 0n);
+    for (const j of byRemainder) { if (left <= 0n) break; extra[j] = 1n; left -= 1n; }
+    idx.forEach((i, j) => { out[i]!.vat = whole[j]! + extra[j]!; });
+  }
+  return out;
+}
+
 export function documentTotals(lines: { net: Minor; vat: Minor }[]) {
   const net = lines.reduce((s, l) => s + l.net, 0n);
   const vat = lines.reduce((s, l) => s + l.vat, 0n);

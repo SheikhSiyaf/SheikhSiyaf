@@ -27,5 +27,8 @@ Each line is one automated test. All must pass before any ledger change merges.
 - Roles: client_viewer cannot post; reviewer cannot edit client entries; only partner can lock/unlock periods.
 
 ## VAT (before invoices are built)
-- Invoice VAT = line amount x company vat_rate, rounded per rule agreed with ZATCA/FTA.
+- Invoice VAT: half-up to 2 decimals, and a VAT CATEGORY's tax amount is rounded ONCE on the document's taxable
+  amount for that category, never added up from rounded line amounts. ZATCA Electronic Invoice XML Implementation
+  Standard v1.2, section 10 "Rounding", and their arithmetic rule BR-CO-17. The category total is then shared over
+  its lines so the lines still add up to it (src/books/documents.ts roundVatByCategory, migration 0059).
 - Credit note reverses the original invoice's VAT exactly.

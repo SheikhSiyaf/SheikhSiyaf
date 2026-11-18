@@ -1,0 +1,92 @@
+# How Nusuh Books is deployed, declared here rather than typed into a dashboard.
+#
+# Render reads this file (a "Blueprint") and creates the service with exactly these settings, so a deploy can be
+# repeated, reviewed in a pull request, and rebuilt from scratch if the service is ever lost. Nothing secret is in
+# this file: every credential is marked `sync: false`, which means Render asks for the value and keeps it in the
+# service's own settings. Secrets never belong in the repository.
+#
+# The database is NOT declared here. It lives on Supabase, and its connection strings arrive as the variables below.
+#
+# To use it: in the Render Dashboard choose New > Blueprint, pick this repository, and Render will prompt for each
+# `sync: false` value. Note Render's own caveat: it prompts for those values only when the Blueprint is FIRST
+# created. Later changes to them are made in the service's Environment settings.
+
+services:
+  - type: web
+    name: nusuh-books
+    runtime: node
+    # Frankfurt is the closest region Render offers to Saudi Arabia and the UAE, and the EU keeps the options open
+    # for data-protection rules. A service's region cannot be changed afterwards.
+    region: frankfurt
+    # 0.5 CPU, 512 MB — the cheapest paid plan. The free plan sleeps when idle, which would stop the background
+    # jobs (queued email every minute, e-invoices every two minutes), so it is not an option here.
+    # If memory becomes tight, mainly when generating PDFs, the next plan up is 1c-2g.
+    plan: 0.5c-512mb
+    # `branch` is deliberately not set: Render uses the repository's default branch, or whichever branch is chosen
+    # when the Blueprint is created. Set it there rather than pinning a branch name in this file.
+
+    # --include=dev is required, not optional. NODE_ENV=production below makes npm skip devDependencies, and the
+    # build needs typescript and vite, which are devDependencies. Without it the build fails with a missing tsc.
+    buildCommand: npm ci --include=dev && npm run build:prod
+
+    # Runs after the build and before the new version starts, so the schema is in step with the code that is about
+    # to serve. Every migration is additive and recorded in schema_migrations, and applied once only.
+    preDeployCommand: npm run db:migrate:prod
+
+    # Plain node on compiled JavaScript. Never `npm start`: that runs the TypeScript through tsx, which is a
+    # devDependency and is not installed at runtime.
+    startCommand: npm run start:prod
+
+    # /health reports the database and every background job, and answers 503 when one is failing or overdue, so
+    # Render replaces an instance that is up but not working. It contains no customer data.
+    healthCheckPath: /health
+
+    # Deploy only when the GitHub checks pass: the types, the 689 tests and the browser checks. A commit that
+    # breaks them never reaches the clients.
+    autoDeployTrigger: checksPass
+
+    envVars:
+      # NODE_ENV=production turns on the start-up checks in src/config.ts: the server refuses to start with a
+      # missing or example secret, with demo sign-in on, or connecting as a superuser.
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        # Render puts one proxy in front of the service. Without this every visitor appears to come from the
+        # proxy's address, so one person's wrong passwords would lock everyone out of signing in.
+        value: "1"
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: DEMO_LOGINS
+        value: "false"
+
+      # The address the service is reached at, used in links in emails. Must start with https://.
+      - key: PUBLIC_URL
+        sync: false
+
+      # Supabase, session mode (port 5432 on the pooler host). Through the shared pooler the username carries the
+      # project: nusuh_app.<project-ref>. The server connects as nusuh_app so row-level security applies to it.
+      - key: DATABASE_URL
+        sync: false
+      # Only the pre-deploy migration uses this, as the project's owner role. The running server never does.
+      - key: DATABASE_ADMIN_URL
+        sync: false
+      # The password the migration sets on the nusuh_app role; it must match the one in DATABASE_URL.
+      - key: APP_DB_PASSWORD
+        sync: false
+
+      # Signs sign-in cookies. 32+ random characters.
+      - key: SESSION_SECRET
+        sync: false
+      # Encrypts two-factor and provider secrets in the database. A DIFFERENT random value from SESSION_SECRET,
+      # and never changed once there is real data, or those secrets can no longer be read.
+      - key: ENCRYPTION_KEY
+        sync: false
+
+      # Email. Leave EMAIL_PROVIDER unset until the sending domain is verified: until then messages simply wait in
+      # the outbox and nothing is sent to anyone.
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

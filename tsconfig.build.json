@@ -1,0 +1,22 @@
+// The production build of the server: TypeScript compiled to plain JavaScript in dist/, run with node.
+//
+// Why this exists. "npm start" runs the TypeScript directly through tsx, which is fine on a development machine but
+// cannot work on a host: tsx and typescript are devDependencies, and a host that installs with NODE_ENV=production
+// leaves them out, so the server would not start at all. Compiled JavaScript needs neither, and starts faster.
+//
+// rootDir is src, so src/api/server.ts becomes dist/api/server.js — the same depth. That matters: the server finds
+// the built web app with new URL('../../web/dist/', import.meta.url) and the migrations with
+// new URL('../../db/migrations/', import.meta.url), and both still land in the right place from dist/.
+// Flattening the output, or compiling to dist/src/, would quietly break both.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "noEmit": false,
+    "declaration": false,
+    // Stack traces in the host's logs point at the TypeScript line rather than the compiled one.
+    "sourceMap": true
+  },
+  "include": ["src"]
+}

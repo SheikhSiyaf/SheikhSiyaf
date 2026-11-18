@@ -5,16 +5,20 @@
   "description": "Nusuh Books: accounting platform for accounting firms and their clients (SA, UAE, later Oman).",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "concurrently -k -n api,web -c cyan,magenta \"tsx watch src/api/main.ts --api-only\" \"vite --config web/vite.config.ts\"",
     "build": "vite build --config web/vite.config.ts",
+    "build:server": "tsc -p tsconfig.build.json",
+    "build:prod": "npm run build:server && npm run build",
     "start": "tsx src/api/main.ts",
+    "start:prod": "node dist/api/main.js",
     "setup": "npm run db:migrate && npm run db:seed && npm run build",
     "db:up": "docker compose up -d --wait db",
     "db:down": "docker compose down",
     "db:migrate": "tsx src/db/migrate.ts",
+    "db:migrate:prod": "node dist/db/migrate.js",
     "db:seed": "tsx src/db/seed.ts",
     "db:reset": "tsx src/db/reset.ts",
     "db:install": "tsx src/db/install.ts",

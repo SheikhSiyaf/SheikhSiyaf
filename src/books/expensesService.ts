@@ -3,7 +3,7 @@
 import type { Db } from '../db/session.js';
 import { reverseEntry } from '../ledger/ledger.js';
 import { fromMinor, toMinor } from '../money.js';
-import { HttpError } from '../api/errors.js';
+import { HttpError, listOf } from '../api/errors.js';
 import { saveDraft } from './documentsService.js';
 import { nextOccurrence, priceLine, VAT_CODES, type Frequency, type LineInput } from './documents.js';
 
@@ -67,7 +67,7 @@ export async function saveRecurring(db: Db, companyId: string, r: RecurringInput
   if (!FREQS.includes(r.frequency as Frequency)) bad('Choose how often it repeats.', 'err.frequency');
   if (!r.nextDate || !DATE.test(r.nextDate)) bad('Enter the next date.', 'err.date');
   if (r.endDate && (!DATE.test(r.endDate) || r.endDate < r.nextDate!)) bad('The end date cannot be before the next date.', 'err.endDate');
-  const lines = (r.lines ?? []).map((l, i) => {
+  const lines = listOf<NonNullable<RecurringInput['lines']>[number]>(r.lines, 'lines').map((l, i) => {
     if (!String(l.description ?? '').trim()) bad(`Line ${i + 1}: enter a description.`, 'err.lineDescription');
     if (!l.accountId) bad(`Line ${i + 1}: choose an account.`, 'err.lineAccount');
     if (!VAT_CODES.includes(l.vatCode)) bad(`Line ${i + 1}: choose the VAT treatment.`, 'err.lineVat');

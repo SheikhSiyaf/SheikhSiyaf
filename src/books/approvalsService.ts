@@ -1,7 +1,7 @@
 // Approvals: rules per company (bills, supplier payments, customer credit notes at or above an amount), requests,
 // decisions, and carrying out an approved payment. Runs inside withUser(); 0026_approvals_forecast.sql enforces it.
 import type { Db } from '../db/session.js';
-import { HttpError } from '../api/errors.js';
+import { HttpError, listOf } from '../api/errors.js';
 import { toMinor, fromMinor } from '../money.js';
 import { recordPayment, type PaymentInput } from './documentsService.js';
 
@@ -56,7 +56,7 @@ export async function requestPayment(db: Db, companyId: string, p: PaymentInput 
   try { amount = toMinor(String(p.amount ?? '').replace(/,/g, '')); } catch { return bad('Enter the amount.', 'err.amount'); }
   if (amount <= 0n) bad('Enter the amount.', 'err.amount');
   const payment = { direction: 'made', contactId: p.contactId, date: p.date, amount: fromMinor(amount), accountId: p.accountId, method: p.method, reference: p.reference,
-    allocations: (p.allocations ?? []).filter((a) => a.amount && String(a.amount).trim() !== '' && String(a.amount).trim() !== '0') };
+    allocations: listOf<{ amount?: string }>(p.allocations, 'allocations').filter((a) => a.amount && String(a.amount).trim() !== '' && String(a.amount).trim() !== '0') };
   return (await db.query(
     `INSERT INTO approval_requests (company_id, kind, payment, contact_id, amount, note, requested_by) VALUES ($1, 'payment', $2, $3, $4, $5, app_user_id()) RETURNING id`,
     [companyId, JSON.stringify(payment), p.contactId, fromMinor(amount), text(p.note)])).rows[0].id;

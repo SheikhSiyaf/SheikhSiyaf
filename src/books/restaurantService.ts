@@ -3,7 +3,7 @@
 // once, records the payment, all in one transaction (db/migrations/0013_restaurant.sql links the three).
 import type { Db } from '../db/session.js';
 import { divRoundHalfUp, fromMinor, toMinor, type Minor } from '../money.js';
-import { HttpError } from '../api/errors.js';
+import { HttpError, listOf } from '../api/errors.js';
 import { SYSTEM_ACCOUNTS } from './chartTemplate.js';
 import { milliToString, quantityToMilli } from './documents.js';
 import * as S from './documentsService.js';
@@ -72,7 +72,7 @@ export async function saveRecipe(db: Db, companyId: string, r: RecipeInput, id?:
   if (price < 0n) bad('Enter the selling price.', 'err.recipePrice');
   const vat = ['standard', 'zero', 'exempt', 'out_of_scope'].includes(String(r.vatCode)) ? r.vatCode : 'standard';
   const income = r.incomeAccountId || (await db.query('SELECT id FROM accounts WHERE company_id = $1 AND code = $2', [companyId, SYSTEM_ACCOUNTS.sales])).rows[0]?.id;
-  const lines = (r.lines ?? []).filter((l) => l.itemId).map((l, i) => {
+  const lines = listOf<NonNullable<RecipeInput['lines']>[number]>(r.lines, 'lines').filter((l) => l.itemId).map((l, i) => {
     try { return { itemId: l.itemId!, q: quantityToMilli(String(l.quantity ?? '').trim()) }; }
     catch { return bad(`Line ${i + 1}: enter the quantity used in one portion (up to 3 decimals).`, 'err.recipeQty'); }
   });
@@ -113,7 +113,7 @@ export async function sellFood(db: Db, companyId: string, s: SaleInput) {
   const date = s.date && DATE.test(s.date) ? s.date : bad('Enter the date.', 'err.date');
   const method = ['cash', 'card', 'bank_transfer', 'on_account'].includes(String(s.method)) ? s.method! : bad('Choose how the customer paid.', 'err.saleMethod');
   if (method !== 'on_account' && !s.accountId) bad('Choose the cash or bank account the money went into.', 'err.bankAccount');
-  const wanted = (s.lines ?? []).map((l) => ({ recipeId: String(l.recipeId ?? ''), qty: Number(l.quantity) }))
+  const wanted = listOf<{ recipeId?: string; quantity?: unknown }>(s.lines, 'lines').map((l) => ({ recipeId: String(l.recipeId ?? ''), qty: Number(l.quantity) }))
     .filter((l) => l.recipeId && l.qty !== 0);
   if (!wanted.length) bad('Add at least one menu item.', 'err.saleEmpty');
   if (wanted.some((l) => !Number.isInteger(l.qty) || l.qty < 1 || l.qty > 999)) bad('Quantities are whole portions (1 to 999).', 'err.saleQty');

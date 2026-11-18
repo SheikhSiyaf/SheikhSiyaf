@@ -3,7 +3,7 @@
 import type { Db } from '../db/session.js';
 import { postEntry } from '../ledger/ledger.js';
 import { fromMinor, toMinor, type Minor } from '../money.js';
-import { HttpError } from '../api/errors.js';
+import { HttpError, listOf } from '../api/errors.js';
 import { SYSTEM_ACCOUNTS } from './chartTemplate.js';
 import { averageCost, issueCost, milliToString, notePrefix, quantityToMilli, receivedValue, type NoteType } from './inventory.js';
 import { nextNumber } from './documentsService.js';
@@ -124,7 +124,7 @@ export async function saveNoteDraft(db: Db, companyId: string, n: NoteInput, id?
   const type: NoteType = existing?.type ?? (n.type === 'gdn' ? 'gdn' : n.type === 'grn' ? 'grn' : bad('Choose goods received or goods delivered.', 'err.format'));
   if (!n.date || !DATE.test(n.date)) bad('Enter the date.', 'err.date');
   const other = n.otherAccountId || await accountByCode(db, companyId, type === 'grn' ? SYSTEM_ACCOUNTS.goodsReceived : SYSTEM_ACCOUNTS.costOfSales);
-  const lines = (n.lines ?? []).filter((l) => l.itemId || (l.quantity && String(l.quantity).trim()));
+  const lines = listOf<NoteLineInput>(n.lines, 'lines').filter((l) => l.itemId || (l.quantity && String(l.quantity).trim()));
   const priced = lines.map((l, i) => {
     if (!l.itemId) bad(`Line ${i + 1}: choose the item.`, 'err.noteItem');
     let q: bigint;

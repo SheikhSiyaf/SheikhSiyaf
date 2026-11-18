@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-17 (refunds; opening balances as individual open invoices and bills; a way out when a ZATCA certificate expires).
+Last updated: 2026-11-18 (readiness check over every API route before hosting; three crash fixes; VAT rounded once per category as ZATCA requires).
 
 ---
 
@@ -165,6 +165,15 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
   CRM, Rentals); the Administrator can change them.
 
 ## 7. Where things stand and what is next
+
+**Readiness check before hosting (2026-11-18).** Every route of the API was called with empty and malformed input as
+each kind of user (21,504 requests over 392 routes). It found three places where the server answered a crash rather
+than a plain error, all the same mistake: a field the screens always send as a list was read as one without checking,
+so a different shape ended in an unhandled error. They are fixed and the check now runs with every build
+(`test/routeProbe.test.ts`), which also lifted measured coverage of the server code from 84% of lines to 95%. One
+test that compared sign-in response times was unreliable and could fail a build with nothing wrong in the code; it now
+takes more readings and compares middles. **Still not covered by automated checks:** sending real email through the
+provider, subscription billing, and the background jobs — each needs a live account to exercise properly.
 
 **Going live needs** (none of these are code-heavy; they are accounts and decisions):
 - A PostgreSQL host (Supabase as a plain database, Neon, AWS RDS, or a Saudi/UAE region for data-residency law). Needs: PostgreSQL 16, the btree_gist extension, a login that can create the nusuh_app role, 11+ connections, daily backups with point-in-time restore.

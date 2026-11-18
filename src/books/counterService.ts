@@ -5,7 +5,7 @@
 //                cost received, on 2050 Goods received not yet billed (issuing the bill clears it), optionally from
 //                the purchase order it delivers.
 import type { Db } from '../db/session.js';
-import { HttpError } from '../api/errors.js';
+import { HttpError, listOf } from '../api/errors.js';
 import { toMinor } from '../money.js';
 import { addDays } from './documents.js';
 import { SYSTEM_ACCOUNTS } from './chartTemplate.js';
@@ -38,7 +38,7 @@ export interface CounterSaleInput {
 /** Goods out with the customer's invoice (and payment). */
 export async function counterSale(db: Db, companyId: string, x: CounterSaleInput) {
   if (!x.contactId) bad('Choose the customer to make the invoice.', 'err.counterCustomer');
-  const lines = (x.lines ?? []).filter((l) => l.itemId);
+  const lines = listOf<NonNullable<CounterSaleInput['lines']>[number]>(x.lines, 'lines').filter((l) => l.itemId);
   if (!lines.length) bad('Add at least one item.', 'err.noteNoLines');
   const info = await items(db, companyId, lines.map((l) => l.itemId!));
   const priced = lines.map((l) => {
@@ -84,7 +84,7 @@ export async function counterReceive(db: Db, companyId: string, x: CounterReceiv
     po = (await db.query(`SELECT id, number FROM documents WHERE id = $1 AND company_id = $2 AND type = 'purchase_order' AND status IN ('sent', 'received') AND contact_id = $3
       FOR UPDATE`, [x.purchaseOrderId, companyId, x.contactId])).rows[0] ?? bad('Choose an open purchase order of this supplier.', 'err.counterPo');
   }
-  const lines = (x.lines ?? []).filter((l) => l.itemId);
+  const lines = listOf<NonNullable<CounterReceiveInput['lines']>[number]>(x.lines, 'lines').filter((l) => l.itemId);
   const note = await quickNote(db, companyId, { type: 'grn', date: x.date, contactId: x.contactId, reference: x.reference,
     lines: lines.map((l) => ({ itemId: l.itemId!, quantity: String(l.quantity ?? ''), unitCost: l.unitCost ?? null })) });
   const info = await items(db, companyId, lines.map((l) => l.itemId!));

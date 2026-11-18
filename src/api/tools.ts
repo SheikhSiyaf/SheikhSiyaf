@@ -1,7 +1,7 @@
 // Accountant tools routes: recurring sales invoices, statements, reminders, budgets, notifications, bulk actions, export.
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
-import { HttpError } from './errors.js';
+import { HttpError, listOf } from './errors.js';
 import { baseUrl, dateParam, today, uuidParam, type Ctx } from './context.js';
 import * as T from '../books/toolsService.js';
 import * as Mail from '../books/emailService.js';
@@ -68,7 +68,7 @@ export function registerToolRoutes(app: FastifyInstance, { as, opts }: Ctx) {
   // notifications
   app.get<{ Params: P }>('/api/companies/:id/notifications', async (req) => inCompany(req, req.params.id, (db, c) => T.notifications(db, c)));
   app.post<{ Params: P; Body: { keys?: string[] } }>('/api/companies/:id/notifications/read', async (req) =>
-    inCompany(req, req.params.id, async (db, c) => { await T.markRead(db, c, (req.body?.keys ?? []).map(String)); return { ok: true }; }));
+    inCompany(req, req.params.id, async (db, c) => { await T.markRead(db, c, listOf(req.body?.keys, 'list').map(String)); return { ok: true }; }));
 
   // bulk actions
   app.post<{ Params: P; Body: { ids?: string[] } }>('/api/companies/:id/bulk/issue', async (req) => {

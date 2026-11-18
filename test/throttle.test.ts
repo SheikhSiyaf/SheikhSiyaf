@@ -9,7 +9,7 @@ import { buildServer } from '../src/api/server.js';
 import { hashPassword } from '../src/auth/password.js';
 import { encryptSecret } from '../src/auth/secretBox.js';
 import { base32Decode, newTotpSecret, totpCode } from '../src/auth/totp.js';
-import { Throttle, LOGIN_LIMITS, purgeAttempts } from '../src/auth/throttle.js';
+import { Throttle, LOGIN_LIMITS, accountKey, purgeAttempts } from '../src/auth/throttle.js';
 
 const PW = 'pw-123456-right';
 const SECRET = 'throttle-test-secret';
@@ -19,6 +19,9 @@ let n = 0;
 /** Each test signs in from its own address, so the per-IP count of one test never reaches another. */
 const ipFor = () => `10.77.${Math.floor(++n / 250)}.${n % 250 + 1}`;
 const server = (o: { trustProxy?: boolean } = {}): FastifyInstance => buildServer({ pool: appPool, sessionSecret: SECRET, ...o });
+/** Clears the failure count of one account only, so a test file running beside this one is not affected. */
+const clearAccount = (e: string) =>
+  owner.query(`DELETE FROM auth_attempts WHERE kind = 'account' AND key = $1`, [accountKey(e)]);
 const login = (s: FastifyInstance, e: string, password: string, ip: string, headers: Record<string, string> = {}) =>
   s.inject({ method: 'POST', url: '/api/login', payload: { email: e, password }, remoteAddress: ip, headers });
 
@@ -91,12 +94,31 @@ describe('Unknown emails', () => {
     for (let i = 0; i < 4; i++) await login(s, unknown, 'wrong', ip);
     const blocked = await login(s, unknown, 'wrong', ip);
     expect([blocked.statusCode, blocked.json().key]).toEqual([429, 'err.tooMany']);
-    // The password check costs the same either way (a dummy hash is checked when the email does not exist).
+    // The password check costs the same either way (a dummy hash is checked when the email does not exist), so the
+    // reply does not reveal whether an account exists.
+    //
+    // This is a timing measurement in a test run that uses every core, so single readings are noisy: an earlier
+    // version summed 3 readings each way and demanded a ratio under 2, and a run of the whole suite produced 2.89
+    // and failed, with nothing wrong in the code. Medians of many readings are used instead, and the band is wide.
+    // It still means something: without the dummy hash the unknown email skips scrypt entirely and comes back about
+    // an order of magnitude faster, which this catches easily. A few per cent of difference is not what matters.
     const time = async (e: string) => { const t0 = process.hrtime.bigint(); await login(s, e, 'wrong', ipFor()); return Number(process.hrtime.bigint() - t0); };
-    let k = 0, u = 0;
-    for (let i = 0; i < 3; i++) { k += await time(email.e!); u += await time(`nobody-${randomUUID()}@example.com`); }
-    expect(u / k).toBeGreaterThan(0.5);
-    expect(u / k).toBeLessThan(2);
+    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+    const ks: number[] = [], us: number[] = [];
+    for (let i = 0; i < 9; i++) {
+      // Nine wrong passwords for one account is past the five-attempt limit, so the count for this account is
+      // cleared before each reading. Without it the account stays locked, every later reading returns 429 without
+      // checking a password at all, and a different test that signs this person in correctly fails for no reason —
+      // which is exactly what happened. Both readings are taken the same way, so the comparison still holds.
+      await clearAccount(email.e!);
+      ks.push(await time(email.e!));
+      us.push(await time(`nobody-${randomUUID()}@example.com`));
+    }
+    await clearAccount(email.e!);
+    const ratio = median(us) / median(ks);
+    expect(ratio, `unknown/known response time ratio (known ${Math.round(median(ks) / 1e6)}ms, unknown ${Math.round(median(us) / 1e6)}ms)`)
+      .toBeGreaterThan(0.4);
+    expect(ratio).toBeLessThan(2.5);
     await s.close();
   });
 });

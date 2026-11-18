@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '../db/session.js';
 import { postEntry } from '../ledger/ledger.js';
 import { fromMinor, toMinor, type Minor } from '../money.js';
-import { HttpError } from '../api/errors.js';
+import { HttpError, listOf } from '../api/errors.js';
 import { SYSTEM_ACCOUNTS } from './chartTemplate.js';
 import { nextNumber } from './documentsService.js';
 import { monthEnd } from './assets.js';
@@ -203,7 +203,10 @@ export async function saveAttendance(db: Db, companyId: string, periodEnd: strin
   checkMonth(periodEnd);
   const staff = await employees(db, companyId);
   const problems: string[] = [];
-  for (const r of rows ?? []) {
+  // A string is iterable, so a mistyped body would otherwise be walked character by character and reported as a list
+  // of unknown employee numbers. Say the shape is wrong instead.
+  rows = listOf(rows, 'attendance rows');
+  for (const r of rows) {
     const e = staff.find((x) => (r.contactId && x.id === r.contactId) || (r.employeeNo && x.employeeNo === String(r.employeeNo).trim()));
     if (!e) { problems.push(String(r.employeeNo ?? r.contactId ?? '?')); continue; }
     const absent = Number(String(r.absentDays ?? '0').trim() || 0);
@@ -220,7 +223,7 @@ export async function saveAttendance(db: Db, companyId: string, periodEnd: strin
       ON CONFLICT (contact_id, period_end) DO UPDATE SET absent_days = $4, overtime_hours = $5, notes = $6`, [companyId, e.id, periodEnd, absent, (ot / 100).toFixed(2), t(r.notes)]);
   }
   if (problems.length) bad('Some employee numbers were not found.', 'err.attendanceUnknown', problems);
-  return { saved: (rows ?? []).length };
+  return { saved: rows.length };
 }
 
 /** Attendance file: employee number, absent days, overtime hours (comma, semicolon or tab separated; a header line is skipped). */

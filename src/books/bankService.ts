@@ -3,7 +3,7 @@
 import type { Db } from '../db/session.js';
 import { postEntry } from '../ledger/ledger.js';
 import { fromMinor, toMinor, type Minor } from '../money.js';
-import { HttpError } from '../api/errors.js';
+import { HttpError, listOf } from '../api/errors.js';
 import { autoAllocate, netFromGross, VAT_CODES, type VatCode } from './documents.js';
 import { bankFromIban, fingerprints, ibanValid, normaliseIban, similarity, type Layout, type StatementRow } from '../bank/statement.js';
 import * as S from './documentsService.js';
@@ -74,7 +74,7 @@ export interface ImportInput { fileName?: string; lines?: StatementRow[]; layout
 export async function importStatement(db: Db, bankAccountId: string, input: ImportInput) {
   const acct = await getBankAccount(db, bankAccountId);
   if (acct.status !== 'active') bad('This bank account is closed.', 'err.bankClosed');
-  const lines = (input.lines ?? []).map((l, i) => {
+  const lines = listOf<StatementRow>(input.lines, 'statement lines').map((l, i) => {
     let amount: Minor, balance: Minor | null = null;
     try {
       amount = toMinor(String(l.amount));

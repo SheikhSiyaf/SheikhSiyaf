@@ -2,7 +2,7 @@
 // payment reminders by email, budgets against actual, in-app notifications, and exporting all of a company's data.
 // Every function runs inside withUser().
 import type { Db } from '../db/session.js';
-import { HttpError } from '../api/errors.js';
+import { HttpError, listOf } from '../api/errors.js';
 import { fromMinor, toMinor } from '../money.js';
 import { nextOccurrence, priceLine, VAT_CODES, type Frequency, type LineInput } from './documents.js';
 import { issueDocument, saveDraft } from './documentsService.js';
@@ -56,7 +56,7 @@ export async function saveRecurringInvoice(db: Db, companyId: string, r: Recurri
   const terms = Number(r.termsDays ?? 30);
   if (!Number.isInteger(terms) || terms < 0 || terms > 365) bad('Payment terms are 0 to 365 days.', 'err.terms');
   const rate = await vatRateOf(db, companyId);
-  const lines = (r.lines ?? []).map((l, i) => {
+  const lines = listOf<NonNullable<RecurringInvoiceInput['lines']>[number]>(r.lines, 'lines').map((l, i) => {
     if (!String(l.description ?? '').trim()) bad(`Line ${i + 1}: enter a description.`, 'err.lineDescription');
     if (!l.accountId) bad(`Line ${i + 1}: choose an account.`, 'err.lineAccount');
     if (!VAT_CODES.includes(l.vatCode)) bad(`Line ${i + 1}: choose the VAT treatment.`, 'err.lineVat');
@@ -165,7 +165,7 @@ export async function reminderSettings(db: Db, companyId: string) {
     ?? { auto: false, days: [7, 14, 30], message: null, enabledBy: null };
 }
 export async function saveReminderSettings(db: Db, companyId: string, x: { auto?: boolean; days?: number[]; message?: string | null }) {
-  const days = [...new Set((x.days ?? [7, 14, 30]).map(Number).filter((d) => Number.isInteger(d) && d >= 1 && d <= 365))].sort((a, b) => a - b).slice(0, 6);
+  const days = [...new Set((x.days === undefined || x.days === null ? [7, 14, 30] : listOf<number>(x.days, 'reminder days')).map(Number).filter((d) => Number.isInteger(d) && d >= 1 && d <= 365))].sort((a, b) => a - b).slice(0, 6);
   if (!days.length) bad('Choose when reminders go out.', 'err.reminderDays');
   await db.query(`INSERT INTO reminder_settings (company_id, auto, days, message) VALUES ($1,$2,$3,$4)
     ON CONFLICT (company_id) DO UPDATE SET auto = $2, days = $3, message = $4`, [companyId, Boolean(x.auto), days, x.message?.trim() || null]);
@@ -210,7 +210,7 @@ export async function listBudgets(db: Db, companyId: string) {
 export async function saveBudget(db: Db, companyId: string, x: BudgetInput, id?: string): Promise<string> {
   const name = String(x.name ?? '').trim() || bad('Give the budget a name.', 'err.budgetName');
   if (!x.startDate || !/^\d{4}-\d{2}-01$/.test(x.startDate)) bad('The budget starts on the first day of a month.', 'err.budgetStart');
-  const lines = (x.lines ?? []).map((l) => {
+  const lines = listOf<NonNullable<BudgetInput['lines']>[number]>(x.lines, 'lines').map((l) => {
     if (!l.accountId) bad('Choose the account on each line.', 'err.lineAccount');
     const months = Array.from({ length: 12 }, (_, i) => { const v = String(l.months?.[i] ?? '').replace(/,/g, '').trim(); try { return v ? toMinor(v) : 0n; } catch { return bad('Amounts have at most 2 decimals.', 'err.amountFormat'); } });
     if (months.some((m) => m < 0n)) bad('Budget amounts are not negative.', 'err.amount');

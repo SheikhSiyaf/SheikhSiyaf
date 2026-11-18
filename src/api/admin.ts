@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
 import { CHART_TEMPLATE } from '../books/chartTemplate.js';
-import { HttpError } from './errors.js';
+import { HttpError, listOf } from './errors.js';
 import { baseUrl, uuidParam, type Ctx } from './context.js';
 import { hashInviteToken } from './auth.js';
 import { queue as queueEmail } from '../books/emailService.js';
@@ -127,7 +127,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
     try { first = person(b.firstUser); } catch { throw new HttpError(400, 'Add the first client user (name and email).', 'err.firstClientUser'); }
     const firstRole = b.firstUser?.role === 'client_viewer' ? 'client_viewer' : 'client_accountant';
     const firstClientRole = b.firstUser?.clientRoleId ? uuidParam(String(b.firstUser.clientRoleId)) : null;
-    const staffIds = (b.staffIds ?? []).map((x) => uuidParam(String(x)));
+    const staffIds = listOf(b.staffIds, 'list of people').map((x) => uuidParam(String(x)));
 
     return admin(req, async (db) => {
       if (!(await db.query('SELECT app_is_owner() AS o')).rows[0].o) throw new HttpError(403, 'Only Nusuh Books adds companies. Ask us to add one.', 'err.ownerOnly');
@@ -263,7 +263,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
     const p = person(req.body);
     const role = String(req.body?.role ?? '');
     if (!STAFF_ROLES.includes(role)) throw new HttpError(400, 'Choose the role.', 'err.role');
-    const clientIds = (req.body?.clientIds ?? []).map((x) => uuidParam(String(x)));
+    const clientIds = listOf(req.body?.clientIds, 'list of clients').map((x) => uuidParam(String(x)));
     return admin(req, async (db) => {
       const u = await db.query(
         `INSERT INTO users (firm_id, kind, full_name, email, staff_role) VALUES (app_firm_id(), 'firm_staff', $1, $2, $3) RETURNING id`,

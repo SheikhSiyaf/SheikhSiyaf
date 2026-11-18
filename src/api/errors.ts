@@ -7,6 +7,19 @@ export class HttpError extends Error {
   }
 }
 
+/**
+ * A list sent in a request body, as a list. Anything else — a string, a number, an object — is a bad request, not a
+ * crash. Without this, `(body.lines ?? []).map(...)` on a string throws "lines.map is not a function", which leaves
+ * the server with an unhandled TypeError and answers 500. A screen never sends the wrong shape; anything else that
+ * can reach the address can, and a 500 is both the wrong answer and a line in the error log for every attempt.
+ * Found by test/routeProbe.test.ts on three routes (bank statement import, reminder settings, notifications read).
+ */
+export function listOf<T>(v: unknown, what = 'list'): T[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) throw new HttpError(400, `The ${what} is not in the right format.`, 'err.format');
+  return v as T[];
+}
+
 const RAISED: [RegExp, string][] = [
   [/period is locked/, 'err.periodLocked'],
   [/This month is signed off. Withdraw the sign-off/, 'err.signedOffLocked'],
@@ -168,6 +181,10 @@ const CONSTRAINTS: Record<string, [string, string]> = {
   contact_ae_trn: ['A UAE TRN has 15 digits.', 'err.aeTrn'],
   line_net_is_qty_times_price: ['A line amount does not equal quantity x price.', 'err.lineNumbers'],
   line_vat_is_net_times_rate: ['A line VAT amount is not right.', 'err.lineNumbers'],
+  // 0059 replaced line_vat_is_net_times_rate with these two: a line's VAT is now its share of the category's VAT,
+  // rounded once on the document, so a line may sit up to one halala from its own amount times the rate.
+  line_vat_near_its_own_share: ['A line VAT amount is not right.', 'err.lineNumbers'],
+  line_fx_vat_near_its_own_share: ['A line VAT amount is not right.', 'err.lineNumbers'],
   bank_accounts_iban: ['Another bank account already has this IBAN.', 'err.ibanTaken'],
   bank_accounts_number: ['Another bank account already has this account number.', 'err.bankNumberTaken'],
   bank_accounts_iban_check: ['This IBAN is not right.', 'err.iban'],

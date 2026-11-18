@@ -5,7 +5,7 @@ import { afterIssue } from './einvoiceService.js';
 import type { Db } from '../db/session.js';
 import { postEntry, reverseEntry } from '../ledger/ledger.js';
 import { fromMinor, toMinor } from '../money.js';
-import { HttpError } from '../api/errors.js';
+import { HttpError, listOf } from '../api/errors.js';
 import { SYSTEM_ACCOUNTS } from './chartTemplate.js';
 import {
   addDays, ageBucket, AGE_BUCKETS, convertLine, convertMinor, documentTotals, foreignCurrency, formatNumber, isCredit,
@@ -152,7 +152,7 @@ function ratePart(given: string | null | undefined): bigint {
 }
 
 function priceAll(lines: LineInput[] | undefined, vatRate: string): PricedLine[] {
-  return (lines ?? []).map((l, i) => {
+  return listOf<LineInput>(lines, 'lines').map((l, i) => {
     if (!String(l.description ?? '').trim()) bad(`Line ${i + 1}: enter a description.`, 'err.lineDescription');
     if (!l.accountId) bad(`Line ${i + 1}: choose an account.`, 'err.lineAccount');
     if (!VAT_CODES.includes(l.vatCode)) bad(`Line ${i + 1}: choose the VAT treatment.`, 'err.lineVat');
@@ -508,7 +508,7 @@ export async function recordPayment(db: Db, companyId: string, p: PaymentInput):
   let allocs: { documentId: string; amount: bigint }[];
   try {
     amount = toMinor(String(p.amount ?? '').replace(/,/g, ''));
-    allocs = (p.allocations ?? []).filter((a) => a.amount && String(a.amount).trim() !== '' && String(a.amount).trim() !== '0')
+    allocs = listOf<NonNullable<PaymentInput['allocations']>[number]>(p.allocations, 'allocations').filter((a) => a.amount && String(a.amount).trim() !== '' && String(a.amount).trim() !== '0')
       .map((a) => ({ documentId: a.documentId, amount: toMinor(String(a.amount).replace(/,/g, '')) }));
   } catch {
     return bad('Amounts must be numbers with at most 2 decimals.', 'err.amountFormat');

@@ -73,14 +73,29 @@ describe('render.yaml, the deployment', () => {
   });
 
   it('runs the migrations before the new version serves', () => {
-    expect(field('preDeployCommand')).toBe('npm run db:migrate:prod');
+    // Either place is correct: preDeployCommand on a paid plan, or the end of the build on the free plan, where
+    // preDeployCommand is not available. What must never happen is the new code serving against the old schema.
+    const build = field('buildCommand');
+    const pre = /^\s*preDeployCommand:\s*(.+)$/m.exec(blueprint)?.[1]?.trim();
+    expect(build.includes('db:migrate:prod') || pre === 'npm run db:migrate:prod',
+      'the migration must run either in preDeployCommand or at the end of buildCommand').toBe(true);
     expect(scripts['db:migrate:prod']).toBe('node dist/db/migrate.js');
+    if (build.includes('db:migrate:prod')) {
+      // It has to come after the build, or it would run node against a dist/ that does not exist yet.
+      expect(build.indexOf('build:prod')).toBeLessThan(build.indexOf('db:migrate:prod'));
+    }
   });
 
-  it('is not on a plan that sleeps, because the background jobs must keep running', () => {
-    // Email goes out every minute and simplified e-invoices every two minutes. On a plan that stops when idle,
-    // both stop with it and nobody is told.
-    expect(field('plan')).not.toBe('free');
+  it('names a real compute plan, and the free one only with its cost written down', () => {
+    // The owner chose the free plan deliberately: nothing is paid for until the first client's fee. It is a real
+    // trade — the service sleeps when idle, and while it sleeps the background jobs do not run, so queued email
+    // and e-invoice reporting are late rather than lost. This check does not forbid it; it makes sure whoever
+    // reads the file is told, and that the plan is one Render actually accepts.
+    const plan = field('plan');
+    expect(['free', '0.5c-512mb', '1c-2g', '2c-4g', '2c-8g']).toContain(plan);
+    if (plan === 'free') {
+      expect(blueprint, 'the free plan must carry a note of what it costs').toMatch(/sleeps|spin|wake/i);
+    }
     expect(field('healthCheckPath')).toBe('/health');
   });
 

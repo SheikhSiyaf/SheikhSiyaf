@@ -18,20 +18,27 @@ services:
     # Frankfurt is the closest region Render offers to Saudi Arabia and the UAE, and the EU keeps the options open
     # for data-protection rules. A service's region cannot be changed afterwards.
     region: frankfurt
-    # 0.5 CPU, 512 MB — the cheapest paid plan. The free plan sleeps when idle, which would stop the background
-    # jobs (queued email every minute, e-invoices every two minutes), so it is not an option here.
-    # If memory becomes tight, mainly when generating PDFs, the next plan up is 1c-2g.
-    plan: 0.5c-512mb
+    # The owner's decision: nothing is paid for until the first client's fee comes in. The free plan is a deliberate
+    # trade, not an oversight, and these are the two things it costs:
+    #   - the service sleeps after about fifteen minutes with no visitors, so the first request after that waits
+    #     roughly fifty seconds while it starts again;
+    #   - while it sleeps nothing runs, so queued email, payment reminders, recurring invoices and e-invoice
+    #     reporting wait until someone next opens the app. Nothing is lost — the outbox is in the database — but it
+    #     is late, which is why ZATCA stays in the sandbox: real reporting has deadlines a sleeping server misses.
+    # To pay for it later, change this one line to 0.5c-512mb ($7/month, 0.5 CPU, 512 MB) and redeploy. Nothing
+    # else changes and no data moves.
+    plan: free
     # `branch` is deliberately not set: Render uses the repository's default branch, or whichever branch is chosen
     # when the Blueprint is created. Set it there rather than pinning a branch name in this file.
 
     # --include=dev is required, not optional. NODE_ENV=production below makes npm skip devDependencies, and the
     # build needs typescript and vite, which are devDependencies. Without it the build fails with a missing tsc.
-    buildCommand: npm ci --include=dev && npm run build:prod
-
-    # Runs after the build and before the new version starts, so the schema is in step with the code that is about
-    # to serve. Every migration is additive and recorded in schema_migrations, and applied once only.
-    preDeployCommand: npm run db:migrate:prod
+    # The migration runs here, at the end of the build, because Render's preDeployCommand — the proper place for it
+    # — is only available on paid plans. The effect is the same: it finishes before the new version serves. Every
+    # migration is additive and recorded in schema_migrations, so it is applied once however often this runs, and a
+    # failure stops the deploy rather than leaving the schema half-changed.
+    # On a paid plan, move the migration back out into:  preDeployCommand: npm run db:migrate:prod
+    buildCommand: npm ci --include=dev && npm run build:prod && npm run db:migrate:prod
 
     # Plain node on compiled JavaScript. Never `npm start`: that runs the TypeScript through tsx, which is a
     # devDependency and is not installed at runtime.

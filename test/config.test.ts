@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import type { FastifyRequest } from 'fastify';
 import { validateConfig, config, DEV_ENCRYPTION_KEY } from '../src/config.js';
+import { sslFor } from '../src/db/session.js';
 import { encryptionKeyOf } from '../src/api/context.js';
 import { baseUrl } from '../src/api/context.js';
 import { app as appPool, owner, seed } from './helpers.js';
@@ -117,5 +118,37 @@ describe('baseUrl', () => {
     expect((await s.inject({ method: 'GET', url: '/api/config' })).json()).toMatchObject({ demoLogins: false });
     expect((await s.inject({ method: 'GET', url: '/api/config' })).json().demoPassword).toBeUndefined();
     await s.close();
+  });
+});
+
+describe('How the database connection is encrypted', () => {
+  // A hosted database is reached over the public internet and holds the clients' books. Left to the driver, a
+  // connection string with sslmode=require connects to a server with a self-signed certificate without complaint:
+  // encrypted, but the server never checked. node-postgres is also changing what sslmode=require means. So the
+  // decision is made in our code instead of in the string.
+  it('requires a properly signed certificate for anything that is not this machine', () => {
+    for (const url of [
+      'postgres://nusuh_app:pw@ep-cool-name-123.eu-central-1.aws.neon.tech/nusuh?sslmode=require',
+      'postgres://nusuh_app.abc:pw@aws-0-eu-central-1.pooler.supabase.com:5432/postgres',
+      'postgres://nusuh_app:pw@dpg-something.frankfurt-postgres.render.com/nusuh',
+    ]) {
+      expect(sslFor(url), url).toEqual({ rejectUnauthorized: true });
+    }
+  });
+
+  it('cannot be switched off from the connection string', () => {
+    // sslmode=disable in a pasted string must not quietly send a client's books in the clear.
+    expect(sslFor('postgres://u:p@db.example.com/nusuh?sslmode=disable')).toEqual({ rejectUnauthorized: true });
+    expect(sslFor('postgres://u:p@db.example.com/nusuh?sslmode=no-verify')).toEqual({ rejectUnauthorized: true });
+  });
+
+  it('leaves a local database alone, where there is no network and the certificate is self-signed', () => {
+    for (const url of [
+      'postgres://postgres:postgres@localhost:5432/nusuh_test',
+      'postgres://postgres:postgres@127.0.0.1:5432/nusuh_test',
+      'not-a-url',
+    ]) {
+      expect(sslFor(url), url).toBeUndefined();
+    }
   });
 });

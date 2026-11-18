@@ -5,8 +5,34 @@ import { HttpError } from '../api/errors.js';
 
 export type Db = pg.PoolClient;
 
+/**
+ * How the connection is encrypted, decided here rather than left to the connection string.
+ *
+ * A hosted database is reached across the public internet, and every row of it is a client's books. The driver's
+ * own default is not good enough to rely on: connecting with sslmode=require to a server holding a self-signed
+ * certificate succeeds without complaint, so the connection is encrypted but the server is never checked, which an
+ * attacker in the middle can use. node-postgres also warns that it is changing what sslmode=require means, so a
+ * connection string copied from a host today may behave differently after an upgrade.
+ *
+ * So: anything that is not the local machine is required to present a certificate signed by a real authority.
+ * Neon, Supabase and Render Postgres all do. There is deliberately no way to switch this off through the
+ * connection string, because that switch would be the first thing a mistake reaches for.
+ *
+ * Returns undefined for a local database, where there is no network to listen on and certificates are self-signed.
+ */
+export function sslFor(connectionString: string): pg.PoolConfig['ssl'] {
+  let host: string;
+  try {
+    host = new URL(connectionString).hostname;
+  } catch {
+    return undefined;   // not a URL at all: a unix socket or a local development setting
+  }
+  const local = host === '' || host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+  return local ? undefined : { rejectUnauthorized: true };
+}
+
 export function createPool(connectionString: string): pg.Pool {
-  const pool = new pg.Pool({ connectionString });
+  const pool = new pg.Pool({ connectionString, ssl: sslFor(connectionString) });
   // An idle connection dropped by the database (restart, failover) must not crash the server;
   // the pool opens a new connection for the next request.
   pool.on('error', (err) => console.error('Database connection lost:', err.message));

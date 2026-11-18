@@ -53,6 +53,19 @@ describe('validateConfig', () => {
     expect(has(problems({ DATABASE_URL: 'postgres://nusuh_app:change-me@db:5432/nusuh' }), /change-me/)).toBe(true);
     expect(has(problems({ DATABASE_URL: 'not a url' }), /DATABASE_URL/)).toBe(true);
   });
+  it('DATABASE_URL: Supabase\'s pooler puts the project after the role, and that is still the nusuh_app role', () => {
+    // Supabase's "Connecting to your database" guide: "Direct connections and the dedicated pooler use postgres.
+    // Shared pooler connections use postgres.[PROJECT-REF]. If you connect as a custom role through the shared
+    // pooler, the username is [ROLE].[PROJECT-REF]." So on Supabase the server signs in as nusuh_app.<project-ref>,
+    // and refusing that would have stopped the server from starting on the host we are going to.
+    const pooled = 'postgres://nusuh_app.abcdefghijklmnop:Str0ng-and-long@aws-0-eu-central-1.pooler.supabase.com:5432/postgres';
+    expect(has(problems({ DATABASE_URL: pooled }), /nusuh_app/)).toBe(false);
+    // The role before the dot is what row-level security applies to, so a superuser is still refused, pooled or not.
+    const pooledOwner = 'postgres://postgres.abcdefghijklmnop:Str0ng-and-long@aws-0-eu-central-1.pooler.supabase.com:5432/postgres';
+    expect(has(problems({ DATABASE_URL: pooledOwner }), /nusuh_app/)).toBe(true);
+    // And a different role with a project suffix is refused too.
+    expect(has(problems({ DATABASE_URL: 'postgres://someone_else.abcdefgh:Str0ng-and-long@pooler:5432/postgres' }), /nusuh_app/)).toBe(true);
+  });
   it('DATABASE_URL must not be the owner connection', () => {
     expect(has(problems({ DATABASE_ADMIN_URL: good.DATABASE_URL }), /DATABASE_ADMIN_URL/)).toBe(true);
   });

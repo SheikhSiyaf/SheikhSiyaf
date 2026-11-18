@@ -32,7 +32,25 @@ export async function migrate(adminUrl: string, appPassword?: string): Promise<s
       }
     }
     if (appPassword) {
-      await client.query(`ALTER ROLE nusuh_app PASSWORD ${client.escapeLiteral(appPassword)}`);
+      try {
+        await client.query(`ALTER ROLE nusuh_app PASSWORD ${client.escapeLiteral(appPassword)}`);
+      } catch (err) {
+        // PostgreSQL 16 onwards, a connection that is not a superuser may set another role's password only if it
+        // holds ADMIN OPTION on that role, which it gets automatically for a role it created itself. On a managed
+        // host such as Supabase the administrator connection is NOT a superuser, so if nusuh_app was created by
+        // some other role — a hand-run script, an earlier setup, a restored backup — this fails with a permission
+        // error that says nothing about what to do. Say it here instead of leaving an operator guessing.
+        const e = err as { code?: string; message: string };
+        if (e.code === '42501') {
+          throw new Error(
+            'The database role nusuh_app exists but this connection may not set its password: on PostgreSQL 16 and '
+            + 'later that needs ADMIN OPTION on the role, which only a superuser or the role\'s creator has. '
+            + 'Run this once as the database owner (on Supabase, in the SQL editor): '
+            + 'GRANT nusuh_app TO CURRENT_USER WITH ADMIN OPTION;  — then run the migration again. '
+            + `The database said: ${e.message}`);
+        }
+        throw err;
+      }
     }
   } finally {
     await client.end();

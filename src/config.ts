@@ -60,7 +60,13 @@ export function validateConfig(e: Record<string, string | undefined>): string[] 
     try { u = new URL(db); } catch { out.push('DATABASE_URL is not a valid postgres:// address.'); }
     if (u) {
       const user = decodeURIComponent(u.username);
-      if (user !== 'nusuh_app') out.push(`DATABASE_URL connects as "${user || '(none)'}": the server must connect as nusuh_app (row-level security applies to it), never as postgres or another superuser.`);
+      // Through a shared connection pooler the project is named in the username, after the role: Supabase's
+      // "Connecting to your database" guide says "If you connect as a custom role through the shared pooler, the
+      // username is [ROLE].[PROJECT-REF]". So the server signs in as nusuh_app.<project-ref> there. The role is
+      // what row-level security applies to, so only the part before the dot decides, and a superuser is still
+      // refused with or without a project suffix.
+      const role = user.split('.')[0]!;
+      if (role !== 'nusuh_app') out.push(`DATABASE_URL connects as "${user || '(none)'}": the server must connect as nusuh_app (row-level security applies to it), never as postgres or another superuser. A shared pooler adds the project to the username, as in nusuh_app.your-project-ref, and that is fine.`);
       if (decodeURIComponent(u.password) === 'change-me') out.push('DATABASE_URL uses the example password change-me.');
     }
     if (e.DATABASE_ADMIN_URL && e.DATABASE_ADMIN_URL === db) out.push('DATABASE_URL is the same as DATABASE_ADMIN_URL: the server must not use the owner connection.');

@@ -14,9 +14,16 @@ export type Db = pg.PoolClient;
  * attacker in the middle can use. node-postgres also warns that it is changing what sslmode=require means, so a
  * connection string copied from a host today may behave differently after an upgrade.
  *
- * So: anything that is not the local machine is required to present a certificate signed by a real authority.
- * Neon, Supabase and Render Postgres all do. There is deliberately no way to switch this off through the
+ * So: a database reached over the public internet must present a certificate signed by a real authority. Neon and
+ * Supabase do, and so does Render's external address. There is deliberately no way to switch this off through the
  * connection string, because that switch would be the first thing a mistake reaches for.
+ *
+ * ONE EXCEPTION, which Render's own documentation requires: its internal address (a host name with no dots, such as
+ * dpg-abc123-a) uses a self-signed certificate and "does not support sslmode=verify-ca or verify-full". A name with
+ * no dots exists only on the host's private network and cannot be reached from the internet, so there is nobody to
+ * stand in the middle. For those the connection is still encrypted, with no fall-back to plaintext, but the
+ * certificate is accepted. The first version of this function demanded a verified certificate everywhere and would
+ * have refused to connect to Render's own database; that was caught by reading their documentation.
  *
  * Returns undefined for a local database, where there is no network to listen on and certificates are self-signed.
  */
@@ -28,7 +35,9 @@ export function sslFor(connectionString: string): pg.PoolConfig['ssl'] {
     return undefined;   // not a URL at all: a unix socket or a local development setting
   }
   const local = host === '' || host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
-  return local ? undefined : { rejectUnauthorized: true };
+  if (local) return undefined;
+  const privateName = !host.includes('.') && !host.includes(':') && !host.startsWith('[');
+  return privateName ? { rejectUnauthorized: false } : { rejectUnauthorized: true };
 }
 
 export function createPool(connectionString: string): pg.Pool {

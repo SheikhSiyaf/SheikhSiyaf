@@ -136,6 +136,17 @@ describe('How the database connection is encrypted', () => {
     }
   });
 
+  it('accepts the self-signed certificate on a private-network name, because Render requires it', () => {
+    // Render's documentation: internal connections use self-signed certificates and do not support
+    // sslmode=verify-ca or verify-full. Their internal address is a host name with no dots. It is still encrypted
+    // (an ssl object means no plaintext fall-back); only the certificate check is relaxed, on a network the
+    // internet cannot reach. The public address of the same database keeps the strict rule.
+    expect(sslFor('postgres://u:p@dpg-abc123-a/nusuh')).toEqual({ rejectUnauthorized: false });
+    expect(sslFor('postgres://u:p@dpg-abc123-a.frankfurt-postgres.render.com/nusuh')).toEqual({ rejectUnauthorized: true });
+    // An IPv6 address is not a private name, and has no certificate to match.
+    expect(sslFor('postgres://u:p@[2001:db8::1]:5432/nusuh')).toEqual({ rejectUnauthorized: true });
+  });
+
   it('cannot be switched off from the connection string', () => {
     // sslmode=disable in a pasted string must not quietly send a client's books in the clear.
     expect(sslFor('postgres://u:p@db.example.com/nusuh?sslmode=disable')).toEqual({ rejectUnauthorized: true });

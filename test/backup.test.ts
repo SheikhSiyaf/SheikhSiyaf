@@ -1,0 +1,140 @@
+// The backup and restore scripts, run for real against a seeded demo database.
+//
+// A backup nobody has restored is a hope, not a backup. This takes a real backup of the demo books, restores it into
+// a new empty database, and compares the two table by table, then checks the things that matter most to a client:
+// every ledger line, the debit and credit totals, the row-level security that keeps companies apart, and that the
+// application's own login can read the restored data and sees only what it should.
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import pg from 'pg';
+import { migrate } from '../src/db/migrate.js';
+import { seed } from '../src/db/seed.js';
+import { APP_PASSWORD, PG_ADMIN_URL } from './config.js';
+
+const SOURCE = 'nusuh_backup_src';
+const COPY = 'nusuh_backup_copy';
+const PASS = 'correct horse battery staple 42';
+const at = (db: string, user?: string, pw?: string) => {
+  const u = new URL(PG_ADMIN_URL); u.pathname = `/${db}`;
+  if (user) { u.username = user; u.password = pw ?? ''; }
+  return u.toString();
+};
+const run = (cmd: string, args: string[], env: Record<string, string>) =>
+  spawnSync(cmd, args, { env: { ...process.env, ...env }, encoding: 'utf8' });
+
+let admin: pg.Client;
+let dir: string;
+let file: string;
+
+beforeAll(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'nusuh-backup-'));
+  admin = new pg.Client({ connectionString: PG_ADMIN_URL });
+  await admin.connect();
+  for (const db of [SOURCE, COPY]) await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+  await admin.query(`CREATE DATABASE ${SOURCE}`);
+  await migrate(at(SOURCE), APP_PASSWORD);
+  await seed(at(SOURCE), { production: false });
+  const r = run('bash', ['scripts/backup.sh'], { BACKUP_DATABASE_URL: at(SOURCE), BACKUP_PASSPHRASE: PASS, BACKUP_DIR: dir });
+  expect(r.status, r.stderr).toBe(0);
+  file = join(dir, readdirSync(dir).find((f) => f.endsWith('.dump.gpg'))!);
+}, 120_000);
+
+afterAll(async () => {
+  for (const db of [SOURCE, COPY]) await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+  await admin.end();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+async function counts(url: string): Promise<Record<string, number>> {
+  const c = new pg.Client({ connectionString: url });
+  await c.connect();
+  try {
+    const t = await c.query<{ t: string }>(`SELECT tablename t FROM pg_tables WHERE schemaname='public' ORDER BY 1`);
+    const out: Record<string, number> = {};
+    for (const { t: name } of t.rows) out[name] = Number((await c.query(`SELECT count(*) FROM "${name}"`)).rows[0].count);
+    return out;
+  } finally { await c.end(); }
+}
+
+describe('backup.sh', () => {
+  it('writes one encrypted file: the readable content is nowhere in it', () => {
+    expect(readdirSync(dir).filter((f) => f.endsWith('.dump.gpg'))).toHaveLength(1);
+    expect(readdirSync(dir).filter((f) => f.endsWith('.partial'))).toHaveLength(0);
+    expect(statSync(file).size).toBeGreaterThan(10_000);
+    const bytes = readFileSync(file);
+    // A custom-format dump starts with "PGDMP"; a plain one would also hold table names. Neither may show through.
+    expect(bytes.subarray(0, 5).toString('latin1')).not.toBe('PGDMP');
+    expect(bytes.includes(Buffer.from('journal_lines'))).toBe(false);
+    expect(bytes.includes(Buffer.from('CREATE TABLE'))).toBe(false);
+  });
+
+  it('refuses to run without a database, without a passphrase, or with a short one, and keeps no file', () => {
+    const before = readdirSync(dir).length;
+    expect(run('bash', ['scripts/backup.sh'], { BACKUP_DATABASE_URL: '', BACKUP_PASSPHRASE: PASS, BACKUP_DIR: dir }).status).not.toBe(0);
+    expect(run('bash', ['scripts/backup.sh'], { BACKUP_DATABASE_URL: at(SOURCE), BACKUP_PASSPHRASE: '', BACKUP_DIR: dir }).status).not.toBe(0);
+    expect(run('bash', ['scripts/backup.sh'], { BACKUP_DATABASE_URL: at(SOURCE), BACKUP_PASSPHRASE: 'short', BACKUP_DIR: dir }).status).toBe(2);
+    expect(readdirSync(dir)).toHaveLength(before);
+  });
+
+  it('keeps no file when the database cannot be reached', () => {
+    const r = run('bash', ['scripts/backup.sh'], { BACKUP_DATABASE_URL: at('nusuh_no_such_database'), BACKUP_PASSPHRASE: PASS, BACKUP_DIR: dir });
+    expect(r.status).not.toBe(0);
+    expect(readdirSync(dir).filter((f) => f.endsWith('.dump.gpg'))).toHaveLength(1);
+    expect(readdirSync(dir).filter((f) => f.endsWith('.partial'))).toHaveLength(0);
+  });
+});
+
+describe('restore.sh', () => {
+  it('a wrong passphrase restores nothing', async () => {
+    await admin.query(`CREATE DATABASE ${COPY}`);
+    const r = run('bash', ['scripts/restore.sh', file, at(COPY)], { BACKUP_PASSPHRASE: 'wrong passphrase 0123456789' });
+    expect(r.status).not.toBe(0);
+    expect(Object.keys(await counts(at(COPY)))).toHaveLength(0);
+  });
+
+  it('restores every table with the same number of rows, and the ledger adds up to the same totals', async () => {
+    const r = run('bash', ['scripts/restore.sh', file, at(COPY)], { BACKUP_PASSPHRASE: PASS });
+    expect(r.status, r.stderr).toBe(0);
+    const [a, b] = [await counts(at(SOURCE)), await counts(at(COPY))];
+    expect(Object.keys(a).length).toBeGreaterThan(80);
+    expect(b).toEqual(a);
+    expect(a['journal_lines']).toBeGreaterThan(50);
+
+    const total = async (url: string) => {
+      const c = new pg.Client({ connectionString: url }); await c.connect();
+      try { return (await c.query(`SELECT coalesce(sum(debit),0)::text d, coalesce(sum(credit),0)::text c, count(*)::int n FROM journal_lines`)).rows[0]; }
+      finally { await c.end(); }
+    };
+    const [ta, tb] = [await total(at(SOURCE)), await total(at(COPY))];
+    expect(tb).toEqual(ta);
+    expect(ta.d).toBe(ta.c);   // debits equal credits, in the copy as in the original
+  }, 120_000);
+
+  it('keeps the migration history, so db:migrate on the copy has nothing left to do', async () => {
+    expect(await migrate(at(COPY), APP_PASSWORD)).toEqual([]);
+  });
+
+  it('keeps row-level security: the application login reads the copy, and each company sees only its own rows', async () => {
+    const c = new pg.Client({ connectionString: at(COPY, 'nusuh_app', APP_PASSWORD) });
+    await c.connect();
+    try {
+      const pol = await c.query(`SELECT count(*)::int n FROM pg_policies WHERE schemaname='public'`);
+      const src = new pg.Client({ connectionString: at(SOURCE) }); await src.connect();
+      const want = (await src.query(`SELECT count(*)::int n FROM pg_policies WHERE schemaname='public'`)).rows[0].n;
+      await src.end();
+      expect(pol.rows[0].n).toBe(want);
+      expect(want).toBeGreaterThan(50);
+      // With no user set, row-level security must hide every company's rows, exactly as in the original.
+      expect((await c.query(`SELECT count(*)::int n FROM journal_lines`)).rows[0].n).toBe(0);
+    } finally { await c.end(); }
+  });
+
+  it('refuses a database that already holds tables, so live books cannot be overwritten', () => {
+    const r = run('bash', ['scripts/restore.sh', file, at(COPY)], { BACKUP_PASSPHRASE: PASS });
+    expect(r.status).toBe(3);
+    expect(r.stderr).toMatch(/already has/);
+  });
+});

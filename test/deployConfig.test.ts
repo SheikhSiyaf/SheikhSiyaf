@@ -122,3 +122,24 @@ describe('render.yaml, the deployment', () => {
     expect(setTo('TRUST_PROXY', '1'), 'TRUST_PROXY must be 1 behind Render\'s proxy').toBe(true);
   });
 });
+
+describe('the daily backup workflow', () => {
+  const wf = readFileSync('.github/workflows/backup.yml', 'utf8');
+
+  it('runs the scripts that exist, and is off until the owner turns it on', () => {
+    for (const script of wf.matchAll(/bash (scripts\/[a-z-]+\.sh)/g)) expect(() => statSync(script[1]!)).not.toThrow();
+    expect(wf).toMatch(/vars\.BACKUP_ENABLED == 'true'/);
+    expect(wf).toMatch(/cron:/);
+  });
+
+  it('reads every credential from secrets and holds no value of its own', () => {
+    for (const key of ['BACKUP_DATABASE_URL', 'BACKUP_PASSPHRASE', 'BACKUP_S3_BUCKET', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY']) {
+      expect(wf, `${key} must come from secrets`).toMatch(new RegExp(`${key}:\\s*\\$\\{\\{\\s*secrets\\.${key}\\s*\\}\\}`));
+    }
+    expect(wf).not.toMatch(/postgres(ql)?:\/\/[^\s'"]*@(?!localhost)/);   // no connection string with a real host
+  });
+
+  it('rehearses the restore, so a backup that cannot be opened turns the run red', () => {
+    expect(wf).toMatch(/scripts\/restore\.sh/);
+  });
+});

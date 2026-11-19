@@ -20,6 +20,8 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:migrate:prod": "node dist/db/migrate.js",
     "db:seed": "tsx src/db/seed.ts",
+    "backup": "bash scripts/backup.sh",
+    "restore": "bash scripts/restore.sh",
     "db:reset": "tsx src/db/reset.ts",
     "db:install": "tsx src/db/install.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web",

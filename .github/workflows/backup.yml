@@ -1,0 +1,81 @@
+# Daily encrypted backup of the production database to storage outside Render, then a rehearsal restore of the file
+# just made. If either fails the run goes red and GitHub emails the repository owner, so a broken backup is noticed
+# the same day instead of the day it is needed.
+#
+# Off until the owner turns it on: add the repository VARIABLE BACKUP_ENABLED=true and the five SECRETS below
+# (Settings > Secrets and variables > Actions). No value is ever written in this file.
+#   BACKUP_DATABASE_URL   the database owner's connection string, using the host's PUBLIC address (a GitHub runner
+#                         cannot reach Render's private one). It reads every row.
+#   BACKUP_PASSPHRASE     16+ random characters. Also keep a copy in a password manager: without it the backups
+#                         cannot be opened.
+#   BACKUP_S3_BUCKET      the bucket name (Cloudflare R2, Backblaze B2 or any S3-compatible storage)
+#   AWS_ENDPOINT_URL      that storage's S3 address
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY   a storage login that can only write to that bucket
+# Set a lifecycle rule on the bucket to match the retention the firm needs; this job only adds files.
+name: Backup
+
+on:
+  schedule:
+    - cron: '17 1 * * *'   # 01:17 UTC daily, 04:17 in Riyadh: the quietest hour, and off the :00 queue
+  workflow_dispatch:
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    if: vars.BACKUP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      # Where the rehearsal restore goes: an empty server of the version the application runs on.
+      rehearsal:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # pg_dump must be the same major version as the server or newer; the runner's own copy may be older.
+      - name: Install the PostgreSQL 16 client
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client-16
+
+      - name: Back up and upload
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          BACKUP_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
+          AWS_ENDPOINT_URL: ${{ secrets.AWS_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          BACKUP_DIR: ${{ runner.temp }}/backups
+        run: bash scripts/backup.sh
+
+      # Restores the file just made into an empty database and checks the migration history came back. It proves the
+      # file decrypts and restores, every day, which is the only thing that makes a backup worth having.
+      - name: Rehearse the restore
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          BACKUP_DIR: ${{ runner.temp }}/backups
+        run: |
+          set -euo pipefail
+          target=postgres://postgres:postgres@localhost:5432/rehearsal
+          psql postgres://postgres:postgres@localhost:5432/postgres -qc "CREATE DATABASE rehearsal"
+          bash scripts/restore.sh "$(ls "$BACKUP_DIR"/*.dump.gpg | head -1)" "$target"
+          n="$(psql "$target" -Atqc 'SELECT count(*) FROM schema_migrations')"
+          echo "Restore rehearsal: $n migrations present"
+          [ "$n" -gt 0 ]

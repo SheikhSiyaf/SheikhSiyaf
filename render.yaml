@@ -5,7 +5,8 @@
 # this file: every credential is marked `sync: false`, which means Render asks for the value and keeps it in the
 # service's own settings. Secrets never belong in the repository.
 #
-# The database is NOT declared here. It lives on Supabase, and its connection strings arrive as the variables below.
+# The database is NOT declared here. It lives on Neon (PostgreSQL), and its connection strings arrive as the
+# variables below.
 #
 # To use it: in the Render Dashboard choose New > Blueprint, pick this repository, and Render will prompt for each
 # `sync: false` value. Note Render's own caveat: it prompts for those values only when the Blueprint is FIRST
@@ -70,11 +71,12 @@ services:
       - key: PUBLIC_URL
         sync: false
 
-      # Supabase, session mode (port 5432 on the pooler host). Through the shared pooler the username carries the
-      # project: nusuh_app.<project-ref>. The server connects as nusuh_app so row-level security applies to it.
+      # Neon. Use the DIRECT connection string (not the one with "-pooler" in the host name): the background jobs rely
+      # on a connection that stays the same for the whole session. The login is nusuh_app, so row-level security
+      # applies to the server. Its password must match APP_DB_PASSWORD below.
       - key: DATABASE_URL
         sync: false
-      # Only the pre-deploy migration uses this, as the project's owner role. The running server never does.
+      # Only the migration uses this, as the database's owner role. The running server never does.
       - key: DATABASE_ADMIN_URL
         sync: false
       # The password the migration sets on the nusuh_app role; it must match the one in DATABASE_URL.

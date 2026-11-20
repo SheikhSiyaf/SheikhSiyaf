@@ -16,6 +16,7 @@ import { QuickSearch } from './QuickSearch.tsx';
 import { Calendar } from '../calendar/Calendar.tsx';
 import { Portal } from '../portal/Portal.tsx';
 import { EInvoicing } from '../sales/EInvoicing.tsx';
+import { ZatcaMonitor } from '../sales/ZatcaMonitor.tsx';
 import { Approvals as ApprovalsHub } from '../approvals/Approvals.tsx';
 import { CashForecast } from './Forecast.tsx';
 import { ImportData } from './ImportData.tsx';
@@ -244,6 +245,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
     case 'Purchases': {
       if (sub === 'overview') return <Overview books={books} side={side} />;
       if (sub === 'e-invoicing') return <EInvoicing books={books} />;
+      if (sub === 'zatca') return <ZatcaMonitor books={books} />;
       if (sub === 'emails') return <EmailsSent books={books} />;
       if (sub === 'online-payments') return <OnlinePayments books={books} />;
       if (sub === 'recurring-invoices') return <RecurringInvoices books={books} id={item} />;

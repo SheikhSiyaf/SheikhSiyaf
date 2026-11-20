@@ -28,7 +28,10 @@ let clock = () => new Date();
 /** Connecting to ZATCA's PRODUCTION is off unless the host sets ZATCA_PRODUCTION=on, so a real connection is always a
  *  decision made in the hosting settings, never a slip on a test or demo site. */
 let allowProduction = process.env.ZATCA_PRODUCTION === 'on';
-export const CERT_WARN_DAYS = 30;
+import { CERT_WARN_DAYS } from './einvoiceAssess.js';
+export { CERT_WARN_DAYS };
+/** Read-only view of the production switch, for the monitor screen. */
+export const productionAllowed = () => allowProduction;
 export function configureEInvoicing(o: { encryptionKey?: string; fetch?: Fetch; now?: () => Date; allowProduction?: boolean }) {
   if (o.allowProduction !== undefined) allowProduction = o.allowProduction;
   if (o.encryptionKey) encryptionKey = o.encryptionKey;

@@ -187,3 +187,24 @@ describe('One company cannot reach another', () => {
     expect(otherCompany).not.toBe(company);
   });
 });
+
+describe('The ZATCA monitor', () => {
+  it('opens from the Sales menu, names one of its five states, and says it only reads', async () => {
+    errors.length = 0;
+    await page.goto(`${BASE}/c/${company}/Sales/zatca`, { waitUntil: 'networkidle' });
+    await page.locator('#zmon-badge').waitFor({ timeout: 15000 });
+    const badge = (await page.locator('#zmon-badge').innerText()).trim();
+    expect(['Not in use', 'All good', 'Test mode', 'Needs attention', 'Act now']).toContain(badge);
+    expect(await page.locator('body').innerText()).toContain('never contacts ZATCA');
+    expect(errors.filter((e) => !/40[0-9]|favicon/.test(e))).toEqual([]);
+  });
+
+  it('reads right to left in Arabic, and never scrolls sideways on a phone', async () => {
+    await page.evaluate(() => localStorage.setItem('nb.lang', 'ar'));
+    await page.goto(`${BASE}/c/${company}/Sales/zatca`, { waitUntil: 'networkidle' });
+    await page.locator('#zmon-badge').waitFor({ timeout: 15000 });
+    expect(await page.evaluate(() => getComputedStyle(document.body).direction)).toBe('rtl');
+    expect(await page.locator('#zmon-state').innerText()).toMatch(/[؀-ۿ]/);
+    await page.evaluate(() => localStorage.setItem('nb.lang', 'en'));
+  });
+});

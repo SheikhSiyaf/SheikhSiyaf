@@ -673,3 +673,8 @@ tr.unread-row td:first-child { font-weight: 600; }
   .room-cal-wrap { display: none; }
   .room-cal-list { display: block; }
 }
+
+/* A small label-and-value list, used by the ZATCA monitor's cards. */
+dl.kv { margin: 0; }
+dl.kv dt { color: var(--mut); font-size: 13px; margin: 0; }
+dl.kv dd { margin: 0 0 10px; }

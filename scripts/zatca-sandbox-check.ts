@@ -2,6 +2,8 @@
 // data: a new key and CSR, the compliance CSID, the compliance checks for each invoice type, the production CSID, then
 // clearance (standard) and reporting (simplified) of each type. It never talks to simulation or production.
 //   npx tsx scripts/zatca-sandbox-check.ts [output folder]
+// Behind an HTTP proxy (a cloud session), Node's fetch ignores it unless told: run with NODE_USE_ENV_PROXY=1, or the
+// first call fails with "unreachable" even though ZATCA is up.
 // The sandbox accepts ZATCA's published test one-time password 123345 (ZATCA_SANDBOX_OTP overrides it). Nothing is
 // written to the database. Every request and response body is saved to the output folder as evidence.
 import { mkdirSync, writeFileSync } from 'node:fs';

@@ -28,6 +28,7 @@ import * as AtR from '../../../src/books/attendanceRules.ts';
 import * as Fx from '../../../src/books/fx.ts';
 import { documentMail } from '../../../src/email/templates.ts';
 import type { EInvoiceData, EParty } from '../../../src/einvoice/invoiceData.ts';
+import { assess } from '../../../src/books/einvoiceAssess.ts';
 import { tinyPdf } from '../../../src/db/tinyPdf.ts';
 import { depreciationDue, disposalResult, monthEnd, monthStart, nextMonthEnd, previousMonthEnd, targetDepreciation, type AssetTerms } from '../../../src/books/assets.ts';
 
@@ -4171,6 +4172,25 @@ routes.push(
     const counts: Record<string, number> = {}; for (const e of edb.einvoices.filter((x) => x.companyId === id)) counts[e.status] = (counts[e.status] ?? 0) + 1;
     return { country: co.country, vatStatus: co.vatStatus, settings: einvSettings(id), counts,
       devices: edb.devices.filter((x) => x.companyId === id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((x) => ({ ...x, createdBy: userName(x.createdBy) })) };
+  }],
+  // The ZATCA monitor, judged by the same rules as the real server (src/books/einvoiceAssess.ts). Demo data only.
+  ['GET', /^\/api\/companies\/([\w-]+)\/einvoicing\/monitor$/, (m) => {
+    const id = inCo(m[1]!); const co = db.companies.find((c) => c.id === id)!;
+    const now = new Date(); const set = einvSettings(id);
+    const devs = edb.devices.filter((x) => x.companyId === id);
+    const mine = edb.einvoices.filter((x) => x.companyId === id && x.scheme === 'zatca');
+    const waitFor = (kind: 'simplified' | 'standard') => { const w = mine.filter((x) => x.status === 'pending' && x.kind === kind).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      return { count: w.length, oldestAt: w[0]?.createdAt ?? null }; };
+    const waiting = { simplified: waitFor('simplified'), standard: waitFor('standard') };
+    const rejected = mine.filter((x) => x.status === 'rejected');
+    const sender = { lastFinishedAt: now.toISOString(), lastOk: true as boolean | null, lastError: null as string | null };
+    const dv = devs.map((x) => ({ id: x.id, name: x.name, environment: x.environment, status: x.status, certValidTo: x.certValidTo,
+      certDaysLeft: x.status === 'active' ? Math.ceil((new Date(x.certValidTo).getTime() - now.getTime()) / 86_400_000) : null }));
+    const verdict = assess({ country: co.country, enabled: set.enabled, productionAllowed: false, devices: dv, waiting, rejected: rejected.length, loginRefused: 0, sender, now });
+    const rowOf = (x: MEinv) => ({ id: x.id, number: x.id.slice(0, 8), docType: 'invoice', kind: x.kind, httpStatus: null, attempts: x.attempts, createdAt: x.createdAt, errors: x.errors });
+    return { ...verdict, country: co.country, enabled: set.enabled, productionAllowed: false, certWarnDays: 30, senderGapMinutes: 10, devices: dv, waiting,
+      waitingList: mine.filter((x) => x.status === 'pending').slice(0, 10).map(rowOf), rejected: rejected.slice(0, 20).map(rowOf), sender,
+      lastSevenDays: { cleared: mine.filter((x) => x.status === 'cleared').length, reported: mine.filter((x) => x.status === 'reported').length, lastAcceptedAt: null }, checkedAt: now.toISOString() };
   }],
   ['POST', /^\/api\/companies\/([\w-]+)\/einvoicing\/settings$/, (m, b) => {
     const id = inCo(m[1]!); canPostIn(id); const co = db.companies.find((c) => c.id === id)!;

@@ -5,6 +5,7 @@ import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
 import { uuidParam, type Ctx } from './context.js';
 import * as E from '../books/einvoiceService.js';
+import { monitor } from '../books/einvoiceMonitor.js';
 
 type Id = { id: string };
 async function member(db: Db, companyId: string) {
@@ -17,6 +18,8 @@ export function registerEInvoiceRoutes(app: FastifyInstance, { as }: Ctx) {
     return as(req, async (db) => { await member(db, companyId); return fn(db, companyId); });
   };
   app.get<{ Params: Id }>('/api/companies/:id/einvoicing', async (req) => inCompany(req, req.params.id, (db, c) => E.overview(db, c)));
+  // The ZATCA monitor: read-only, what is recorded about this company's e-invoicing. It never calls ZATCA.
+  app.get<{ Params: Id }>('/api/companies/:id/einvoicing/monitor', async (req) => inCompany(req, req.params.id, (db, c) => monitor(db, c)));
   app.post<{ Params: Id; Body: Partial<E.Settings> }>('/api/companies/:id/einvoicing/settings', async (req) => inCompany(req, req.params.id, async (db, c) => { await E.saveSettings(db, c, req.body ?? {}); return { ok: true }; }));
   app.post<{ Params: Id; Body: E.OnboardInput }>('/api/companies/:id/einvoicing/devices', async (req) => inCompany(req, req.params.id, async (db, c) => ({ id: await E.onboard(db, c, req.body ?? {}) })));
   app.post<{ Params: Id; Body: { otp?: string } }>('/api/einvoicing/devices/:id/renew', async (req) => as(req, (db) => E.renew(db, uuidParam(req.params.id), req.body ?? {})));

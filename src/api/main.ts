@@ -26,7 +26,7 @@ if (problems.length) {
 }
 const apiOnly = process.argv.includes('--api-only') || process.env.SERVE_WEB === 'false';
 const serveWeb = !apiOnly && existsSync(WEB_DIST);
-const pool = createPool(config.databaseUrl);
+const pool = createPool(config.databaseUrl, { ca: config.databaseCa, max: config.databasePoolMax });
 // The server connects as nusuh_app, which row-level security applies to: never as a superuser or a role that bypasses it.
 {
   const r = (await pool.query(`SELECT current_user AS u, rolsuper AS s, rolbypassrls AS b FROM pg_roles WHERE rolname = current_user`)).rows[0];

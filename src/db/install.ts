@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import pg from 'pg';
+import { clientConfig } from './ssl.js';
 import { config } from '../config.js';
 import { hashInviteToken } from '../api/auth.js';
 import { DEMO_FIRM } from './demoData.js';
@@ -19,7 +20,7 @@ export async function createOwner(adminUrl: string, o: { name: string; email: st
   if (!name) throw new Error('Give the owner\'s full name with --name.');
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Give the owner\'s email address with --email.');
   if (!/^https?:\/\/[^\s/]+/i.test(o.publicUrl)) throw new Error('Set PUBLIC_URL (the https:// address of the site) first: the link is built from it.');
-  const c = new pg.Client({ connectionString: adminUrl });
+  const c = new pg.Client(clientConfig(adminUrl, config.databaseCa));
   await c.connect();
   try {
     if (!(await c.query(`SELECT 1 FROM information_schema.tables WHERE table_name = 'users'`)).rowCount) throw new Error('Run `npm run db:migrate` first.');

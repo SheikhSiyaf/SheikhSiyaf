@@ -505,3 +505,11 @@ Every change below is covered by a test in `test/`.
 | `line_fx_vat_is_net_times_rate` replaced by `line_fx_vat_near_its_own_share` | The same, for the amounts as written on a document in another currency (0058) |
 | `check_document_complete()` now requires each VAT category's tax amount to equal its taxable amount times its rate, rounded once, for the written amounts as well | This is ZATCA's BR-CO-17 enforced where it cannot be bypassed. An invoice that fails it is arithmetically wrong and ZATCA can refuse it: a two-line invoice of 3.10 each showed 6.20 taxable with 0.94 VAT, where 6.20 at 15% is 0.93 |
 | No data is touched | The migration changes constraints and one function; it contains no INSERT, UPDATE or DELETE. Issued documents, their lines and their journal entries were already immutable, and an e-invoice keeps its own XML and hash. Seeding the demo books with the old code and the new gives byte-identical figures for all 78 issued documents, because the change only bites where line amounts round differently |
+
+## 0060_close_public_api_grants.sql
+| Change | Why |
+|---|---|
+| Where the roles `anon`, `authenticated` or `service_role` exist (Supabase), revokes all their privileges on every table, sequence and function in `public`, and removes them from the default privileges for objects made later | Supabase's own security guide says new objects in `public` go to those roles automatically. They are what anyone with the project's public key becomes, so every table without row-level security, and every helper function, would be reachable from outside the program. Measured on a simulated host before this: 1,638 objects exposed |
+| On those hosts only: revokes `EXECUTE` on functions from `PUBLIC` (including as the default for new functions, which needs the global form of the command, not the per-schema one), grants it to `nusuh_app`, and makes that the default for new functions in `public` | Those roles are members of `PUBLIC`, so revoking from them alone would leave functions callable |
+| Nothing at all on a server without those roles | An ordinary installation is left exactly as it was |
+| No data and no table is touched | Only privileges change; row-level security is not touched or weakened |

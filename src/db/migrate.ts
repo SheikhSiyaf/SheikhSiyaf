@@ -3,11 +3,13 @@ import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import pg from 'pg';
+import { clientConfig } from './ssl.js';
+import { config } from '../config.js';
 
 const MIGRATIONS_DIR = fileURLToPath(new URL('../../db/migrations/', import.meta.url));
 
 export async function migrate(adminUrl: string, appPassword?: string): Promise<string[]> {
-  const client = new pg.Client({ connectionString: adminUrl });
+  const client = new pg.Client(clientConfig(adminUrl, config.databaseCa));
   await client.connect();
   const applied: string[] = [];
   try {

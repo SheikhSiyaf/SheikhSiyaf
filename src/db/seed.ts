@@ -3,6 +3,7 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import pg from 'pg';
+import { clientConfig } from './ssl.js';
 import { config } from '../config.js';
 import { hashPassword } from '../auth/password.js';
 import { postEntry, reverseEntry, type LineInput } from '../ledger/ledger.js';
@@ -48,7 +49,7 @@ const firstOfNextMonth = () => { const d = new Date(); return iso(new Date(Date.
 /** Loads the demo data. Never in production: demo people, companies and passwords must not reach a real installation. */
 export async function seed(adminUrl: string, o: { production?: boolean } = {}): Promise<'seeded' | 'exists'> {
   if (o.production ?? config.production) throw new Error('The demo data is never loaded in production (NODE_ENV=production). A real installation starts with `npm run db:install`.');
-  const client = new pg.Client({ connectionString: adminUrl });
+  const client = new pg.Client(clientConfig(adminUrl, config.databaseCa));
   await client.connect();
   const asUser = (id: string) => client.query("SELECT set_config('app.user_id', $1, true)", [id]);
   try {

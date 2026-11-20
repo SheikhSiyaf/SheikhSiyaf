@@ -35,7 +35,7 @@ describe('the YAML files are valid YAML, not just text that looks right', () => 
   // The other checks here read render.yaml as text, so they passed while the file could not be parsed at all: an
   // unquoted ": " inside the build command made Render reject the whole blueprint, silently keeping the old service
   // settings. Every sync failed and none of the later fixes reached the live site until the owner saw the error.
-  it.each(['render.yaml', '.github/workflows/ci.yml', '.github/workflows/backup.yml'])('%s parses', (file) => {
+  it.each(['render.yaml', '.github/workflows/ci.yml', '.github/workflows/backup.yml', '.github/workflows/hosted-db-check.yml'])('%s parses', (file) => {
     expect(() => parse(readFileSync(file, 'utf8'))).not.toThrow();
   });
 
@@ -168,5 +168,32 @@ describe('the daily backup workflow', () => {
 
   it('rehearses the restore, so a backup that cannot be opened turns the run red', () => {
     expect(wf).toMatch(/scripts\/restore\.sh/);
+  });
+});
+
+describe('the hosted database check', () => {
+  const wf = readFileSync('.github/workflows/hosted-db-check.yml', 'utf8');
+  const script = readFileSync('scripts/hosted-db-check.ts', 'utf8');
+
+  it('reads every credential from secrets, holds no value of its own, and runs a script that exists', () => {
+    for (const key of ['HOSTED_DATABASE_ADMIN_URL', 'HOSTED_DATABASE_URL', 'HOSTED_APP_DB_PASSWORD', 'HOSTED_DATABASE_CA_CERT']) {
+      expect(wf, `${key} must come from secrets`).toMatch(new RegExp(`${key}:\\s*\\$\\{\\{\\s*secrets\\.${key}\\s*\\}\\}`));
+    }
+    expect(wf).not.toMatch(/postgres(ql)?:\/\/[^\s'"]*@(?!localhost)/);
+    expect(() => statSync('scripts/hosted-db-check.ts')).not.toThrow();
+    expect(wf).toContain('scripts/hosted-db-check.ts');
+  });
+
+  it('never prints a connection string or a password', () => {
+    // Every console.log in the script goes through record() or prints a fixed sentence; none interpolates a setting.
+    for (const secret of ['adminUrl', 'appUrl', 'appPassword', 'HOSTED_DATABASE_ADMIN_URL', 'HOSTED_DATABASE_URL', 'HOSTED_APP_DB_PASSWORD']) {
+      const printing = script.split('\n').filter((l) => /console\.(log|error)\(|record\(/.test(l) && l.includes(secret) && !/need\(|is not set|must be at least/.test(l));
+      expect(printing, `a line prints ${secret}`).toEqual([]);
+    }
+  });
+
+  it('refuses a database that already holds a customer, and never loads demo data', () => {
+    expect(script).toContain("kind <> 'platform'");
+    expect(script).not.toMatch(/seed\(/);
   });
 });

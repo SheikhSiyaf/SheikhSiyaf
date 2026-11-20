@@ -1,5 +1,6 @@
 // Reads settings from the environment, loading .env from the project folder if there is one.
 import { randomBytes } from 'node:crypto';
+import { caFrom } from './db/ssl.js';
 
 try {
   process.loadEnvFile();
@@ -23,6 +24,11 @@ export const config = {
   databaseUrl: env.DATABASE_URL ?? (production ? '' : 'postgres://nusuh_app:change-me@localhost:5432/nusuh'),
   /** Only for migrations and demo data; the running server never connects with it. */
   databaseAdminUrl: env.DATABASE_ADMIN_URL ?? 'postgres://postgres:postgres@localhost:5432/nusuh',
+  /** The certificate authority of a host whose database certificates are not from a public authority (Supabase).
+   *  A public certificate, not a secret. Invalid values are reported by validateConfig; here they read as not set. */
+  databaseCa: (() => { try { return caFrom(env.DATABASE_CA_CERT); } catch { return undefined; } })(),
+  /** Most connections the server opens to the database (default 10, kept between 1 and 50). */
+  databasePoolMax: Number(env.DATABASE_POOL_MAX ?? 10),
   appDbPassword: env.APP_DB_PASSWORD,
   sessionSecret: env.SESSION_SECRET || randomBytes(32).toString('hex'),
   sessionSecretFromEnv: Boolean(env.SESSION_SECRET),
@@ -42,6 +48,7 @@ export const config = {
  *  elsewhere it is printed as warnings. Pure: give it an environment, get the problems back. */
 export function validateConfig(e: Record<string, string | undefined>): string[] {
   const out: string[] = [];
+  try { caFrom(e.DATABASE_CA_CERT); } catch (err) { out.push((err as Error).message); }
   const session = e.SESSION_SECRET ?? '';
   const key = e.ENCRYPTION_KEY ?? '';
   if (!session) out.push('SESSION_SECRET is not set: sign-in cookies would be signed with a random secret.');

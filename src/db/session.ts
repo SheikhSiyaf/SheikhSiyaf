@@ -5,43 +5,21 @@ import { HttpError } from '../api/errors.js';
 
 export type Db = pg.PoolClient;
 
-/**
- * How the connection is encrypted, decided here rather than left to the connection string.
- *
- * A hosted database is reached across the public internet, and every row of it is a client's books. The driver's
- * own default is not good enough to rely on: connecting with sslmode=require to a server holding a self-signed
- * certificate succeeds without complaint, so the connection is encrypted but the server is never checked, which an
- * attacker in the middle can use. node-postgres also warns that it is changing what sslmode=require means, so a
- * connection string copied from a host today may behave differently after an upgrade.
- *
- * So: a database reached over the public internet must present a certificate signed by a real authority. Neon and
- * Supabase do, and so does Render's external address. There is deliberately no way to switch this off through the
- * connection string, because that switch would be the first thing a mistake reaches for.
- *
- * ONE EXCEPTION, which Render's own documentation requires: its internal address (a host name with no dots, such as
- * dpg-abc123-a) uses a self-signed certificate and "does not support sslmode=verify-ca or verify-full". A name with
- * no dots exists only on the host's private network and cannot be reached from the internet, so there is nobody to
- * stand in the middle. For those the connection is still encrypted, with no fall-back to plaintext, but the
- * certificate is accepted. The first version of this function demanded a verified certificate everywhere and would
- * have refused to connect to Render's own database; that was caught by reading their documentation.
- *
- * Returns undefined for a local database, where there is no network to listen on and certificates are self-signed.
- */
-export function sslFor(connectionString: string): pg.PoolConfig['ssl'] {
-  let host: string;
-  try {
-    host = new URL(connectionString).hostname;
-  } catch {
-    return undefined;   // not a URL at all: a unix socket or a local development setting
-  }
-  const local = host === '' || host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
-  if (local) return undefined;
-  const privateName = !host.includes('.') && !host.includes(':') && !host.startsWith('[');
-  return privateName ? { rejectUnauthorized: false } : { rejectUnauthorized: true };
-}
+export { sslFor, caFrom, clientConfig } from './ssl.js';
+import { sslFor } from './ssl.js';
 
-export function createPool(connectionString: string): pg.Pool {
-  const pool = new pg.Pool({ connectionString, ssl: sslFor(connectionString) });
+/** Pool limits. 10 is the driver's own default; the ceiling stops a typo (a setting of 5000) from opening that many
+ *  connections to a database host that allows a few dozen, and the floor keeps the server able to answer at all. */
+export const POOL_DEFAULT = 10, POOL_MAX = 50;
+
+export function createPool(connectionString: string, o: { ca?: string; max?: number } = {}): pg.Pool {
+  const max = Math.min(POOL_MAX, Math.max(1, Math.floor(Number.isFinite(o.max) ? (o.max as number) : POOL_DEFAULT)));
+  const pool = new pg.Pool({
+    connectionString, ssl: sslFor(connectionString, o.ca), max,
+    // A connect attempt that never answers must end, or every request waits behind it. Idle connections are recycled
+    // before a host's idle timeout can cut them silently, and keep-alive probes stop a cloud network from dropping them.
+    connectionTimeoutMillis: 10_000, idleTimeoutMillis: 30_000, keepAlive: true,
+  });
   // An idle connection dropped by the database (restart, failover) must not crash the server;
   // the pool opens a new connection for the next request.
   pool.on('error', (err) => console.error('Database connection lost:', err.message));

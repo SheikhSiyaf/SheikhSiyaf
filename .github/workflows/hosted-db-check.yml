@@ -1,0 +1,46 @@
+# Runs Nusuh Books against a REAL hosted database (Supabase) and reports in plain words what works and what does not:
+# the migrations as an owner that is not a superuser, the certificate, whether the host's public web API can reach our
+# tables, the app's own login, row-level security, sign-in through the real API, speed, and recovery from a dropped
+# connection. The program is tested against a local database everywhere else; this is the check that a hosted one
+# behaves the same.
+#
+# Run it by hand (Actions > Hosted database check > Run workflow), or push a commit whose message contains
+# [hosted-check]. It uses a THROWAWAY database: make a new, empty Supabase project for it and delete the project
+# afterwards. It refuses a database that already holds a customer. Nothing is deployed and nothing in Render changes.
+#
+# Secrets (Settings > Secrets and variables > Actions > New repository secret). Values are never written in this file.
+#   HOSTED_DATABASE_ADMIN_URL  the project's owner login via the SESSION pooler (port 5432), user postgres.<project ref>.
+#                              Use the pooler: GitHub's servers are IPv4 and Supabase's direct address is IPv6-only.
+#   HOSTED_DATABASE_URL        the same address with user nusuh_app.<project ref> and the password chosen below
+#   HOSTED_APP_DB_PASSWORD     the password for nusuh_app: 20+ letters and digits, no symbols, chosen by you
+#   HOSTED_DATABASE_CA_CERT    the project's certificate authority (Supabase: Database settings > SSL > download
+#                              prod-ca-2021.crt, then paste the whole file). It is a public file, not a secret, but
+#                              kept here so it is pasted once.
+name: Hosted database check
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/hosted-db-check.ts'
+      - '.github/workflows/hosted-db-check.yml'
+
+jobs:
+  check:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[hosted-check]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Check the hosted database
+        env:
+          HOSTED_DATABASE_ADMIN_URL: ${{ secrets.HOSTED_DATABASE_ADMIN_URL }}
+          HOSTED_DATABASE_URL: ${{ secrets.HOSTED_DATABASE_URL }}
+          HOSTED_APP_DB_PASSWORD: ${{ secrets.HOSTED_APP_DB_PASSWORD }}
+          HOSTED_DATABASE_CA_CERT: ${{ secrets.HOSTED_DATABASE_CA_CERT }}
+        run: npx tsx scripts/hosted-db-check.ts

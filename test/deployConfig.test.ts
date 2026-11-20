@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { parse } from 'yaml';
 
 const blueprint = readFileSync('render.yaml', 'utf8');
 const scripts = (JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }).scripts;
@@ -29,6 +30,23 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
+
+describe('the YAML files are valid YAML, not just text that looks right', () => {
+  // The other checks here read render.yaml as text, so they passed while the file could not be parsed at all: an
+  // unquoted ": " inside the build command made Render reject the whole blueprint, silently keeping the old service
+  // settings. Every sync failed and none of the later fixes reached the live site until the owner saw the error.
+  it.each(['render.yaml', '.github/workflows/ci.yml', '.github/workflows/backup.yml'])('%s parses', (file) => {
+    expect(() => parse(readFileSync(file, 'utf8'))).not.toThrow();
+  });
+
+  it('render.yaml, once parsed, holds the build command and variables the text checks assume', () => {
+    const svc = (parse(blueprint) as { services: Array<{ buildCommand: string; envVars: Array<{ key: string }> }> }).services[0]!;
+    expect(svc.buildCommand).toBe(field('buildCommand'));
+    expect(svc.buildCommand).toContain('db:install:prod');
+    const keys = svc.envVars.map((e) => e.key);
+    for (const k of ['NODE_VERSION', 'HOST', 'DATABASE_URL', 'SESSION_SECRET', 'OWNER_EMAIL']) expect(keys).toContain(k);
+  });
+});
 
 describe('render.yaml, the deployment', () => {
   it('names only scripts that exist', () => {

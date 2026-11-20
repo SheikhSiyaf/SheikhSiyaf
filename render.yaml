@@ -39,7 +39,10 @@ services:
     # migration is additive and recorded in schema_migrations, so it is applied once however often this runs, and a
     # failure stops the deploy rather than leaving the schema half-changed.
     # On a paid plan, move the migration back out into:  preDeployCommand: npm run db:migrate:prod
-    buildCommand: npm ci --include=dev && npm run build:prod && npm run db:migrate:prod
+    buildCommand: npm ci --include=dev && npm run build:prod && npm run db:migrate:prod && (npm run db:install:prod || echo "No owner link made: set OWNER_NAME and OWNER_EMAIL to make one")
+    # The last step makes the first owner's one-time sign-in link and prints it in this build's log. It is how the owner
+    # gets in on a plan with no shell. It does nothing once the owner has chosen a password, and it never sets or prints
+    # a password. Remove OWNER_NAME and OWNER_EMAIL after the owner has signed in.
 
     # Plain node on compiled JavaScript. Never `npm start`: that runs the TypeScript through tsx, which is a
     # devDependency and is not installed at runtime.
@@ -98,6 +101,12 @@ services:
       # manager: if the service is ever deleted and rebuilt, the same key is needed to read the stored secrets.
       - key: ENCRYPTION_KEY
         generateValue: true
+
+      # Who the first owner is. Used only to print a one-time link to choose a password; see buildCommand.
+      - key: OWNER_NAME
+        sync: false
+      - key: OWNER_EMAIL
+        sync: false
 
       # Email. Leave EMAIL_PROVIDER unset until the sending domain is verified: until then messages simply wait in
       # the outbox and nothing is sent to anyone.

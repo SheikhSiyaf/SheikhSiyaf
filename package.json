@@ -24,6 +24,7 @@
     "restore": "bash scripts/restore.sh",
     "db:reset": "tsx src/db/reset.ts",
     "db:install": "tsx src/db/install.ts",
+    "db:install:prod": "node dist/db/install.js",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web",
     "test": "vitest run",
     "test:watch": "vitest",

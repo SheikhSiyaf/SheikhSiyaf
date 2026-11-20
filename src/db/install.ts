@@ -52,9 +52,15 @@ export async function createOwner(adminUrl: string, o: { name: string; email: st
   }
 }
 
+/** The owner's name and email from --name / --email, or else from OWNER_NAME / OWNER_EMAIL. The settings let a host that
+ *  has no shell (Render's free plan) create the owner during its build, where only environment settings can be given. */
+export function ownerFrom(argv: string[], env: Record<string, string | undefined>): { name: string; email: string } {
+  const arg = (k: string) => { const i = argv.indexOf(`--${k}`); return i > 0 ? argv[i + 1] ?? '' : ''; };
+  return { name: arg('name') || env.OWNER_NAME || '', email: arg('email') || env.OWNER_EMAIL || '' };
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  const arg = (k: string) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] ?? '' : ''; };
-  createOwner(config.databaseAdminUrl, { name: arg('name'), email: arg('email'), publicUrl: config.publicUrl })
+  createOwner(config.databaseAdminUrl, { ...ownerFrom(process.argv, process.env), publicUrl: config.publicUrl })
     .then((r) => console.log(`${r.status === 'created' ? 'Owner account created.' : 'New link for the owner.'} Open this link within ${OWNER_INVITE_DAYS} days to choose a password (it works once; do not share it):\n\n  ${r.link}\n\nThen sign in, open the owner console and add the first customer and its company.`))
     .catch((e) => { console.error((e as Error).message); process.exit(1); });
 }

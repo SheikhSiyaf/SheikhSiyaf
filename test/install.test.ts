@@ -78,3 +78,12 @@ describe('Starting a real installation', () => {
     await expect(createOwner(ownerUrl(), { name: 'Real Owner', email: 'owner@books.example.com', publicUrl: 'https://books.example.com' })).rejects.toThrow(/already chosen a password/);
   });
 });
+
+import { ownerFrom } from '../src/db/install.js';
+describe('ownerFrom: the owner named on the command line or in the host settings', () => {
+  it('takes the command line first, then OWNER_NAME and OWNER_EMAIL, else empty', () => {
+    expect(ownerFrom(['node', 'x', '--name', 'A B', '--email', 'a@b.co'], { OWNER_NAME: 'Z', OWNER_EMAIL: 'z@z.co' })).toEqual({ name: 'A B', email: 'a@b.co' });
+    expect(ownerFrom(['node', 'x'], { OWNER_NAME: 'Z Y', OWNER_EMAIL: 'z@z.co' })).toEqual({ name: 'Z Y', email: 'z@z.co' });
+    expect(ownerFrom(['node', 'x'], {})).toEqual({ name: '', email: '' });
+  });
+});

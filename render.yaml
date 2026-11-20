@@ -59,6 +59,10 @@ services:
     envVars:
       # NODE_ENV=production turns on the start-up checks in src/config.ts: the server refuses to start with a
       # missing or example secret, with demo sign-in on, or connecting as a superuser.
+      # Everything is built and tested on Node 22. package.json only says "22 or newer", so without this Render picks
+      # the newest release (it chose 26 on the first real deploy). Render reads this one itself; the code never does.
+      - key: NODE_VERSION
+        value: "22"
       - key: NODE_ENV
         value: production
       # Listen on every network address. The app's own default, 127.0.0.1, means "this machine only", which is right on

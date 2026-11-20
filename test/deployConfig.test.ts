@@ -105,7 +105,11 @@ describe('render.yaml, the deployment', () => {
     );
     const keys = [...blueprint.matchAll(/^\s*-\s*key:\s*([A-Z_]+)\s*$/gm)].map((m) => m[1]!);
     expect(keys.length).toBeGreaterThan(8);
-    expect(keys.filter((k) => !read.has(k)), 'declared in render.yaml but never read by the code').toEqual([]);
+    // Read by the platform or the build rather than by our code: Render's Node version, and the owner's name and email,
+    // which the build step reads through install.ts's ownerFrom (it receives process.env whole).
+    const platform = new Set(['NODE_VERSION']);
+    expect(keys.filter((k) => !read.has(k) && !platform.has(k)), 'declared in render.yaml but never read by the code').toEqual([]);
+    expect(blueprint).toMatch(/key:\s*NODE_VERSION\s*\n\s*value:\s*"22"/);
     // Every credential is asked for by the host and kept there. A value in this file would be a secret in the
     // repository, which is the one thing this must never contain.
     for (const secret of ['DATABASE_URL', 'DATABASE_ADMIN_URL', 'APP_DB_PASSWORD', 'RESEND_API_KEY']) {

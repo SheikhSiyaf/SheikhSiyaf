@@ -58,6 +58,11 @@ services:
       # missing or example secret, with demo sign-in on, or connecting as a superuser.
       - key: NODE_ENV
         value: production
+      # Listen on every network address. The app's own default, 127.0.0.1, means "this machine only", which is right on
+      # a laptop but leaves Render's front door nothing to connect to: the deploy builds, then times out with "no
+      # open ports detected". Render supplies PORT itself.
+      - key: HOST
+        value: 0.0.0.0
       - key: TRUST_PROXY
         # Render puts one proxy in front of the service. Without this every visitor appears to come from the
         # proxy's address, so one person's wrong passwords would lock everyone out of signing in.

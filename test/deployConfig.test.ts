@@ -123,6 +123,7 @@ describe('render.yaml, the deployment', () => {
       new RegExp(`key:\\s*${key}\\s*\\n(?:\\s*#.*\\n)*\\s*value:\\s*"?${value}"?\\s*\\n`).test(blueprint);
     expect(setTo('DEMO_LOGINS', 'false'), 'DEMO_LOGINS must be false').toBe(true);
     expect(setTo('COOKIE_SECURE', 'true'), 'COOKIE_SECURE must be true').toBe(true);
+    expect(setTo('HOST', '0.0.0.0'), 'HOST must be 0.0.0.0, or the host finds no open port').toBe(true);
     expect(setTo('TRUST_PROXY', '1'), 'TRUST_PROXY must be 1 behind Render\'s proxy').toBe(true);
   });
 });

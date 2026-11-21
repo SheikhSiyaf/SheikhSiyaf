@@ -41,10 +41,11 @@ At the end of every phase, run docs/DEEP_CHECK.md before reporting.
 - After each feature or fix, update docs/ADVISOR_BRIEF.md ("What is built", "Where things stand", date) in a few
   lines and say so.
 - Use the headroom skill for every file read: measure first, then read only the parts needed.
-- After each phase is pushed, save a source snapshot to the owner's Google Drive, folder "Nusuh Books / 3 Backups /
-  Per version" (id 1sVNc4C9KxAGQkBU_3wy_UcEDqNkC-LuU): `git archive` of the tracked files without marketing-screens,
-  named with the commit, never including .env. The connector takes about 3 MB of files per call; if the zip is larger,
-  say so in the report and do not split it. New documents go in "4 Documents" (id 1bQiIeR8zt-AYQ4rOSdEZCm8aukP8ICpq).
+- Google Drive backups (owner's request): once the owner has switched it on (repository variable DRIVE_BACKUP_ENABLED),
+  .github/workflows/drive-backup.yml sends every push's source zip, changed documents, and monthly the full history.
+  Until then, after each phase is pushed save a source zip (`git archive` of tracked files without marketing-screens,
+  never .env, named with the commit) to Drive folder "3 Backups / Per version" (id 1sVNc4C9KxAGQkBU_3wy_UcEDqNkC-LuU).
+  The session connector takes about 3 MB of files per call; if the zip is larger, say so and do not split it.
 
 ## Read only when needed
 - docs/DECISIONS.md: decided product rules, users and access, client registration, open questions.

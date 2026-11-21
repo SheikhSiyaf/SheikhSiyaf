@@ -1,0 +1,51 @@
+# Copies the project to the owner's Google Drive: the source code after every push (a new file per commit, so every old
+# version is kept), changed documents, and once a month the whole history of every version plus the marketing
+# screenshots. Large files go in pieces; scripts/drive-backup.ts says how to join them.
+#
+# Off until the owner turns it on, so a push never fails for lack of a login: add the repository VARIABLE
+# DRIVE_BACKUP_ENABLED=true and the two SECRETS below (Settings > Secrets and variables > Actions). No value is ever
+# written in this file. The one-time set-up of the receiving script is described at the top of scripts/drive-upload.gs.
+#   DRIVE_UPLOAD_URL      the Apps Script web app address (ends in /exec)
+#   DRIVE_UPLOAD_SECRET   the long password stored in that script's Script properties as UPLOAD_SECRET
+# Run it by hand (Actions > Drive backup > Run workflow) to send everything now. Put [skip backup] in a commit message
+# to skip the upload for that push. The live database is not sent here: see backup.yml.
+name: Drive backup
+
+on:
+  push:
+    branches: [claude/nusuh-books-starter-kit-3vsat0]
+  schedule:
+    - cron: '23 21 1 * *'   # 21:23 UTC on the 1st = 02:53 on the 2nd in India; off the :00 queue
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'What to send'
+        type: choice
+        options: [all, push, monthly]
+        default: all
+
+concurrency:
+  group: drive-backup
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    if: vars.DRIVE_BACKUP_ENABLED == 'true' && !contains(github.event.head_commit.message, '[skip backup]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the monthly file holds the whole history
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Upload to Drive
+        env:
+          DRIVE_UPLOAD_URL: ${{ secrets.DRIVE_UPLOAD_URL }}
+          DRIVE_UPLOAD_SECRET: ${{ secrets.DRIVE_UPLOAD_SECRET }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BACKUP_MODE: ${{ github.event_name == 'schedule' && 'monthly' || github.event_name == 'workflow_dispatch' && inputs.mode || 'push' }}
+        run: npx tsx scripts/drive-backup.ts "$BACKUP_MODE"

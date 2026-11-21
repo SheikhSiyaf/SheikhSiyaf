@@ -41,6 +41,10 @@ At the end of every phase, run docs/DEEP_CHECK.md before reporting.
 - After each feature or fix, update docs/ADVISOR_BRIEF.md ("What is built", "Where things stand", date) in a few
   lines and say so.
 - Use the headroom skill for every file read: measure first, then read only the parts needed.
+- After each phase is pushed, save a source snapshot to the owner's Google Drive, folder "Nusuh Books / 3 Backups /
+  Per version" (id 1sVNc4C9KxAGQkBU_3wy_UcEDqNkC-LuU): `git archive` of the tracked files without marketing-screens,
+  named with the commit, never including .env. The connector takes about 3 MB of files per call; if the zip is larger,
+  say so in the report and do not split it. New documents go in "4 Documents" (id 1bQiIeR8zt-AYQ4rOSdEZCm8aukP8ICpq).
 
 ## Read only when needed
 - docs/DECISIONS.md: decided product rules, users and access, client registration, open questions.

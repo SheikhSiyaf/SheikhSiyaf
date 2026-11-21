@@ -1,0 +1,519 @@
+{
+ "generated": "2026-11-21",
+ "viewports": {
+  "desktop": {
+   "width": 1440,
+   "height": 900,
+   "deviceScaleFactor": 2
+  },
+  "mobile": {
+   "width": 390,
+   "height": 844,
+   "deviceScaleFactor": 3,
+   "isMobile": true,
+   "hasTouch": true
+  }
+ },
+ "companies": {
+  "corniche": "Corniche Resort (hospitality)",
+  "najd": "Najd Contracting (construction)",
+  "gulf": "Gulf Steel Trading (trading)",
+  "zaytoon": "Al Zaytoon Cafe (restaurant)",
+  "rmart": "Riyadh Mart (retail)",
+  "rose": "Desert Rose Consulting (services)",
+  "eastern": "Eastern Fabrication (manufacturing)",
+  "amal": "Al Amal Accounting (firm tenant; owns all seven companies)"
+ },
+ "users": {
+  "owner": "demo business owner: kind client, full access, one per company",
+  "partner": "firm partner",
+  "admin": "firm Administrator"
+ },
+ "screens": [
+  {
+   "base": "module-sales",
+   "group": "modules",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Sales/invoices",
+   "language": "en",
+   "status": "substitute",
+   "pick": {
+    "invoice": "an issued, partly paid invoice"
+   },
+   "note": "List page. The open invoice is /Sales/invoices/{invoice}; one image cannot hold both"
+  },
+  {
+   "base": "module-purchases",
+   "group": "modules",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Purchases/bills",
+   "language": "en",
+   "status": "substitute",
+   "note": "Bills list only; the claim with receipt is /Expenses/claims"
+  },
+  {
+   "base": "module-banking",
+   "group": "modules",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Bank/reconcile/{bank}",
+   "language": "en",
+   "status": "mapped",
+   "pick": {
+    "bank": "the main bank account"
+   }
+  },
+  {
+   "base": "module-reports",
+   "group": "modules",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Reports/profit-and-loss",
+   "language": "en",
+   "status": "mapped",
+   "note": "Confirm the drill-down is visible on screen; else vat-return"
+  },
+  {
+   "base": "module-review",
+   "group": "modules",
+   "company": "amal",
+   "user": "partner",
+   "route": "/c/{company}/Review/checklist",
+   "language": "en",
+   "status": "mapped",
+   "pick": {
+    "company": "gulf"
+   },
+   "note": "Opened on a client of the firm (Gulf Steel Trading)"
+  },
+  {
+   "base": "module-users",
+   "group": "modules",
+   "company": "amal",
+   "user": "admin",
+   "route": "/admin/roles",
+   "language": "en",
+   "status": "mapped",
+   "note": "Administrator console, not the company workspace"
+  },
+  {
+   "base": "module-inventory",
+   "group": "modules",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Inventory/items",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "module-warehouse",
+   "group": "modules",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Inventory/warehouse-desk",
+   "language": "en",
+   "status": "mapped",
+   "note": "Confirm it shows a scan field"
+  },
+  {
+   "base": "module-assets",
+   "group": "modules",
+   "company": "najd",
+   "user": "owner",
+   "route": "/c/{company}/Assets/register",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "module-projects",
+   "group": "modules",
+   "company": "najd",
+   "user": "owner",
+   "route": "/c/{company}/Projects/project-report",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "module-rentals",
+   "group": "modules",
+   "company": "najd",
+   "user": "owner",
+   "route": "/c/{company}/Rentals/rental-contracts/{contract}",
+   "language": "en",
+   "status": "mapped",
+   "pick": {
+    "contract": "a contract in progress"
+   }
+  },
+  {
+   "base": "module-rooms",
+   "group": "modules",
+   "company": "corniche",
+   "user": "owner",
+   "route": "/c/{company}/Rooms/front-desk",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "module-restaurant",
+   "group": "modules",
+   "company": "zaytoon",
+   "user": "owner",
+   "route": "/c/{company}/Restaurant/food-sales",
+   "language": "en",
+   "status": "substitute",
+   "note": "No tables or open orders in the app; this is the till"
+  },
+  {
+   "base": "module-payroll",
+   "group": "modules",
+   "company": "corniche",
+   "user": "owner",
+   "route": "/c/{company}/HRM/payroll",
+   "language": "en",
+   "status": "mapped",
+   "note": "Confirm GOSI lines are on the run page"
+  },
+  {
+   "base": "module-crm",
+   "group": "modules",
+   "company": "rose",
+   "user": "owner",
+   "route": "/c/{company}/CRM/pipeline",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "module-portal",
+   "group": "modules",
+   "company": "gulf",
+   "user": null,
+   "route": "/i/{token}",
+   "language": "en",
+   "status": "mapped",
+   "pick": {
+    "token": "an open invoice share link"
+   },
+   "note": "Public page, no sign-in; company needs online payments on (sandbox provider)"
+  },
+  {
+   "base": "hotels-01-home",
+   "group": "industries",
+   "company": "corniche",
+   "user": "owner",
+   "route": "/c/{company}/Home",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "hotels-02-rooms-calendar",
+   "group": "industries",
+   "company": "corniche",
+   "user": "owner",
+   "route": "/c/{company}/Rooms/room-calendar",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "hotels-03-guest-bill",
+   "group": "industries",
+   "company": "corniche",
+   "user": "owner",
+   "route": "/c/{company}/Rooms/bookings/{booking}",
+   "language": "en",
+   "status": "mapped",
+   "note": "A guest bill is the booking page; confirm"
+  },
+  {
+   "base": "hotels-04-restaurant-till",
+   "group": "industries",
+   "company": "corniche",
+   "user": "owner",
+   "route": "/c/{company}/Restaurant/food-sales",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "construction-01-home",
+   "group": "industries",
+   "company": "najd",
+   "user": "owner",
+   "route": "/c/{company}/Home",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "construction-02-project-budget",
+   "group": "industries",
+   "company": "najd",
+   "user": "owner",
+   "route": "/c/{company}/Projects/project-report",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "construction-03-rental-contract",
+   "group": "industries",
+   "company": "najd",
+   "user": "owner",
+   "route": "/c/{company}/Rentals/rental-contracts/{contract}",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "construction-04-site-stock",
+   "group": "industries",
+   "company": "najd",
+   "user": "owner",
+   "route": "/c/{company}/Inventory/stock-value",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "trading-01-home",
+   "group": "industries",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Home",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "trading-02-inventory-levels",
+   "group": "industries",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Inventory/stock-value",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "trading-03-purchase-order",
+   "group": "industries",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Purchases/purchase-orders/{po}",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "trading-04-sales-invoice",
+   "group": "industries",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Sales/invoices/{invoice}",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "restaurants-01-home",
+   "group": "industries",
+   "company": "zaytoon",
+   "user": "owner",
+   "route": "/c/{company}/Home",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "restaurants-02-till-open-orders",
+   "group": "industries",
+   "company": "zaytoon",
+   "user": "owner",
+   "route": "/c/{company}/Restaurant/food-sales",
+   "language": "en",
+   "status": "substitute",
+   "note": "No open orders or tables in the app; the till and recent sales"
+  },
+  {
+   "base": "restaurants-03-menu-items",
+   "group": "industries",
+   "company": "zaytoon",
+   "user": "owner",
+   "route": "/c/{company}/Restaurant/menu",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "restaurants-04-daily-takings",
+   "group": "industries",
+   "company": "zaytoon",
+   "user": "owner",
+   "route": "/c/{company}/Restaurant/food-sales",
+   "language": "en",
+   "status": "substitute",
+   "note": "No daily takings page; recent food sales list or Reports/profit-and-loss by month"
+  },
+  {
+   "base": "retail-01-home",
+   "group": "industries",
+   "company": "rmart",
+   "user": "owner",
+   "route": "/c/{company}/Home",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "retail-02-sales-invoices",
+   "group": "industries",
+   "company": "rmart",
+   "user": "owner",
+   "route": "/c/{company}/Sales/invoices",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "retail-03-stock-count",
+   "group": "industries",
+   "company": "rmart",
+   "user": "owner",
+   "route": "/c/{company}/Inventory/stock-value",
+   "language": "en",
+   "status": "substitute",
+   "note": "Stock counts are not built; stock value instead"
+  },
+  {
+   "base": "retail-04-customers",
+   "group": "industries",
+   "company": "rmart",
+   "user": "owner",
+   "route": "/c/{company}/Sales/customers",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "services-01-home",
+   "group": "industries",
+   "company": "rose",
+   "user": "owner",
+   "route": "/c/{company}/Home",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "services-02-quotes",
+   "group": "industries",
+   "company": "rose",
+   "user": "owner",
+   "route": "/c/{company}/Sales/quotations",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "services-03-project-budget",
+   "group": "industries",
+   "company": "rose",
+   "user": "owner",
+   "route": "/c/{company}/Projects/project-report",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "services-04-recurring-invoices",
+   "group": "industries",
+   "company": "rose",
+   "user": "owner",
+   "route": "/c/{company}/Sales/recurring-invoices",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "manufacturing-01-home",
+   "group": "industries",
+   "company": "eastern",
+   "user": "owner",
+   "route": "/c/{company}/Home",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "manufacturing-02-materials-stock",
+   "group": "industries",
+   "company": "eastern",
+   "user": "owner",
+   "route": "/c/{company}/Inventory/stock-value",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "manufacturing-03-warehouse-counter",
+   "group": "industries",
+   "company": "eastern",
+   "user": "owner",
+   "route": "/c/{company}/Inventory/warehouse-desk",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "manufacturing-04-machines-assets",
+   "group": "industries",
+   "company": "eastern",
+   "user": "owner",
+   "route": "/c/{company}/Assets/register",
+   "language": "en",
+   "status": "mapped"
+  },
+  {
+   "base": "firms-01-clients",
+   "group": "firms",
+   "company": "amal",
+   "user": "partner",
+   "route": "/",
+   "language": "en",
+   "status": "mapped",
+   "note": "My clients list for the firm partner"
+  },
+  {
+   "base": "firms-02-month-end-review",
+   "group": "firms",
+   "company": "amal",
+   "user": "partner",
+   "route": "/c/{company}/Review/overview",
+   "language": "en",
+   "status": "mapped",
+   "pick": {
+    "company": "a client with a month in review"
+   }
+  },
+  {
+   "base": "firms-03-period-lock",
+   "group": "firms",
+   "company": "amal",
+   "user": "partner",
+   "route": "/c/{company}/Journal/periods",
+   "language": "en",
+   "status": "mapped",
+   "pick": {
+    "company": "the client whose previous month is signed off and locked"
+   }
+  },
+  {
+   "base": "ar-hotels-01-home",
+   "group": "arabic",
+   "company": "corniche",
+   "user": "owner",
+   "route": "/c/{company}/Home",
+   "language": "ar",
+   "status": "mapped"
+  },
+  {
+   "base": "ar-module-sales",
+   "group": "arabic",
+   "company": "gulf",
+   "user": "owner",
+   "route": "/c/{company}/Sales/invoices",
+   "language": "ar",
+   "status": "mapped"
+  },
+  {
+   "base": "ar-module-payroll",
+   "group": "arabic",
+   "company": "corniche",
+   "user": "owner",
+   "route": "/c/{company}/HRM/payroll",
+   "language": "ar",
+   "status": "mapped"
+  }
+ ]
+}

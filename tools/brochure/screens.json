@@ -171,10 +171,10 @@
    "group": "modules",
    "company": "corniche",
    "user": "owner",
-   "route": "/c/{company}/HRM/payroll",
+   "route": "/c/{company}/HRM/payroll/{payrun}",
    "language": "en",
    "status": "mapped",
-   "note": "Confirm GOSI lines are on the run page"
+   "note": "Opens the latest payroll run (shows the social insurance lines)"
   },
   {
    "base": "module-crm",
@@ -511,9 +511,10 @@
    "group": "arabic",
    "company": "corniche",
    "user": "owner",
-   "route": "/c/{company}/HRM/payroll",
+   "route": "/c/{company}/HRM/payroll/{payrun}",
    "language": "ar",
-   "status": "mapped"
+   "status": "mapped",
+   "note": "Opens the latest payroll run (shows the social insurance lines)"
   }
  ]
 }

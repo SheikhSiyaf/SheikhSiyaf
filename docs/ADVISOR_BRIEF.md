@@ -169,6 +169,7 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
   VAT numbers unique across clients. "VAT unregistered" means 0% VAT.
 - The industry chosen at registration switches on optional modules (Inventory, Restaurant, Assets, Projects, HRM,
   CRM, Rentals); the Administrator can change them.
+- **Database host: Supabase (decided 2026-11-21).** The owner chose Supabase on their paid plan over Neon (Neon Launch would have been about $19 a month, uncapped). Reasons given: predictable cost, and the plan is already paid. Known trade-off, accepted: Supabase Pro keeps daily backups for 7 days, not restore-to-any-moment (that is a paid add-on), so our own encrypted backups matter more. Use a NEW project, never the LMS project (migration 0060 removes the public web API's access to the tables, which could break an app that uses it). Before the switch: the real-project check (`hosted-db-check`) on a throwaway project must pass. Neon stays live until then; its free hours last about 17 days once the Render server is paid and always awake.
 
 ## 7. Where things stand and what is next
 

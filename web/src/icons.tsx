@@ -18,6 +18,7 @@ const P: Record<string, string> = {
   CRM: 'M12 21s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 5.5-7 10-7 10z',
   Journal: 'M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2zM9 8h6M9 12h6',
   Ledger: 'M4 5h16v14H4zM4 10h16M10 10v9',
+  Ownership: 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 21a8 8 0 0 1 16 0M17 5.5l1.5 1.5 3-3',
   Reports: 'M5 20V10M12 20V4M19 20v-7',
   Review: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4M8 11l2 2 3-3',
   search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4',

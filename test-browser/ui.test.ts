@@ -288,3 +288,26 @@ describe('Ownership', () => {
     }
   });
 });
+
+describe('A company that runs its own books', () => {
+  it('its Owner has one login: the books, no accounting-firm modules, and the users and job titles screens', async () => {
+    const solo = (await db.query(`SELECT u.email, u.firm_id AS firm, m.company_id AS company, u.id AS uid FROM users u JOIN memberships m ON m.user_id = u.id JOIN firms f ON f.id = u.firm_id
+      WHERE f.kind = 'company' AND u.kind = 'client' AND u.status = 'active' LIMIT 1`)).rows[0];
+    await db.query('SELECT add_default_client_roles($1)', [solo.firm]);
+    await db.query(`UPDATE memberships SET client_role_id = (SELECT id FROM client_roles WHERE firm_id = $1 AND name = 'Owner') WHERE user_id = $2 AND company_id = $3`, [solo.firm, solo.uid, solo.company]);
+    const { page: p } = await newPage();
+    await signIn(p, solo.email);
+    await p.goto(`${BASE}/c/${solo.company}/Home`, { waitUntil: 'networkidle' });
+    await p.locator('#manage-users').waitFor({ timeout: 15000 });
+    const side = await p.locator('nav.side').innerText();
+    for (const gone of ['Review', 'Portal']) expect(side, gone).not.toContain(gone);
+    expect(side).toContain('Reports');
+    await p.locator('#manage-users').click();
+    await p.waitForTimeout(1500);
+    expect(p.url()).toContain(`/admin/clients/${solo.company}`);
+    expect(await p.locator('nav.side').innerText()).toContain('Users');   // the console is for users and job titles, not an Administrator
+    await p.locator('#back-to-books').click();
+    await p.waitForTimeout(1500);
+    expect(p.url()).toContain(`/c/${solo.company}/Home`);
+  });
+});

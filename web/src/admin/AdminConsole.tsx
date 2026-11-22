@@ -39,7 +39,7 @@ const useTenant = () => useContext(TenantCtx);
 /** Company details may be changed by the owner, or by an accounting firm's Administrator for its clients. */
 const canEditDetails = (x: Tenant) => x.owner || x.kind === 'firm';
 
-export function AdminConsole({ me, path, onSignOut, owner }: { me: Me; path: string; onSignOut: () => void; owner?: boolean }) {
+export function AdminConsole({ me, path, onSignOut, owner, selfService }: { me: Me; path: string; onSignOut: () => void; owner?: boolean; selfService?: boolean }) {
   const { t } = useI18n();
   const settings = useApi<{ firmName: string; kind: 'firm' | 'company'; owner: boolean }>('/api/admin/settings');
   const tenant: Tenant = { kind: settings.data?.kind ?? 'firm', owner: Boolean(settings.data?.owner), name: settings.data?.firmName ?? '' };
@@ -48,12 +48,13 @@ export function AdminConsole({ me, path, onSignOut, owner }: { me: Me; path: str
   const tab = (tabs.find((x) => x.toLowerCase() === seg[2]) ?? 'Clients');
   const clientId = tab === 'Clients' && seg[3] && seg[3] !== 'new' ? seg[3] : null;
   const adding = tab === 'Clients' && seg[3] === 'new';
-  const tabLabel = (x: string) => (x === 'Clients' && tenant.kind === 'company' ? t('admin.Companies') : t(`admin.${x}` as Key));
+  const tabLabel = (x: string) => (x === 'Clients' && selfService ? t('admin.usersTab') : x === 'Clients' && tenant.kind === 'company' ? t('admin.Companies') : t(`admin.${x}` as Key));
   const title = adding ? t('reg.title') : tabLabel(tab);
   if (!settings.data) return <main>{settings.error ? <ErrorNote error={settings.error} onRetry={settings.reload} /> : <Loading />}</main>;
   return (
     <div className="app">
-      <Sidebar subtitle={owner ? tenant.name : t('admin.console')} user={me.user} roleLabel={owner ? t('own.role') : t('role.admin')} onSignOut={onSignOut}>
+      <Sidebar subtitle={selfService ? tenant.name : owner ? tenant.name : t('admin.console')} user={me.user} roleLabel={selfService ? t('side.manageUsers') : owner ? t('own.role') : t('role.admin')} onSignOut={onSignOut}>
+        {selfService && me.companies[0] && <button id="back-to-books" onClick={() => navigate(`/c/${me.companies[0]!.id}/Home`)}>← {t('admin.backToBooks')}</button>}
         {tabs.map((x) => (
           <button key={x} className={x === tab ? 'on' : ''} onClick={() => navigate(`/admin/${x.toLowerCase()}`)} aria-current={x === tab ? 'page' : undefined}>
             {tabLabel(x)}
@@ -657,7 +658,7 @@ function Staff() {
 // ------------------------------------------------------------------ Roles and permissions (client users)
 interface ClientRole {
   id: string; name: string; nameAr: string | null; description: string | null;
-  permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; posMode: boolean; status: 'active' | 'archived'; users: number;
+  permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; posMode: boolean; canManageUsers?: boolean; status: 'active' | 'archived'; users: number;
 }
 /** The role offered first when adding a person: the active role that enters in the most modules (usually Client accountant). */
 const firstRoleId = (roles?: ClientRole[]) => {
@@ -681,10 +682,11 @@ function AccessSummary({ permissions }: { permissions: Record<string, AccessLeve
   );
 }
 
-type RoleDraft = { id?: string; name: string; nameAr: string; description: string; permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; posMode: boolean; status: 'active' | 'archived' };
-const emptyRole = (): RoleDraft => ({ name: '', nameAr: '', description: '', permissions: {}, canApprove: false, canReview: false, canSignOff: false, posMode: false, status: 'active' });
+type RoleDraft = { id?: string; name: string; nameAr: string; description: string; permissions: Record<string, AccessLevel>; canApprove: boolean; canReview: boolean; canSignOff: boolean; posMode: boolean; canManageUsers: boolean; status: 'active' | 'archived' };
+const emptyRole = (): RoleDraft => ({ name: '', nameAr: '', description: '', permissions: {}, canApprove: false, canReview: false, canSignOff: false, posMode: false, canManageUsers: false, status: 'active' });
 
 function Roles() {
+  const tenantKind = useTenant().kind;
   const { t, has } = useI18n();
   const local = useLocalName();
   const list = useApi<ClientRole[]>('/api/admin/roles');
@@ -698,7 +700,7 @@ function Roles() {
     if (!draft.name.trim()) { setMsg({ bad: t('err.roleName') }); return; }
     setBusy(true); setMsg({});
     try {
-      const body = { name: draft.name, nameAr: draft.nameAr, description: draft.description, permissions: draft.permissions, canApprove: draft.canApprove, canReview: draft.canReview, canSignOff: draft.canSignOff, posMode: draft.posMode, status: draft.status };
+      const body = { name: draft.name, nameAr: draft.nameAr, description: draft.description, permissions: draft.permissions, canApprove: draft.canApprove, canReview: draft.canReview, canSignOff: draft.canSignOff, posMode: draft.posMode, canManageUsers: draft.canManageUsers, status: draft.status };
       await api(draft.id ? `/api/admin/roles/${draft.id}` : '/api/admin/roles', { body });
       setEdit(undefined); setMsg({ ok }); list.reload();
     } catch (e) { setMsg({ bad: errorText(t, has, e) }); } finally { setBusy(false); }
@@ -758,6 +760,10 @@ function Roles() {
         <input type="checkbox" id="role-pos" checked={edit.posMode} onChange={(e) => setEdit({ ...edit, posMode: e.target.checked })} />
         <span>{t('roles.posMode')}<span className="small mut" style={{ display: 'block' }}>{t('roles.posModeHint')}</span></span>
       </label>
+      {tenantKind === 'company' && <label className="check-one" style={{ marginTop: 6 }}>
+        <input type="checkbox" id="role-manage" checked={edit.canManageUsers} onChange={(e) => setEdit({ ...edit, canManageUsers: e.target.checked })} />
+        <span>{t('roles.manageUsers')}<span className="small mut" style={{ display: 'block' }}>{t('roles.manageUsersHint')}</span></span>
+      </label>}
       <div className="small mut" style={{ margin: '4px 0 10px' }}>{t('roles.levelsHint')}</div>
       <div className="actions">
         <button className="b p" type="submit" id="role-save" disabled={busy}>{t('roles.save')}</button>
@@ -790,12 +796,12 @@ function Roles() {
                   <td className="num" data-label={t('roles.people')}>{r.users}</td>
                   <td className="num">
                     <span className="actions" style={{ justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
-                      <button className="b small" disabled={busy} onClick={() => { setMsg({}); setEdit({ id: r.id, name: r.name, nameAr: r.nameAr ?? '', description: r.description ?? '', permissions: { ...r.permissions }, canApprove: r.canApprove, canReview: r.canReview, canSignOff: r.canSignOff, posMode: Boolean(r.posMode), status: r.status }); }}>{t('roles.edit')}</button>
+                      <button className="b small" disabled={busy} onClick={() => { setMsg({}); setEdit({ id: r.id, name: r.name, nameAr: r.nameAr ?? '', description: r.description ?? '', permissions: { ...r.permissions }, canApprove: r.canApprove, canReview: r.canReview, canSignOff: r.canSignOff, posMode: Boolean(r.posMode), canManageUsers: Boolean(r.canManageUsers), status: r.status }); }}>{t('roles.edit')}</button>
                       {r.status === 'active'
                         ? <button className="b small" disabled={busy || r.users > 0} title={r.users > 0 ? t('err.roleInUse') : undefined}
-                            onClick={() => void save({ ...r, nameAr: r.nameAr ?? '', description: r.description ?? '', status: 'archived' }, t('roles.archivedDone', { role: r.name }))}>{t('roles.archive')}</button>
+                            onClick={() => void save({ ...r, canManageUsers: Boolean(r.canManageUsers), nameAr: r.nameAr ?? '', description: r.description ?? '', status: 'archived' }, t('roles.archivedDone', { role: r.name }))}>{t('roles.archive')}</button>
                         : <button className="b small" disabled={busy}
-                            onClick={() => void save({ ...r, nameAr: r.nameAr ?? '', description: r.description ?? '', status: 'active' }, t('roles.restored', { role: r.name }))}>{t('roles.restore')}</button>}
+                            onClick={() => void save({ ...r, canManageUsers: Boolean(r.canManageUsers), nameAr: r.nameAr ?? '', description: r.description ?? '', status: 'active' }, t('roles.restored', { role: r.name }))}>{t('roles.restore')}</button>}
                     </span>
                   </td>
                 </tr>

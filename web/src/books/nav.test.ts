@@ -1,7 +1,7 @@
 // The sidebar shows each module's main pages; the rest stay reachable (More links, search, addresses). Pages that belong
 // to the owner reports disappear for a job title without that access.
 import { describe, it, expect } from 'vitest';
-import { NAV, moduleOf, menuSubs, moreSubs, subsFor } from './nav.ts';
+import { NAV, moduleOf, menuSubs, moreSubs, subsFor, hiddenFor, navFor } from './nav.ts';
 
 const keys = (m: string, perms?: Record<string, string> | null, fn = menuSubs) => fn(moduleOf(m), perms).map((s) => s.key);
 
@@ -34,5 +34,13 @@ describe('Owner reports in the menu', () => {
     expect(keys('Reports', without, subsFor)).not.toContain('owner-summary');
     expect(keys('Reports', without)).toEqual(expect.arrayContaining(['trial-balance', 'vat-return', 'aged-receivables']));
     expect(menuSubs(moduleOf('Reports'), without)[0]!.key).toBe('trial-balance');
+  });
+});
+
+describe('A company that runs its own books', () => {
+  it('has no accounting-firm modules in its menu', () => {
+    expect(hiddenFor('company')).toEqual(expect.arrayContaining(['Portal', 'Review']));
+    expect(navFor(['Inventory'], null, hiddenFor('company')).map((m) => m.key)).not.toEqual(expect.arrayContaining(['Review']));
+    expect(hiddenFor('firm')).toEqual([]);
   });
 });

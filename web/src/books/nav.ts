@@ -54,7 +54,7 @@ export const moduleOf = (key: string) => NAV.find((m) => m.key === key) ?? NAV[0
 export const navFor = (modules: string[] | undefined, permissions?: Record<string, string> | null, hide: string[] = []) =>
   NAV.filter((m) => (!(OPTIONAL_MODULES as readonly string[]).includes(m.key) || (modules ?? []).includes(m.key)) && accessTo(permissions, m.key) !== 'none' && !hide.includes(m.key));
 /** Modules not shown for this customer: a company that keeps its own books has no accounting firm to talk to in the portal. */
-export const hiddenFor = (tenantKind?: string | null) => (tenantKind === 'company' ? ['Portal'] : []);
+export const hiddenFor = (tenantKind?: string | null) => (tenantKind === 'company' ? ['Portal', 'Review'] : []);
 export const isModuleBuilt = (m: Module) => m.subs.length === 0 || m.subs.some((x) => x.built);
 
 /** Document type behind each list page. */

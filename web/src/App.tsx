@@ -53,8 +53,8 @@ function Screens() {
       return;
     }
     if (user.kind === 'admin' && !path.startsWith('/admin')) navigate('/admin/clients');
-    if (user.kind !== 'admin' && path.startsWith('/admin')) navigate('/');
-    if (user.kind === 'client' && !path.startsWith('/c/') && me.data!.companies[0]) navigate(`/c/${me.data!.companies[0].id}/Home`);
+    if (user.kind !== 'admin' && !(user.kind === 'client' && me.data!.canManageUsers) && path.startsWith('/admin')) navigate('/');
+    if (user.kind === 'client' && !path.startsWith('/c/') && !path.startsWith('/admin') && me.data!.companies[0]) navigate(`/c/${me.data!.companies[0].id}/Home`);
   }, [user, path, me.data]);
 
   // A sign-in link works whether or not someone is signed in on this device.
@@ -91,6 +91,7 @@ function Screens() {
   if (me.data.user.kind === 'admin' && ai) return <BillingInvoicePage id={ai[1]!} back="/admin/billing" />;
   if (me.data.user.kind === 'admin') return <><AdminConsole me={me.data} path={path} onSignOut={signOut} />{help()}</>;
 
+  if (me.data.user.kind === 'client' && me.data.canManageUsers && path.startsWith('/admin')) return <><AdminConsole me={me.data} path={path} onSignOut={signOut} selfService />{help()}</>;
   const m = /^\/c\/([0-9a-f-]{36})(?:\/(\w+))?/.exec(path);
   if (m) {
     const company = me.data.companies.find((c) => c.id === m[1]);

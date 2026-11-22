@@ -159,6 +159,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 
 - **Simpler menu and department users (Phase C, 2026-11-22; migration 0062).** Each module's sidebar shows only its main pages (Sales: Overview, Customers, Quotations, Invoices, Credit notes, Debit notes, Payments received); the other pages are one tap away in a "More in <module>" row under the page title and in the search box, so nothing was removed. New job titles for every customer: Owner, Finance, Sales, Commercial (purchasing and stock). New role module `OwnerReports` (owner summary, profit and loss, balance sheet, cash flow), and the home page no longer shows the month's income, expense and profit to a title without it. New customers' default Client accountant no longer includes Ownership or the owner reports. Not done: the demo build's job titles, per-cost-centre and per-project profit views are still under Reports and Projects, and a title with the trial balance can still work out profit by hand.
 
+- **One login for a company that runs its own books (Phase B, 2026-11-22; migration 0063).** The Owner job title can carry the new right "may manage users and job titles" (`can_manage_users`). It works only for customers of kind `company`: that Owner signs in once, lands in their books, and has a "Users and job titles" link at the bottom of the menu that opens the same user and job title screens an Administrator uses, limited to their own customer. Accounting firms are unchanged (the Administrator stays a separate person who never sees books). Companies that run their own books no longer show the Portal or Review modules. Only Nusuh Books adds a company (as before). Not done: the owner console moving a company under an accounting firm (needs its own phase: users, job titles, staff assignments, portal threads and the calendar all move with it), and the demo build.
+
 
 ## 6. Decisions already made (do not reopen without a reason)
 
@@ -178,6 +180,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 - **Product direction (owner, 2026-11-22).** (1) Add ownership: owners/partners/shareholders, shares and percentages, capital contributions, drawings, dividends and partner profit split, for sole proprietor, partnership and LLC. (2) Sell direct to businesses, like Zoho Books: one company runs its own finances; firm features are hidden, not deleted. Order: Phase A ownership, then Phase B single-company front door. Nothing built yet.
 
 ## 7. Where things stand and what is next
+
+**Single-company front door built (2026-11-22).** Phase B is done and tested (see section 5). Next candidates: moving a company under an accounting firm (owner console), then Google sign-in and the 15-day trial.
 
 **Menu and department users built (2026-11-22).** Phase C is done and tested (see section 5). Phase B (single-company front door) is still next; its first user should get the Owner title.
 

@@ -116,6 +116,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
             {open === m.key && subMenu(m, 'side')}
           </div>
         ))}
+        {me.canManageUsers && <button id="manage-users" className="side-extra" onClick={() => navigate(`/admin/clients/${companyId}`)}><span className="side-label">{t('side.manageUsers')}</span></button>}
       </Sidebar>
       <main>
         <div className="top">

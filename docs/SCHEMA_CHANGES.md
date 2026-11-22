@@ -533,3 +533,12 @@ Every change below is covered by a test in `test/`.
 | `add_default_client_roles()` now creates six titles: Client accountant (no longer includes ownership or the owner reports, for new customers), Client management, and the new Owner, Finance, Sales and Commercial; a title whose name the customer already has is not added again | Department users: Sales handles sales work only; Finance handles the money side of every department and may look at payroll, stock and projects; Commercial handles purchasing and stock; Owner sees everything including the owner reports and records ownership money. The Administrator can change or retire any of them |
 | The four new titles are added to every existing customer | So they exist everywhere, not only for new customers |
 | No table changes and no data is changed apart from the added job titles and the `OwnerReports` key | Job titles are data in `client_roles`; row-level security is not touched |
+
+## 0063_owner_manages_users.sql
+| Change | Why |
+|---|---|
+| New column `client_roles.can_manage_users` (default false); the `Owner` job title starts with it set | A company that runs its own books has no accounting firm and no separate Administrator: its Owner is one person who sees the books and manages the company's users and job titles, with one login |
+| `app_is_admin()` is also true for an active client user of an active customer of kind `company` whose active job title has `can_manage_users` | Gives the Owner the same powers an Administrator has inside their own customer (users, job titles, memberships, the customer's billing view). It is bounded by `firm_id = app_firm_id()` everywhere it is used, and it is ignored for accounting firms, where the Administrator stays a separate person who can never be a books user (`check_membership` is unchanged) |
+| `add_default_client_roles()` sets the right on the Owner title for new customers | So a new customer's Owner title works without setup |
+| Adding a company is unchanged: only Nusuh Books adds companies, so the Owner cannot add one | Customers do not create their own companies; Nusuh Books creates and gives them |
+| No data other than the flag on existing Owner titles is changed | The flag has no effect outside customers of kind `company` |

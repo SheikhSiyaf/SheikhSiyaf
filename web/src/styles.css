@@ -684,3 +684,5 @@ dl.kv dd { margin: 0 0 10px; }
 .morelinks button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 20px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; }
 .morelinks button:hover { border-color: var(--teal); }
 .morelinks button.on { background: var(--teal); border-color: var(--teal); color: var(--onteal); font-weight: 600; }
+
+nav.side button.side-extra { margin-top: 10px; border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; color: var(--mut); }

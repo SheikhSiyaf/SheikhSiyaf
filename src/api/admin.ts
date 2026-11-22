@@ -210,7 +210,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
 
   // ------------------------------------------------------------ roles and permissions (for client users)
   app.get('/api/admin/roles', async (req) => admin(req, async (db) => (await db.query(
-    `SELECT r.id, r.name, r.name_ar AS "nameAr", r.description, r.permissions, r.can_approve AS "canApprove", r.can_review AS "canReview", r.can_sign_off AS "canSignOff", r.pos_mode AS "posMode", r.status,
+    `SELECT r.id, r.name, r.name_ar AS "nameAr", r.description, r.permissions, r.can_approve AS "canApprove", r.can_review AS "canReview", r.can_sign_off AS "canSignOff", r.pos_mode AS "posMode", r.can_manage_users AS "canManageUsers", r.status,
             (SELECT count(*) FROM memberships m WHERE m.client_role_id = r.id)::int AS users
      FROM client_roles r WHERE r.firm_id = app_firm_id() ORDER BY r.status, r.created_at, r.name`)).rows));
   const roleValues = (b: Record<string, unknown>) => {
@@ -222,12 +222,12 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
       if (v === 'view' || v === 'edit') perms[m] = v;
     }
     return [name, String(b.nameAr ?? '').trim() || null, String(b.description ?? '').trim() || null, JSON.stringify(perms), Boolean(b.canApprove),
-      b.status === 'archived' ? 'archived' : 'active', Boolean(b.canReview) || Boolean(b.canSignOff), Boolean(b.canSignOff), Boolean(b.posMode)];
+      b.status === 'archived' ? 'archived' : 'active', Boolean(b.canReview) || Boolean(b.canSignOff), Boolean(b.canSignOff), Boolean(b.posMode), Boolean(b.canManageUsers)];
   };
   app.post<{ Body: Record<string, unknown> }>('/api/admin/roles', async (req) => {
     const v = roleValues(req.body ?? {});
     return admin(req, async (db) => ({ id: (await db.query(
-      `INSERT INTO client_roles (firm_id, name, name_ar, description, permissions, can_approve, status, can_review, can_sign_off, pos_mode) VALUES (app_firm_id(), $1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`, v)).rows[0].id }));
+      `INSERT INTO client_roles (firm_id, name, name_ar, description, permissions, can_approve, status, can_review, can_sign_off, pos_mode, can_manage_users) VALUES (app_firm_id(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`, v)).rows[0].id }));
   });
   app.post<{ Params: { id: string }; Body: Record<string, unknown> }>('/api/admin/roles/:id', async (req) => {
     const id = uuidParam(req.params.id);
@@ -237,7 +237,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
         throw new HttpError(400, 'People still have this role. Give them another role first.', 'err.roleInUse');
       }
       const { rowCount } = await db.query(
-        `UPDATE client_roles SET name=$2, name_ar=$3, description=$4, permissions=$5, can_approve=$6, status=$7, can_review=$8, can_sign_off=$9, pos_mode=$10 WHERE id = $1 AND firm_id = app_firm_id()`, [id, ...v]);
+        `UPDATE client_roles SET name=$2, name_ar=$3, description=$4, permissions=$5, can_approve=$6, status=$7, can_review=$8, can_sign_off=$9, pos_mode=$10, can_manage_users=$11 WHERE id = $1 AND firm_id = app_firm_id()`, [id, ...v]);
       if (!rowCount) throw new HttpError(404, 'Not found.', 'err.notFound');
       return { ok: true };
     });

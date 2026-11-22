@@ -65,6 +65,8 @@ export type Role = 'partner' | 'reviewer' | 'staff_accountant' | 'client_account
 export interface Me {
   user: { id: string; name: string; email: string; kind: 'owner' | 'admin' | 'firm_staff' | 'client'; staffRole: Role | null; firmName: string; firmKind?: 'platform' | 'firm' | 'company'; twoFactor: boolean };
   companies: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; role: Role }[];
+  /** The Owner of a company that runs its own books may manage its users and job titles (opens the console from the workspace). */
+  canManageUsers?: boolean;
 }
 export interface Account { id: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank?: boolean; currency?: string | null }
 export interface CostCentre { id: string; name: string; nameAr: string | null; kind: string }

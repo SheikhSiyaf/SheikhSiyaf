@@ -35,6 +35,7 @@ import { registerBillingRoutes } from './billing.js';
 import { registerPaymentRoutes } from './payments.js';
 import { registerRentalRoutes } from './rentals.js';
 import { registerRoomRoutes } from './rooms.js';
+import { registerOwnershipRoutes } from './ownership.js';
 import { registerSupportRoutes } from './support.js';
 import { configurePayments } from '../books/onlinePayService.js';
 import { configureEInvoicing } from '../books/einvoiceService.js';
@@ -296,6 +297,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerPaymentRoutes(app, ctx);
   registerRentalRoutes(app, ctx);
   registerRoomRoutes(app, ctx);
+  registerOwnershipRoutes(app, ctx);
   registerSupportRoutes(app, ctx);
   registerSearchRoutes(app, ctx);
   registerSetupStatusRoutes(app, ctx);

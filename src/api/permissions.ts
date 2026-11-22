@@ -152,6 +152,10 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/rooms/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'rooms', m[1]!, ['Rooms'])],
   ['*', new RegExp(`^/api/bookings/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'bookings', m[1]!, ['Rooms'])],
   ['*', new RegExp(`^/api/booking-extras/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'booking_extras', m[1]!, ['Rooms'])],
+  // ownership: shares, capital, drawings and dividends are sensitive, so they have a module of their own
+  ['*', new RegExp(`^/api/companies/${UUID}/(ownership|owners)(/.*)?$`), c(['Ownership'])],
+  ['*', new RegExp(`^/api/owners/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'owners', m[1]!, ['Ownership'])],
+  ['*', new RegExp(`^/api/ownership-movements/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'owner_transactions', m[1]!, ['Ownership'])],
   // rentals (billing makes a sales invoice, so it needs Sales too)
   ['POST', new RegExp(`^/api/rental-contracts/${UUID}/bill$`), async (db, m) => { const n = await companyOf(db, 'rental_contracts', m[1]!, ['Rentals']); return n && { ...n, also: ['Sales'] }; }],
   ['*', new RegExp(`^/api/companies/${UUID}/(rentals|rental-items|rental-contracts)(/.*)?$`), c(['Rentals'])],

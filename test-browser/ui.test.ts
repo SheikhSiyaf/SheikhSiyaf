@@ -208,3 +208,53 @@ describe('The ZATCA monitor', () => {
     await page.evaluate(() => localStorage.setItem('nb.lang', 'en'));
   });
 });
+
+describe('Ownership', () => {
+  it('adds an owner, sets the shares, records capital, and shows it in the statement of changes in equity', async () => {
+    errors.length = 0;
+    await page.goto(`${BASE}/c/${company}/Ownership/owners`, { waitUntil: 'networkidle' });
+    await page.locator('#own-add').waitFor({ timeout: 15000 });
+    await page.locator('#own-add').click();
+    await page.locator('#own-name').fill('Browser Owner');
+    await page.locator('#own-add-save').click();
+    await waitForText(page, 'Owner added');
+    await page.locator('#own-change').click();
+    await page.locator('#own-change-form input.num').first().fill('1000');
+    await page.locator('#own-change-save').click();
+    await waitForText(page, 'Ownership saved');
+    expect(await page.locator('#own-table').innerText()).toContain('100%');
+
+    await page.goto(`${BASE}/c/${company}/Ownership/owner-movements`, { waitUntil: 'networkidle' });
+    await page.locator('#own-amount').waitFor({ timeout: 15000 });
+    await page.locator('#own-amount').fill('2500.00');
+    await page.locator('#own-move-save').click();
+    await waitForText(page, 'Recorded and posted');
+    const t = (await db.query(`SELECT t.kind, t.amount::text AS amount FROM owner_transactions t JOIN owners o ON o.id = t.owner_id WHERE o.company_id = $1 AND o.name = 'Browser Owner'`, [company])).rows;
+    expect(t).toEqual([{ kind: 'contribution', amount: '2500.00' }]);
+    const eq = (await db.query(`SELECT sum(l.credit - l.debit)::text AS v FROM journal_lines l JOIN owners o ON o.capital_account_id = l.account_id WHERE o.company_id = $1 AND o.name = 'Browser Owner'`, [company])).rows[0].v;
+    expect(eq).toBe('2500.00');
+
+    await page.goto(`${BASE}/c/${company}/Ownership/equity-statement`, { waitUntil: 'networkidle' });
+    await page.locator('#own-statement').waitFor({ timeout: 15000 });
+    expect(await page.locator('#own-statement').innerText()).toContain('Browser Owner');
+    expect(errors.filter((e) => !/40[0-9]|favicon/.test(e))).toEqual([]);
+  });
+
+  it('reads right to left in Arabic and fits a phone', async () => {
+    const { page: ar } = await newPage();
+    await signIn(ar, accountant);
+    await ar.goto(`${BASE}/c/${company}/Ownership/owners`, { waitUntil: 'networkidle' });
+    await ar.getByRole('button', { name: 'EN | AR' }).click();
+    await ar.waitForTimeout(900);
+    expect(await ar.evaluate(() => document.documentElement.dir)).toBe('rtl');
+    expect(await ar.locator('body').innerText()).toContain('الملاك');
+    const { page: phone } = await newPage(390);
+    await signIn(phone, accountant);
+    for (const path of ['Ownership/owners', 'Ownership/owner-movements', 'Ownership/equity-statement']) {
+      await phone.goto(`${BASE}/c/${company}/${path}`, { waitUntil: 'networkidle' });
+      await phone.waitForTimeout(1100);
+      const overflow = await phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow, `${path} scrolls sideways by ${overflow}px`).toBeLessThanOrEqual(2);
+    }
+  });
+});

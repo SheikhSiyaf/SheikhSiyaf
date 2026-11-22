@@ -52,7 +52,7 @@ export async function preview(db: Db, companyId: string, endDate: string) {
   return { startDate: start, endDate, lines, profit: fromMinor(profit), openMonths, drafts, retainedCode: RETAINED_EARNINGS };
 }
 
-async function retainedAccount(db: Db, companyId: string): Promise<string> {
+export async function retainedAccount(db: Db, companyId: string): Promise<string> {
   const r = (await db.query('SELECT id, type FROM accounts WHERE company_id = $1 AND code = $2', [companyId, RETAINED_EARNINGS])).rows[0];
   if (r && r.type !== 'equity') bad(`Account ${RETAINED_EARNINGS} is used for something else. Retained earnings need account ${RETAINED_EARNINGS}.`, 'err.retainedTaken');
   return r?.id ?? (await db.query(`INSERT INTO accounts (company_id, code, name, name_ar, type) VALUES ($1, $2, 'Retained earnings', 'الأرباح المبقاة', 'equity') RETURNING id`,

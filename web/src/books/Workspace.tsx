@@ -47,6 +47,7 @@ import { EmailsSent } from '../sales/DocEmail.tsx';
 import { OnlinePayments } from '../sales/OnlinePayments.tsx';
 import { Rentals } from '../rentals/Rentals.tsx';
 import { Rooms } from '../rooms/Rooms.tsx';
+import { Ownership } from '../ownership/Ownership.tsx';
 import { Budgets, RecurringInvoices, Reminders, Statements } from '../sales/Tools.tsx';
 import { Bell } from './Notifications.tsx';
 import { Counter } from '../inventory/Counter.tsx';
@@ -206,6 +207,7 @@ function Page({ books, module, sub, built, item, extra, extra2, reloadBooks, goM
       return item ? <AssetPage key={item} books={books} id={item} /> : <AssetRegister books={books} />;
     case 'Rentals': return <Rentals books={books} sub={sub} item={item} />;
     case 'Rooms': return <Rooms books={books} sub={sub} item={item} />;
+    case 'Ownership': return <Ownership books={books} sub={sub} />;
     case 'Review': return <Review books={books} sub={sub} item={item} />;
     case 'Portal': return <Portal books={books} sub={sub} item={item} extra={extra} />;
     case 'Calendar': return <Calendar books={books} sub={sub} />;

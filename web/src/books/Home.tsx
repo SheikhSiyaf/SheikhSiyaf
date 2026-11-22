@@ -12,7 +12,8 @@ import { accessTo } from '../../../src/books/modules.ts';
 
 interface Summary {
   asOf: string; cash: string; receivables: string; payables: string; inputVat: string; outputVat: string;
-  monthIncome: string; monthExpense: string; monthProfit: string; entries: number; entriesThisMonth: number; lockedUpTo: string | null;
+  monthIncome?: string; monthExpense?: string; monthProfit?: string;   // the month's results only come with the owner reports
+  entries: number; entriesThisMonth: number; lockedUpTo: string | null;
 }
 
 export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?: string) => void }) {
@@ -36,8 +37,8 @@ export function Home({ books, go }: { books: CompanyBooks; go: (m: string, sub?:
     [t('home.cash'), d.cash, t('home.fromLedger')],
     [t('home.receivables'), d.receivables, t('home.fromLedger')],
     [t('home.payables'), neg(d.payables), t('home.fromLedger')],
-    [t('home.profit'), d.monthProfit, t('home.salesLessExpenses')],
   ];
+  if (d.monthProfit !== undefined) figs.push([t('home.profit'), d.monthProfit, t('home.salesLessExpenses')]);
   return (
     <>
       <ReviewedBadge books={books} go={go} />

@@ -34,6 +34,7 @@ import { registerToolRoutes } from './tools.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerPaymentRoutes } from './payments.js';
 import { registerRentalRoutes } from './rentals.js';
+import { accessTo } from '../books/modules.js';
 import { registerRoomRoutes } from './rooms.js';
 import { registerOwnershipRoutes } from './ownership.js';
 import { registerSupportRoutes } from './support.js';
@@ -158,6 +159,9 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
        FROM journal_entries WHERE company_id = $1`, [id, monthStart]);
     const lock = await db.query(
       `SELECT max(end_date)::text AS "lockedUpTo" FROM periods WHERE company_id = $1 AND locked_at IS NOT NULL`, [id]);
+    // The month's income, expense and profit are owner figures: a job title without the owner reports does not get them.
+    const role = (await db.query('SELECT permissions FROM app_client_role($1)', [id])).rows[0];
+    const ownerFigures = !role || accessTo(role.permissions, 'OwnerReports') !== 'none';
     return {
       asOf: t,
       cash: bal(SYSTEM_ACCOUNTS.cash),
@@ -165,9 +169,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
       payables: bal(SYSTEM_ACCOUNTS.payables),
       inputVat: bal(SYSTEM_ACCOUNTS.inputVat),
       outputVat: bal(SYSTEM_ACCOUNTS.outputVat),
-      monthIncome: pnl.rows[0].income,
-      monthExpense: pnl.rows[0].expense,
-      monthProfit: pnl.rows[0].profit,
+      ...(ownerFigures ? { monthIncome: pnl.rows[0].income, monthExpense: pnl.rows[0].expense, monthProfit: pnl.rows[0].profit } : {}),
       ...counts.rows[0],
       lockedUpTo: lock.rows[0].lockedUpTo,
     };

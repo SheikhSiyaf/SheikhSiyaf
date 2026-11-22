@@ -678,3 +678,9 @@ tr.unread-row td:first-child { font-weight: 600; }
 dl.kv { margin: 0; }
 dl.kv dt { color: var(--mut); font-size: 13px; margin: 0; }
 dl.kv dd { margin: 0 0 10px; }
+
+/* The pages of a module that are not in the sidebar: one tap away, under the page title. */
+.morelinks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -4px 0 12px; }
+.morelinks button { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 20px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.morelinks button:hover { border-color: var(--teal); }
+.morelinks button.on { background: var(--teal); border-color: var(--teal); color: var(--onteal); font-weight: 600; }

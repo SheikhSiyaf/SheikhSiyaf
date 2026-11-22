@@ -74,6 +74,8 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/companies/${UUID}/(ledger|chart|accounts|cost-centres)(/.*)?$`), c(['Ledger'])],
   ['POST', new RegExp(`^/api/accounts/${UUID}$`), (db, m) => companyOf(db, 'accounts', m[1]!, ['Ledger'])],
   ['POST', new RegExp(`^/api/cost-centres/${UUID}$`), (db, m) => companyOf(db, 'cost_centres', m[1]!, ['Ledger'])],
+  // the owner reports (whole-company results) are a module of their own; the other reports stay with Reports
+  ['GET', new RegExp(`^/api/companies/${UUID}/reports/(owner-summary|profit-and-loss|pnl-columns|balance-sheet|cash-flow)$`), c(['OwnerReports'])],
   ['GET', new RegExp(`^/api/companies/${UUID}/reports/.*$`), c(['Reports'])],
   // The home page figures (cash, receivables, payables, profit, VAT) are a small report.
   ['GET', new RegExp(`^/api/companies/${UUID}/summary$`), c(['Reports', 'Ledger'])],

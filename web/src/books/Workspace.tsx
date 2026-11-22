@@ -10,7 +10,7 @@ import { Home } from './Home.tsx';
 import { Journal } from './Journal.tsx';
 import { Reports } from './Reports.tsx';
 import { Vat } from './Vat.tsx';
-import { DOC_PAGES, NAV, groupOf, hiddenFor, isModuleBuilt, moduleOf, navFor } from './nav.ts';
+import { DOC_PAGES, NAV, groupOf, hiddenFor, isModuleBuilt, menuSubs, moduleOf, moreSubs, navFor, subsFor } from './nav.ts';
 import { Icon } from '../icons.tsx';
 import { QuickSearch } from './QuickSearch.tsx';
 import { Calendar } from '../calendar/Calendar.tsx';
@@ -62,9 +62,12 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
   const [, , , modKey, subKey, rawItem, extra, extra2] = path.split('/');
   const item = rawItem === '-' ? undefined : rawItem;
   const mod = moduleOf(modKey ?? 'Home');
-  const sub = mod.subs.find((s) => s.key === subKey) ?? mod.subs[0];
-  const goModule = (m: string, s?: string) => navigate(`/c/${companyId}/${m}${s ? `/${s}` : ''}`);
   const b = books.data;
+  const perms = b?.access?.permissions;
+  // The page asked for, or the first one in the menu that this job title may open (pages need not be in the menu to be opened).
+  const sub = subsFor(mod, perms).find((s) => s.key === subKey) ?? menuSubs(mod, perms)[0] ?? mod.subs[0];
+  const subBlocked = Boolean(b?.access && sub && mod.subs.find((s) => s.key === subKey && s.needs && accessTo(perms, s.needs) === 'none'));
+  const goModule = (m: string, s?: string) => navigate(`/c/${companyId}/${m}${s ? `/${s}` : ''}`);
   const title = mod.key === 'Home' ? t('home.greeting', { name: me.user.name.split(' ')[0]! })
     : sub ? t(`sub.${sub.key}` as Key) : t(`mod.${mod.key}` as Key);
 
@@ -83,9 +86,10 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
     if (m.key !== mod.key) goModule(m.key);               // a different module: open it and go to its first page
   };
 
+  // The menu lists a module's main pages; the page you are on is listed too, even when it is one of the others.
   const subMenu = (m: (typeof NAV)[number], where: 'side' | 'top') => m.subs.length > 0 && (
     <div className={where === 'side' ? 'subnav' : 'subtabs'} role="navigation" aria-label={t(`mod.${m.key}` as Key)}>
-      {m.subs.map((s) => (
+      {subsFor(m, perms).filter((s) => s.menu || (m.key === mod.key && s.key === sub?.key)).map((s) => (
         <button key={s.key} className={`${m.key === mod.key && s.key === sub?.key ? 'on' : ''} ${s.built ? '' : 'soon'}`}
           aria-current={m.key === mod.key && s.key === sub?.key ? 'page' : undefined}
           onClick={() => goModule(m.key, s.key)}>
@@ -123,11 +127,19 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
           </TopControls>
         </div>
         {subMenu(mod, 'top')}
+        {b && moreSubs(mod, perms).length > 0 && (
+          <div className="morelinks" id="more-links" role="navigation" aria-label={t('more.in', { module: t(`mod.${mod.key}` as Key) })}>
+            <span className="mut small">{t('more.in', { module: t(`mod.${mod.key}` as Key) })}</span>
+            {moreSubs(mod, perms).map((s) => (
+              <button key={s.key} className={s.key === sub?.key ? 'on' : ''} aria-current={s.key === sub?.key ? 'page' : undefined} onClick={() => goModule(mod.key, s.key)}>{t(`sub.${s.key}` as Key)}</button>
+            ))}
+          </div>
+        )}
         {books.error && <ErrorNote error={books.error} onRetry={books.reload} />}
         {!b ? <Loading /> : (
           <>
             {!b.canPost && !['Review', 'Portal', 'Calendar', 'Approvals'].includes(mod.key) && <div className="notice warn">{t('viewOnly')}</div>}
-            {b.access && accessTo(b.access.permissions, mod.key) === 'none' ? (
+            {b.access && (accessTo(b.access.permissions, mod.key) === 'none' || subBlocked) ? (
               <div className="card"><h2>{t('access.noneTitle')}</h2><p className="mut">{t('access.noneText', { role: local(b.access.name, b.access.nameAr ?? null) })}</p>
                 <button className="b p" onClick={() => goModule('Home')}>{t('mod.Home')}</button></div>
             ) : <>

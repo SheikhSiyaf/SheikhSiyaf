@@ -524,3 +524,12 @@ Every change below is covered by a test in `test/`.
 | Row-level security on all three tables (read for members of the company, write for the posting roles) and the audit trigger on all three | Strict separation between companies and a full audit trail, as everywhere else |
 | `before_client_role_change()` and `add_default_client_roles()` now know the module key `Ownership`; existing job titles get it at the level they have for `Ledger` | Shares, capital, drawings and dividends are sensitive, so the Administrator can give or withhold them per job title |
 | No chart rows are inserted | The owner accounts (32xx capital, 33xx current) and 2170 Dividends payable are created by the service when first needed, in the same way as 3100 at year end |
+
+## 0062_department_roles.sql
+| Change | Why |
+|---|---|
+| `before_client_role_change()` accepts the new role module key `OwnerReports` | Owner summary, profit and loss, balance sheet and cash flow are a module of their own, so a job title can be given or refused them separately from the other reports |
+| Existing job titles get `OwnerReports` at the level they have for `Reports` | Nobody who could see these reports yesterday loses them without the Administrator choosing it |
+| `add_default_client_roles()` now creates six titles: Client accountant (no longer includes ownership or the owner reports, for new customers), Client management, and the new Owner, Finance, Sales and Commercial; a title whose name the customer already has is not added again | Department users: Sales handles sales work only; Finance handles the money side of every department and may look at payroll, stock and projects; Commercial handles purchasing and stock; Owner sees everything including the owner reports and records ownership money. The Administrator can change or retire any of them |
+| The four new titles are added to every existing customer | So they exist everywhere, not only for new customers |
+| No table changes and no data is changed apart from the added job titles and the `OwnerReports` key | Job titles are data in `client_roles`; row-level security is not touched |

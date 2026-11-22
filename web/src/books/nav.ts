@@ -1,33 +1,36 @@
 import { OPTIONAL_MODULES, accessTo } from '../../../src/books/modules.ts';
 // The client workspace menu: each module and its sub-pages, in order.
 // `built: false` pages show what comes next in the build order (CLAUDE.md).
-export interface SubPage { key: string; built: boolean }
+/** `menu: false` pages are not in the sidebar; they stay reachable (More links, search, addresses). `needs` is a role module the page also requires. */
+export interface SubPage { key: string; built: boolean; menu: boolean; needs?: string }
 export interface Module { key: string; subs: SubPage[] }
 
-const s = (key: string, built = true): SubPage => ({ key, built });
+const s = (key: string, built = true, needs?: string): SubPage => ({ key, built, menu: true, needs });
+const h = (key: string, built = true): SubPage => ({ key, built, menu: false });
+const own = (key: string): SubPage => s(key, true, 'OwnerReports');
 
 export const NAV: Module[] = [
   { key: 'Home', subs: [] },
   { key: 'Portal', subs: [s('overview'), s('requests'), s('documents'), s('monthly-reports')] },
   { key: 'Calendar', subs: [s('upcoming'), s('calendar-settings')] },
   { key: 'Approvals', subs: [s('waiting'), s('approval-history'), s('approval-rules')] },
-  { key: 'Sales', subs: [s('overview'), s('customers'), s('quotations'), s('invoices'), s('recurring-invoices'), s('credit-notes'), s('debit-notes'), s('payments-received'), s('online-payments'), s('statements'), s('reminders'), s('e-invoicing'), s('zatca'), s('emails')] },
+  { key: 'Sales', subs: [s('overview'), s('customers'), s('quotations'), s('invoices'), h('recurring-invoices'), s('credit-notes'), s('debit-notes'), s('payments-received'), h('online-payments'), h('statements'), h('reminders'), h('e-invoicing'), h('zatca'), h('emails')] },
   { key: 'Purchases', subs: [s('overview'), s('suppliers'), s('purchase-orders'), s('bills'), s('supplier-credits'), s('payments-made')] },
-  { key: 'Expenses', subs: [s('overview'), s('expenses'), s('recurring'), s('categories'), s('claims'), s('approvals')] },
-  { key: 'Bank', subs: [s('accounts'), s('import'), s('reconcile'), s('rules')] },
-  { key: 'Inventory', subs: [s('items'), s('warehouse-desk'), s('grn'), s('gdn'), s('stock-value')] },
-  { key: 'Restaurant', subs: [s('food-sales'), s('menu'), s('materials'), s('stock-desk'), s('materials-in'), s('wastage'), s('material-value')] },
+  { key: 'Expenses', subs: [s('overview'), s('expenses'), h('recurring'), h('categories'), s('claims'), h('approvals')] },
+  { key: 'Bank', subs: [s('accounts'), s('import'), s('reconcile'), h('rules')] },
+  { key: 'Inventory', subs: [s('items'), h('warehouse-desk'), s('grn'), s('gdn'), s('stock-value')] },
+  { key: 'Restaurant', subs: [s('food-sales'), s('menu'), s('materials'), h('stock-desk'), h('materials-in'), h('wastage'), s('material-value')] },
   { key: 'Assets', subs: [s('register'), s('depreciation')] },
-  { key: 'Rooms', subs: [s('front-desk'), s('room-calendar'), s('bookings'), s('room-setup')] },
-  { key: 'Rentals', subs: [s('rental-board'), s('rental-contracts'), s('equipment')] },
+  { key: 'Rooms', subs: [s('front-desk'), s('room-calendar'), s('bookings'), h('room-setup')] },
+  { key: 'Rentals', subs: [s('rental-board'), s('rental-contracts'), h('equipment')] },
   { key: 'Projects', subs: [s('projects'), s('project-report')] },
-  { key: 'HRM', subs: [s('overview'), s('employees'), s('attendance'), s('leave'), s('payroll'), s('loans'), s('end-of-service'), s('hr-documents')] },
-  { key: 'CRM', subs: [s('pipeline'), s('leads'), s('activities'), s('campaigns')] },
-  { key: 'Journal', subs: [s('entries'), s('new'), s('periods'), s('year-end')] },
-  { key: 'Ledger', subs: [s('chart-of-accounts'), s('cost-centres-setup'), s('general-ledger'), s('cost-centre-ledger'), s('customer-ledger'), s('supplier-ledger'), s('employee-ledger'), s('currencies'), s('fx-revaluation'), s('import-data')] },
+  { key: 'HRM', subs: [s('overview'), s('employees'), s('attendance'), s('leave'), s('payroll'), h('loans'), h('end-of-service'), h('hr-documents')] },
+  { key: 'CRM', subs: [s('pipeline'), s('leads'), h('activities'), h('campaigns')] },
+  { key: 'Journal', subs: [s('entries'), s('new'), h('periods'), h('year-end')] },
+  { key: 'Ledger', subs: [s('chart-of-accounts'), h('cost-centres-setup'), s('general-ledger'), h('cost-centre-ledger'), s('customer-ledger'), s('supplier-ledger'), h('employee-ledger'), h('currencies'), h('fx-revaluation'), h('import-data')] },
   { key: 'Ownership', subs: [s('owners'), s('owner-movements'), s('equity-statement')] },
-  { key: 'Reports', subs: [s('owner-summary'), s('profit-and-loss'), s('balance-sheet'), s('cash-flow'), s('cash-forecast'), s('budgets'), s('trial-balance'), s('cost-centres'), s('expenses-by-category'),
-    s('expenses-by-payee'), s('aged-receivables'), s('aged-payables'), s('vat-summary'), s('vat-return')] },
+  { key: 'Reports', subs: [own('owner-summary'), own('profit-and-loss'), own('balance-sheet'), own('cash-flow'), h('cash-forecast'), h('budgets'), s('trial-balance'), h('cost-centres'), h('expenses-by-category'),
+    h('expenses-by-payee'), s('aged-receivables'), s('aged-payables'), h('vat-summary'), s('vat-return')] },
   { key: 'Review', subs: [s('overview'), s('checks'), s('queries'), s('checklist'), s('sign-off')] },
 ];
 
@@ -40,6 +43,11 @@ export const GROUPS: [string, string[]][] = [
   ['books', ['Journal', 'Ledger', 'Ownership', 'Reports', 'Review']],
 ];
 export const groupOf = (key: string) => GROUPS.find(([, ks]) => ks.includes(key))?.[0] ?? 'books';
+/** The pages of a module this job title may open (pages that need a module the title lacks are left out). */
+export const subsFor = (m: Module, permissions?: Record<string, string> | null) => m.subs.filter((x) => !x.needs || accessTo(permissions, x.needs) !== 'none');
+/** The pages shown in the sidebar, and the rest (shown as "More" links inside the module). */
+export const menuSubs = (m: Module, permissions?: Record<string, string> | null) => subsFor(m, permissions).filter((x) => x.menu);
+export const moreSubs = (m: Module, permissions?: Record<string, string> | null) => subsFor(m, permissions).filter((x) => !x.menu);
 export const moduleOf = (key: string) => NAV.find((m) => m.key === key) ?? NAV[0]!;
 /** The menu for one client: core modules always, optional ones only when turned on for that client.
  *  Review, Portal and Calendar are open to everyone on the client (they are not part of client roles). */

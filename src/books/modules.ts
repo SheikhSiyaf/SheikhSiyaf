@@ -23,7 +23,7 @@ export const cleanModules = (v: unknown): OptionalModule[] =>
   OPTIONAL_MODULES.filter((m) => Array.isArray(v) && v.includes(m));
 
 /** Modules a client role sets access for (none, view or edit). Home is always shown. */
-export const ROLE_MODULES = ['Sales', 'Purchases', 'Expenses', 'Bank', 'Inventory', 'Restaurant', 'Assets', 'Rentals', 'Rooms', 'Projects', 'HRM', 'CRM', 'Journal', 'Ledger', 'Ownership', 'Reports'] as const;
+export const ROLE_MODULES = ['Sales', 'Purchases', 'Expenses', 'Bank', 'Inventory', 'Restaurant', 'Assets', 'Rentals', 'Rooms', 'Projects', 'HRM', 'CRM', 'Journal', 'Ledger', 'Ownership', 'OwnerReports', 'Reports'] as const;
 export type RoleModule = (typeof ROLE_MODULES)[number];
 export type AccessLevel = 'none' | 'view' | 'edit';
 export const ACCESS_LEVELS: AccessLevel[] = ['none', 'view', 'edit'];

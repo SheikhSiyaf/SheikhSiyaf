@@ -6,7 +6,7 @@ import { api, type CompanyBooks } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { fmt } from '../money.ts';
 import { useGo } from '../sales/common.tsx';
-import { hiddenFor, moduleForType, navFor, pageForType } from './nav.ts';
+import { hiddenFor, moduleForType, navFor, pageForType, subsFor } from './nav.ts';
 import { Icon } from '../icons.tsx';
 
 interface Found { contacts: { id: string; name: string; nameAr: string | null; vatNumber: string | null; kind: 'customer' | 'supplier' | 'employee' }[];
@@ -39,7 +39,7 @@ export function QuickSearch({ books }: { books: CompanyBooks }) {
     return () => { live = false; clearTimeout(h); };
   }, [q, books.company.id]);
   const pages = useMemo(() => navFor(books.company.modules, books.access?.permissions, hiddenFor(books.portal?.tenantKind))
-    .flatMap((m) => [{ m: m.key, s: undefined as string | undefined }, ...m.subs.map((s) => ({ m: m.key, s: s.key }))]), [books]);
+    .flatMap((m) => [{ m: m.key, s: undefined as string | undefined }, ...subsFor(m, books.access?.permissions).map((s) => ({ m: m.key, s: s.key }))]), [books]);
   const needle = q.trim().toLowerCase();
   const hits: Hit[] = [];
   if (needle) {

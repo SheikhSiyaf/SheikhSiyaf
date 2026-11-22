@@ -209,7 +209,37 @@ describe('The ZATCA monitor', () => {
   });
 });
 
+describe('The simplified menu and the owner-only reports', () => {
+  const sideItems = async (p: Page) => (await p.locator('nav.side .subnav button').count());
+  it('Sales lists its seven main pages, and the rest are one tap away under the title', async () => {
+    await page.goto(`${BASE}/c/${company}/Sales/invoices`, { waitUntil: 'networkidle' });
+    await page.locator('#more-links').waitFor({ timeout: 15000 });
+    expect(await sideItems(page)).toBe(7);
+    const more = await page.locator('#more-links').innerText();
+    for (const name of ['Recurring invoices', 'Online payments', 'Statements', 'Payment reminders', 'ZATCA monitor']) expect(more).toContain(name);
+    await page.locator('#more-links').getByRole('button', { name: 'Recurring invoices' }).click();
+    await page.waitForTimeout(1200);
+    expect(page.url()).toContain('/Sales/recurring-invoices');
+    expect(await sideItems(page)).toBe(8);   // the page you are on is listed while you are on it
+    expect(await page.locator('#more-links').innerText()).toContain('Online payments');
+  });
+
+  it('a title without the owner reports sees the finance reports but not profit and loss, balance sheet, cash flow or owner summary', async () => {
+    await page.goto(`${BASE}/c/${company}/Reports`, { waitUntil: 'networkidle' });
+    await page.locator('nav.side .subnav button').first().waitFor({ timeout: 15000 });
+    const menu = await page.locator('nav.side .subnav').innerText();
+    expect(menu).toContain('Trial balance');
+    for (const name of ['Profit and loss', 'Balance sheet', 'Cash flow', 'Owner summary']) expect(menu).not.toContain(name);
+    expect((await call(page, `/api/companies/${company}/reports/profit-and-loss?from=2027-01-01&to=2027-12-31`)).status).toBe(403);
+  });
+});
+
 describe('Ownership', () => {
+  beforeAll(async () => {
+    // The Owner job title: ownership and the owner reports are not part of the default accountant title.
+    await db.query(`UPDATE memberships m SET client_role_id = r.id FROM users u, client_roles r
+      WHERE u.id = m.user_id AND u.email = $1 AND m.company_id = $2 AND r.firm_id = u.firm_id AND r.name = 'Owner'`, [accountant, company]);
+  });
   it('adds an owner, sets the shares, records capital, and shows it in the statement of changes in equity', async () => {
     errors.length = 0;
     await page.goto(`${BASE}/c/${company}/Ownership/owners`, { waitUntil: 'networkidle' });

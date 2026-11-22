@@ -157,6 +157,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
   (seller VAT number, issue date and time, invoice number) instead of the invoice number alone.
 - **Ownership (Phase A, 2026-11-22; migration 0061).** Owners, partners and shareholders per company, with shares and percentages that apply from a date (earlier dates keep their earlier percentages), capital contributions, drawings, a partners' profit split by percent (exact to the halala), dividends declared into 2170 Dividends payable and then paid, and reversals for corrections. What is shown follows the legal form: sole establishment (one owner, drawings), partnership (percentages, drawings, profit split), anything else (shares, dividends). Each owner has a capital account (32xx) and a current account (33xx). Screens: Ownership > Owners, Capital and drawings, Changes in equity (English and Arabic). Own module key `Ownership` in job titles. Not yet: a demo-data version of the screens, a per-owner statement as PDF, share transfers as their own entry type (record a change of ownership on its date instead), and ownership in the portal.
 
+- **Simpler menu and department users (Phase C, 2026-11-22; migration 0062).** Each module's sidebar shows only its main pages (Sales: Overview, Customers, Quotations, Invoices, Credit notes, Debit notes, Payments received); the other pages are one tap away in a "More in <module>" row under the page title and in the search box, so nothing was removed. New job titles for every customer: Owner, Finance, Sales, Commercial (purchasing and stock). New role module `OwnerReports` (owner summary, profit and loss, balance sheet, cash flow), and the home page no longer shows the month's income, expense and profit to a title without it. New customers' default Client accountant no longer includes Ownership or the owner reports. Not done: the demo build's job titles, per-cost-centre and per-project profit views are still under Reports and Projects, and a title with the trial balance can still work out profit by hand.
+
 
 ## 6. Decisions already made (do not reopen without a reason)
 
@@ -176,6 +178,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 - **Product direction (owner, 2026-11-22).** (1) Add ownership: owners/partners/shareholders, shares and percentages, capital contributions, drawings, dividends and partner profit split, for sole proprietor, partnership and LLC. (2) Sell direct to businesses, like Zoho Books: one company runs its own finances; firm features are hidden, not deleted. Order: Phase A ownership, then Phase B single-company front door. Nothing built yet.
 
 ## 7. Where things stand and what is next
+
+**Menu and department users built (2026-11-22).** Phase C is done and tested (see section 5). Phase B (single-company front door) is still next; its first user should get the Owner title.
 
 **Ownership built (2026-11-22).** Phase A of the owner's two product changes is done and tested (see section 5). Next, Phase B: the single-company front door (sell direct to businesses, firm features hidden, not deleted; the menu already hides the Portal for a customer that keeps its own books). Pushed with `[skip render]`, so the live site gets it at the next deploy; the migration is additive.
 

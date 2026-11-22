@@ -57,6 +57,14 @@ jobs:
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
 
+      # The backup tests dump and restore with pg_dump and pg_restore. The runner's own copy of those tools is newer than the
+      # test database (16), and a newer pg_restore sends commands an older server does not know ("unrecognized configuration
+      # parameter transaction_timeout"), so two tests failed on every run. Use the version-16 tools, the database's own.
+      - name: Use the PostgreSQL 16 command-line tools
+        run: |
+          sudo apt-get install -y --no-install-recommends postgresql-client-16
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+
       - name: Install dependencies
         run: npm ci
 

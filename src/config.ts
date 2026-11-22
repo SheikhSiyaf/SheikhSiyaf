@@ -40,6 +40,11 @@ export const config = {
   publicUrl: env.PUBLIC_URL || '',
   /** Show the demo sign-in buttons on the sign-in page. Never on in production. */
   demoLogins: env.DEMO_LOGINS === 'true' && !production,
+  /** This deployment is the demo site: its own database of fictional companies, opened from the live app by a signed link. */
+  demoSite: env.DEMO_SITE === 'true',
+  /** On the live app: the demo site's https address. With DEMO_LINK_SECRET (the same value on both) it turns on the owner's Demo mode button. */
+  demoSiteUrl: env.DEMO_SITE_URL || '',
+  demoLinkSecret: env.DEMO_LINK_SECRET || '',
   /** Behind your own reverse proxy: take the client address from X-Forwarded-For (true, a hop count, or proxy addresses). Off by default. */
   trustProxy: parseTrustProxy(env.TRUST_PROXY),
 };
@@ -82,6 +87,17 @@ export function validateConfig(e: Record<string, string | undefined>): string[] 
   const pub = e.PUBLIC_URL ?? '';
   if (!pub) out.push('PUBLIC_URL is not set: links in emails need the real https:// address.');
   else if (!/^https:\/\/[^\s/]+/i.test(pub)) out.push('PUBLIC_URL does not start with https://.');
+  const demoSecret = e.DEMO_LINK_SECRET ?? '';
+  if (e.DEMO_SITE === 'true') {
+    // The demo site is allowed to hold fictional data and open without a password, so it must be unable to reach out.
+    if (e.OUTSIDE_CALLS !== 'off') out.push('DEMO_SITE is true but OUTSIDE_CALLS is not off: a demo site must never contact ZATCA, a payment provider or an exchange-rate service.');
+    if ((e.EMAIL_PROVIDER ?? 'none').toLowerCase() !== 'none') out.push('DEMO_SITE is true but EMAIL_PROVIDER is set: a demo site must never send email.');
+    if (demoSecret.length < 32) out.push('DEMO_SITE is true but DEMO_LINK_SECRET is missing or shorter than 32 characters: it is the secret shared with the live app.');
+    if (e.DEMO_SITE_URL) out.push('DEMO_SITE and DEMO_SITE_URL are both set: a deployment is either the live app or the demo site, not both.');
+  } else if (e.DEMO_SITE_URL) {
+    if (!/^https:\/\/[^\s/]+/i.test(e.DEMO_SITE_URL)) out.push('DEMO_SITE_URL does not start with https://.');
+    if (demoSecret.length < 32) out.push('DEMO_SITE_URL is set but DEMO_LINK_SECRET is missing or shorter than 32 characters.');
+  }
   if (e.DEMO_LOGINS === 'true') out.push('DEMO_LOGINS is true: demo sign-in buttons must never be on with real data.');
   // Behind a host's proxy every visitor would otherwise share the proxy's address, so one person's wrong passwords would
   // lock everyone out of signing in. The setting must be a decision: the number of proxies in front, or false for none.

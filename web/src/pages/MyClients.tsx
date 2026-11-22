@@ -1,3 +1,4 @@
+import { useDemoSite } from './DemoSite.tsx';
 import { useApi, type Me } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { useDates } from '../calendar/Calendar.tsx';
@@ -5,6 +6,7 @@ import { navigate } from '../router.ts';
 import { Sidebar, TopControls } from '../ui.tsx';
 
 export function MyClients({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
+  const demoSite = useDemoSite();
   const { t } = useI18n();
   const local = useLocalName();
   const role = me.user.staffRole ?? me.companies[0]?.role;
@@ -21,6 +23,7 @@ export function MyClients({ me, onSignOut }: { me: Me; onSignOut: () => void }) 
     <div className="app">
       <Sidebar subtitle={me.user.firmName} user={me.user} roleLabel={role ? t(`role.${role}`) : undefined} onSignOut={onSignOut}>
         <button className="on">{t('clients.title')}</button>
+        {demoSite && <button id="demo-switch" className="side-extra" onClick={() => navigate('/demo')}>▶ {t('demoSite.switch')}</button>}
       </Sidebar>
       <main>
         <div className="top">

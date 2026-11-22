@@ -1,6 +1,7 @@
 // Platform owner (the seller of Nusuh Books): customer accounts (accounting firms and companies that run their own
 // books) and their first Administrator. The owner adds companies by working inside a customer's Administrator console
 // (header x-acting-tenant); like an Administrator, the owner never sees books.
+import { signDemoToken } from '../demo/demoLink.js';
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
@@ -31,6 +32,13 @@ export function registerOwnerRoutes(app: FastifyInstance, { as, opts }: Ctx) {
       return { id, invite: { userId: u, name: adminName, email: adminEmail, token: await newInvite(db, u, baseUrl(req, opts)) } };
     });
   });
+
+  /** The platform owner's Demo mode button: a short-lived signed link to the demo site (src/demo/demoLink.ts). */
+  app.get('/api/owner/demo-link', async (req) => owner(req, async () => {
+    const d = opts.demoLink;
+    if (!d) throw new HttpError(400, 'The demo site is not set up yet. Ask your developer to finish the demo site settings.', 'err.demoNotSet');
+    return { url: `${d.url.replace(/\/+$/, '')}/demo?t=${signDemoToken(d.secret, 'link', 900)}`, minutes: 15 };
+  }));
 
   app.post<{ Params: { id: string }; Body: { name?: string; status?: string } }>('/api/owner/tenants/:id', async (req) => owner(req, async (db) => {
     await db.query('SELECT owner_update_tenant($1, $2, $3)', [uuidParam(req.params.id), String(req.body?.name ?? ''), String(req.body?.status ?? 'active')]);

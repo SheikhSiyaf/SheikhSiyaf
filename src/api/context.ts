@@ -14,6 +14,10 @@ export interface ServerOptions {
   publicUrl?: string;
   cookieSecure?: boolean;
   demoLogins?: boolean;
+  /** This server IS the demo site (its own database of fictional companies, src/api/demo.ts). The secret is shared with the live app. */
+  demoSite?: { linkSecret: string };
+  /** The live app's way to the demo site: the demo site's https address and the shared secret (the platform owner's Demo mode button). */
+  demoLink?: { url: string; secret: string };
   /** Folder with the built front end (web/dist). Served with a fallback to index.html. */
   staticDir?: string;
   logger?: import('fastify').FastifyServerOptions['logger'];

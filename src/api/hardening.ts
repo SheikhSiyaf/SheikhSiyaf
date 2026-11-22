@@ -25,6 +25,7 @@ export const LIMITS: [RegExp, number][] = [
   [/^\/api\/password-reset$/, 10],   // the database also allows 3 an hour per email and 20 per sender's address
   [/^\/api\/me\/two-factor\//, 30],
   [/^\/api\/public\//, 120],
+  [/^\/api\/demo\//, 60],
   [/^\/health$/, 120],
 ];
 

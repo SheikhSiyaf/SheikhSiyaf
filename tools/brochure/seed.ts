@@ -70,8 +70,19 @@ export async function seed(): Promise<'seeded' | 'exists'> {
 
   const client = new pg.Client({ connectionString: urlFor() });
   await client.connect();
-  const asUser = (id: string) => client.query("SELECT set_config('app.user_id', $1, true)", [id]);
   try {
+    return await populate(client, state, only, () => writeFileSync(STATE_FILE, JSON.stringify(state), { mode: 0o600 }));
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw e;
+  } finally { await client.end(); }
+}
+
+/** Fills an already migrated database with the firm, its staff, the companies and their data. `persist` is called whenever
+ *  the logins in `state` change. Used by the brochure (a local throwaway database) and by the demo site's seed. */
+export async function populate(client: pg.Client, state: State, only: string[], persist: () => void): Promise<'seeded' | 'exists'> {
+  const asUser = (id: string) => client.query("SELECT set_config('app.user_id', $1, true)", [id]);
+  {
     if ((await client.query('SELECT 1 FROM firms WHERE name = $1', [FIRM])).rowCount) return 'exists';
     await client.query('BEGIN');
     const firmId: string = (await client.query('INSERT INTO firms (name) VALUES ($1) RETURNING id', [FIRM])).rows[0].id;
@@ -101,7 +112,7 @@ export async function seed(): Promise<'seeded' | 'exists'> {
       await client.query('SELECT setup_company_books($1, $2, $3)', [id, JSON.stringify(CHART_TEMPLATE), new Date().getUTCFullYear()]);
     }
     await client.query('COMMIT');
-    writeFileSync(STATE_FILE, JSON.stringify(state), { mode: 0o600 });
+    persist();
 
     for (const [n, c] of specs.entries()) {
       const ctx = await makeCtx(client, { id: state.companies[c.key]!, key: c.key, name: c.name, vatRate: '15.00', firmId, poster: state.users[ownerEmail(c.key)]!, partner: state.users['partner@amal.example']!, userIds: state.users, seed: 1000 + n });
@@ -111,17 +122,14 @@ export async function seed(): Promise<'seeded' | 'exists'> {
       state.facts[c.key] = await BUILDERS[c.key]!(ctx);
       await client.query('COMMIT');
       console.log(`  ${c.name}: ${((Date.now() - started) / 1000).toFixed(1)} s`);
-      writeFileSync(STATE_FILE, JSON.stringify(state), { mode: 0o600 });
+      persist();
     }
     await client.query('BEGIN');
     await finishFirm(client, state, firmId);
     await client.query('COMMIT');
-    writeFileSync(STATE_FILE, JSON.stringify(state), { mode: 0o600 });
+    persist();
     return 'seeded';
-  } catch (e) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw e;
-  } finally { await client.end(); }
+  }
 }
 
 export async function teardown(): Promise<void> {

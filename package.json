@@ -25,6 +25,7 @@
     "db:reset": "tsx src/db/reset.ts",
     "db:install": "tsx src/db/install.ts",
     "db:install:prod": "node dist/db/install.js",
+    "demo:seed": "tsx tools/demo/seedDemoSite.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p web",
     "test": "vitest run",
     "test:watch": "vitest",

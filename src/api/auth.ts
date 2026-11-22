@@ -40,6 +40,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
 
   app.get('/api/config', async () => ({
     demoLogins: demo,
+    demoSite: Boolean(opts.demoSite),
     demoPassword: demo ? DEMO_PASSWORD : undefined,
     minPassword: MIN_PASSWORD,
     publicUrl: opts.publicUrl || '',

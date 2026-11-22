@@ -1,0 +1,69 @@
+# The DEMO SITE's Render Blueprint, kept apart from render.yaml on purpose: the live service never sees it, and nothing
+# is created until you ask Render for it. To switch it on: Render Dashboard > New > Blueprint > pick this repository >
+# "Blueprint file path" render-demo.yaml. Render then asks for the values below. Order of things:
+#   1. Make an empty database for the demo ONLY (a new, separate project: never the live one) and a nusuh_app login.
+#   2. Put its owner login, the nusuh_app password and the certificate in GitHub secrets (see .github/workflows/demo-site.yml)
+#      and run Actions > Demo site data once. That migrates and fills it.
+#   3. Create this Blueprint and give it that database's nusuh_app address, its own https address and the shared secret.
+#   4. On the live service add DEMO_SITE_URL (this service's address) and the same DEMO_LINK_SECRET. The Demo mode button
+#      in the platform owner's account then works.
+services:
+  # The demo site is a second, separate service with its own database that holds only the fictional demo companies (one per
+  # client type). It refuses to start against a database that is not marked as a demo database or that holds any real
+  # customer (db/migrations/0064), it never contacts ZATCA, a payment provider or an email service, and no background job
+  # runs. The free plan is enough: it sleeps when unused.
+  - type: web
+    name: nusuh-books-demo
+    runtime: node
+    region: frankfurt
+    plan: free
+    # No migration here: the demo database is migrated and filled by the Demo site data workflow.
+    buildCommand: npm ci --include=dev && npm run build:prod
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "1"
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: DEMO_LOGINS
+        value: "false"
+      # This deployment IS the demo site. It refuses to start unless OUTSIDE_CALLS is off, no email provider is set and
+      # DEMO_LINK_SECRET is set (src/config.ts).
+      - key: DEMO_SITE
+        value: "true"
+      - key: OUTSIDE_CALLS
+        value: "off"
+      - key: FX_JOBS
+        value: "off"
+      - key: EMAIL_JOBS
+        value: "off"
+      - key: TOOL_JOBS
+        value: "off"
+      - key: BILLING_JOBS
+        value: "off"
+      - key: BANK_FEED_JOBS
+        value: "off"
+      - key: EINVOICE_JOBS
+        value: "off"
+      # The demo site's own address (https://...) and the shared secret (the same value as DEMO_LINK_SECRET above).
+      - key: PUBLIC_URL
+        sync: false
+      - key: DEMO_LINK_SECRET
+        sync: false
+      # The DEMO database (never the live one): the nusuh_app login, as in the live service.
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_CA_CERT
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true

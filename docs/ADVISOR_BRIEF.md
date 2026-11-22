@@ -161,6 +161,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 
 - **One login for a company that runs its own books (Phase B, 2026-11-22; migration 0063).** The Owner job title can carry the new right "may manage users and job titles" (`can_manage_users`). It works only for customers of kind `company`: that Owner signs in once, lands in their books, and has a "Users and job titles" link at the bottom of the menu that opens the same user and job title screens an Administrator uses, limited to their own customer. Accounting firms are unchanged (the Administrator stays a separate person who never sees books). Companies that run their own books no longer show the Portal or Review modules. Only Nusuh Books adds a company (as before). Not done: the owner console moving a company under an accounting firm (needs its own phase: users, job titles, staff assignments, portal threads and the calendar all move with it), and the demo build.
 
+- **Demo mode and the demo site (Phase E, 2026-11-22; migration 0064).** A Demo mode button in the platform owner's side menu opens a SEPARATE demo site (its own service and database, `render-demo.yaml`) with a 15-minute signed link (`DEMO_SITE_URL` and `DEMO_LINK_SECRET` on the live service). There the owner picks a client type (hospitality, construction, trading, restaurant, retail, services, manufacturing, or an accounting firm with six clients) and lands inside a fictional company with all its data; everything can be tried and "change client type" returns to the picker. The demo database is filled by `tools/demo/seedDemoSite.ts` (GitHub Actions > Demo site data, 35 seconds; "Start again" refreshes the dates, monthly once `DEMO_SITE_ENABLED` is true). Safety: the demo site will not start, and refuses every request, unless its database is marked as a demo database and holds no real customer; it requires OUTSIDE_CALLS=off (no ZATCA, payments or rates), no email provider and no background jobs; the seed refuses any database that already holds a customer. Nothing is switched on yet: the demo database, its GitHub secrets, the second Render service and the two live settings are the owner's steps. Not done: the static click-through demo build is unchanged and does not carry this data.
+
 
 ## 6. Decisions already made (do not reopen without a reason)
 
@@ -180,6 +182,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 - **Product direction (owner, 2026-11-22).** (1) Add ownership: owners/partners/shareholders, shares and percentages, capital contributions, drawings, dividends and partner profit split, for sole proprietor, partnership and LLC. (2) Sell direct to businesses, like Zoho Books: one company runs its own finances; firm features are hidden, not deleted. Order: Phase A ownership, then Phase B single-company front door. Nothing built yet.
 
 ## 7. Where things stand and what is next
+
+**Demo mode built (2026-11-22).** Phase E is done and tested locally (see section 5); it needs the owner's hosting steps before the button works on the live site.
 
 **Single-company front door built (2026-11-22).** Phase B is done and tested (see section 5). Next candidates: moving a company under an accounting firm (owner console), then Google sign-in and the 15-day trial.
 

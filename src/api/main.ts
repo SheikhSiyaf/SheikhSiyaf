@@ -36,6 +36,11 @@ const pool = createPool(config.databaseUrl, { ca: config.databaseCa, max: config
     console.warn(`${msg} Use nusuh_app before production.`);
   }
 }
+// A demo site only runs against a database made as a demo database that holds no real customer (db/migrations/0064).
+if (config.demoSite && !(await pool.query('SELECT demo_database_ok() AS ok')).rows[0].ok) {
+  console.error('This is set up as the demo site (DEMO_SITE=true) but its database is not a demo database, or it holds a real customer. It will not start. Check DATABASE_URL.');
+  process.exit(1);
+}
 const app = buildServer({
   pool,
   sessionSecret: config.sessionSecret,
@@ -44,6 +49,8 @@ const app = buildServer({
   publicUrl: config.publicUrl,
   cookieSecure: config.cookieSecure,
   demoLogins: config.demoLogins,
+  demoSite: config.demoSite ? { linkSecret: config.demoLinkSecret } : undefined,
+  demoLink: !config.demoSite && config.demoSiteUrl && config.demoLinkSecret ? { url: config.demoSiteUrl, secret: config.demoLinkSecret } : undefined,
   trustProxy: config.trustProxy,
   staticDir: serveWeb ? WEB_DIST : undefined,
   logger: loggerOptions(),   // masked: no passwords, keys, tokens, one-time codes or amounts (src/log/redact.ts)

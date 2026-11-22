@@ -48,6 +48,7 @@ import { OnlinePayments } from '../sales/OnlinePayments.tsx';
 import { Rentals } from '../rentals/Rentals.tsx';
 import { Rooms } from '../rooms/Rooms.tsx';
 import { Ownership } from '../ownership/Ownership.tsx';
+import { useDemoSite } from '../pages/DemoSite.tsx';
 import { Budgets, RecurringInvoices, Reminders, Statements } from '../sales/Tools.tsx';
 import { Bell } from './Notifications.tsx';
 import { Counter } from '../inventory/Counter.tsx';
@@ -59,6 +60,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
   const { t } = useI18n();
   const local = useLocalName();
   const books = useApi<CompanyBooks>(`/api/companies/${companyId}`);
+  const demoSite = useDemoSite();
   const [, , , modKey, subKey, rawItem, extra, extra2] = path.split('/');
   const item = rawItem === '-' ? undefined : rawItem;
   const mod = moduleOf(modKey ?? 'Home');
@@ -116,6 +118,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
             {open === m.key && subMenu(m, 'side')}
           </div>
         ))}
+        {demoSite && <button id="demo-switch" className="side-extra" onClick={() => navigate('/demo')}>▶ {t('demoSite.switch')}</button>}
         {me.canManageUsers && <button id="manage-users" className="side-extra" onClick={() => navigate(`/admin/clients/${companyId}`)}><span className="side-label">{t('side.manageUsers')}</span></button>}
       </Sidebar>
       <main>

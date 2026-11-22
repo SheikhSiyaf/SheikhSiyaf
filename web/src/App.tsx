@@ -9,6 +9,7 @@ import { api, useApi, type Me } from './api.ts';
 import { DEMO, navigate, usePath } from './router.ts';
 import { useI18n } from './i18n.tsx';
 import { Login } from './pages/Login.tsx';
+import { DemoPicker, useDemoSite } from './pages/DemoSite.tsx';
 import { MyClients } from './pages/MyClients.tsx';
 import { Workspace } from './books/Workspace.tsx';
 import { AdminConsole } from './admin/AdminConsole.tsx';
@@ -35,6 +36,7 @@ function DemoBanner() {
 function Screens() {
   const me = useApi<Me>('/api/me');
   const path = usePath();
+  const demoSite = useDemoSite();
 
   const signOut = async () => {
     await api('/api/logout', { method: 'POST', body: {} }).catch(() => undefined);
@@ -46,6 +48,7 @@ function Screens() {
   const user = me.data?.user;
   useEffect(() => {
     if (!user) return;
+    if (path === '/demo') return;   // the demo site's client-type picker is reachable while signed in
     if (path.startsWith('/invite/') || path.startsWith('/i/') || path.startsWith('/pay/') || path === '/security') return;
     if (user.kind === 'owner') {
       if (path.startsWith('/admin') && !getActingTenant()) navigate('/owner');
@@ -60,6 +63,7 @@ function Screens() {
   // A sign-in link works whether or not someone is signed in on this device.
   // A link to an emailed document opens it for anyone holding the link.
   // The demo keeps "?paid=" in its in-memory path; the real app has it in the address.
+  if (path === '/demo') return <DemoPicker />;
   const shared = /^\/i\/([\w-]+)(?:\?paid=([\w-]+))?$/.exec(path);
   if (shared) return <PublicDocument key={path} token={shared[1]!} paid={shared[2] ?? new URLSearchParams(window.location.search).get('paid')} />;
   const sandboxPay = /^\/pay\/sandbox\/([\w-]+)$/.exec(path);
@@ -71,6 +75,7 @@ function Screens() {
   if (me.loading && !me.data && !me.error) return <main><Loading /></main>;
   if (me.error?.status === 401 || (!me.data && me.error)) {
     if (me.error.status !== 401) return <main><ErrorNote error={me.error} onRetry={me.reload} /></main>;
+    if (demoSite) return <DemoPicker />;   // the demo site has no passwords: its picker is the front door
     return <Login onSignedIn={() => { navigate('/'); me.reload(); }} />;
   }
   if (!me.data) return null;

@@ -542,3 +542,11 @@ Every change below is covered by a test in `test/`.
 | `add_default_client_roles()` sets the right on the Owner title for new customers | So a new customer's Owner title works without setup |
 | Adding a company is unchanged: only Nusuh Books adds companies, so the Owner cannot add one | Customers do not create their own companies; Nusuh Books creates and gives them |
 | No data other than the flag on existing Owner titles is changed | The flag has no effect outside customers of kind `company` |
+
+## 0064_demo_site.sql
+| Change | Why |
+|---|---|
+| New tables `demo_marker` (which firm holds the demo companies) and `demo_entries` (the client types a visitor can enter, each with one demo user); row-level security on, no policies, no grants to `nusuh_app` | The demo site is a separate deployment with its own database of fictional companies. The app's own database role cannot read these tables at all |
+| `demo_database_ok()`: true only when the marker exists AND no customer other than the platform and the demo firm exists | The demo site refuses to start, and every demo request is refused, against a database that holds a real customer. The objects exist in every database but do nothing outside a demo one |
+| `demo_entries_list()` and `demo_entry_user(key)` (security definer, answer only when `demo_database_ok()`), executable by `nusuh_app` | The only way the demo site reads the list and finds the demo user for a client type |
+| No existing table or policy is changed; nothing is inserted | Row-level security is not touched or weakened |

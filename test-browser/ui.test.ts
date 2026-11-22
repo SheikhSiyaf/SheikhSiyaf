@@ -311,3 +311,24 @@ describe('A company that runs its own books', () => {
     expect(p.url()).toContain(`/c/${solo.company}/Home`);
   });
 });
+
+describe('Demo mode in the platform owner\'s account', () => {
+  it('shows a Demo mode button in the side menu, and says plainly when the demo site is not set up', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: p } = await newPage();
+    await signIn(p, platform);
+    await p.goto(`${BASE}/owner`, { waitUntil: 'networkidle' });
+    await p.locator('#demo-mode').waitFor({ timeout: 15000 });
+    expect(await p.locator('nav.side').innerText()).toContain('Demo mode');
+    await p.locator('#demo-mode').click();
+    await p.locator('#demo-msg').waitFor({ timeout: 15000 });
+    expect(await p.locator('#demo-msg').innerText()).toContain('not set up');
+    // Nobody else has the button.
+    const { page: q } = await newPage();
+    await signIn(q, accountant);
+    await q.goto(`${BASE}/c/${company}/Home`, { waitUntil: 'networkidle' });
+    await q.waitForTimeout(1200);
+    expect(await q.locator('#demo-mode').count()).toBe(0);
+    expect(await q.locator('#demo-switch').count()).toBe(0);
+  });
+});

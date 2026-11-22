@@ -114,3 +114,11 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+
+      # Demo mode (the platform owner's button): the address of the separate demo site (render-demo.yaml), and a secret shared with
+      # it so the button can open it with a short-lived signed link. Leave both unset until the demo site exists; the
+      # button then says it is not set up. The secret is the same value on both services (40+ random characters).
+      - key: DEMO_SITE_URL
+        sync: false
+      - key: DEMO_LINK_SECRET
+        sync: false

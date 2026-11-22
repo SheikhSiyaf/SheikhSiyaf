@@ -1,0 +1,45 @@
+# Fills (or refreshes) the DEMO SITE's database with the fictional demo companies: one per client type, plus an accounting
+# firm that holds them. Run it by hand (Actions > Demo site data > Run workflow), once the demo database exists. It
+# migrates the database, then fills it. It REFUSES a database that already holds any real customer, and "Start again"
+# works only on a database already marked as a demo database.
+#
+# Tick "Start again" to refresh everything with up-to-date dates (the demo's dates are relative to the day it is made, so
+# it ages). Once DEMO_SITE_ENABLED is set to true (Settings > Secrets and variables > Actions > Variables) it also starts
+# again by itself on the 1st of every month.
+#
+# Secrets (Settings > Secrets and variables > Actions). Values are never written in this file.
+#   DEMO_DATABASE_ADMIN_URL  the demo database's owner login (a database made ONLY for the demo site: never the live one)
+#   DEMO_APP_DB_PASSWORD     the password to give the nusuh_app role there: 20+ letters and digits, no symbols
+#   DEMO_DATABASE_CA_CERT    the host's certificate authority (a public file), if the host needs one
+name: Demo site data
+
+on:
+  workflow_dispatch:
+    inputs:
+      reset:
+        description: 'Start again from scratch (refreshes all dates)'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 21 1 * *'
+
+jobs:
+  seed:
+    if: github.event_name == 'workflow_dispatch' || vars.DEMO_SITE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Fill the demo database
+        env:
+          DEMO_DATABASE_ADMIN_URL: ${{ secrets.DEMO_DATABASE_ADMIN_URL }}
+          DEMO_APP_DB_PASSWORD: ${{ secrets.DEMO_APP_DB_PASSWORD }}
+          DATABASE_CA_CERT: ${{ secrets.DEMO_DATABASE_CA_CERT }}
+          RESET: ${{ (github.event_name == 'schedule' || inputs.reset) && 'yes' || 'no' }}
+        run: |
+          if [ "$RESET" = "yes" ]; then npx tsx tools/demo/seedDemoSite.ts --reset; else npx tsx tools/demo/seedDemoSite.ts; fi

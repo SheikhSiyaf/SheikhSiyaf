@@ -8,11 +8,13 @@ import { navigate } from '../router.ts';
 import { ErrorNote, Loading, TopControls, errorText } from '../ui.tsx';
 
 export interface Plan { id: string; code: string; name: string; nameAr: string | null; forKind: 'firm' | 'company' | 'any'; monthlyPrice: string; yearlyPrice: string;
-  includedCompanies: number; includedUsers: number; extraCompanyPrice: string; extraUserPrice: string; trialDays: number; active: boolean; customers?: number }
+  includedCompanies: number; includedUsers: number; extraCompanyPrice: string; extraUserPrice: string; trialDays: number; active: boolean; customers?: number;
+  setupPrice: string; implementationPrice: string; extraModulePrice: string; annual: boolean }
 interface Sub { id: string; planId: string; planName: string; cycle: 'monthly' | 'yearly'; status: 'trial' | 'active' | 'past_due' | 'cancelled'; startedOn: string;
-  trialEnds: string | null; nextBillOn: string; discountPct: string; cancelAtPeriodEnd: boolean; notes: string | null; includedCompanies: number; includedUsers: number; price?: string }
+  trialEnds: string | null; nextBillOn: string; discountPct: string; cancelAtPeriodEnd: boolean; notes: string | null; includedCompanies: number; includedUsers: number; price?: string;
+  implementation?: boolean; setupBilled?: boolean }
 interface Customer { firmId: string; name: string; kind: 'firm' | 'company'; tenantStatus: string; companies: number; users: number; subscription: Sub | null; owed: string; overdue: string }
-interface Line { key: 'plan' | 'extraCompanies' | 'extraUsers'; name?: string; quantity: number; months?: number; unitPrice: number | string; amount: number | string }
+interface Line { key: 'plan' | 'extraCompanies' | 'extraUsers' | 'software' | 'implementation' | 'membership' | 'extraModules'; name?: string; quantity: number; months?: number; unitPrice: number | string; amount: number | string }
 export interface BillInvoice { id: string; firmId: string; customer: string; number: string; planName: string; cycle: string; periodStart: string; periodEnd: string;
   issuedOn: string; dueOn: string; currency: string; lines: Line[]; subtotal: string; discount: string; vatRate: string; vat: string; total: string;
   status: 'open' | 'overdue' | 'paid' | 'void'; paidOn: string | null; paidRef: string | null; voidReason: string | null }
@@ -36,6 +38,10 @@ function useRun() {
 }
 
 export function lineText(t: (k: Key, v?: Record<string, string | number>) => string, l: Line, cycle: string) {
+  if (l.key === 'software') return t('bill.lineSoftware');
+  if (l.key === 'implementation') return t('bill.lineImplementation');
+  if (l.key === 'membership') return t('bill.lineMembership');
+  if (l.key === 'extraModules') return t('bill.lineModules', { n: l.quantity, price: money(l.unitPrice) });
   if (l.key === 'plan') return t(cycle === 'yearly' ? 'bill.linePlanYear' : 'bill.linePlanMonth', { plan: l.name ?? '' });
   return t(l.key === 'extraCompanies' ? 'bill.lineExtraCompanies' : 'bill.lineExtraUsers', { n: l.quantity, months: l.months ?? 1 });
 }
@@ -46,7 +52,7 @@ export function OwnerBilling() {
   const data = useApi<{ customers: Customer[]; plans: Plan[]; settings: Settings }>('/api/owner/billing');
   const inv = useApi<BillInvoice[]>('/api/owner/billing/invoices');
   const { run, busy, note } = useRun();
-  const [edit, setEdit] = useState<{ firmId: string; kind: string; planId: string; cycle: 'monthly' | 'yearly'; startOn: string; trial: boolean; discountPct: string; notes: string; isNew: boolean }>();
+  const [edit, setEdit] = useState<{ firmId: string; kind: string; planId: string; cycle: 'monthly' | 'yearly'; startOn: string; trial: boolean; discountPct: string; notes: string; isNew: boolean; implementation: boolean }>();
   const [pay, setPay] = useState<{ id: string; paidOn: string; reference: string }>();
   const [voiding, setVoiding] = useState<{ id: string; reason: string }>();
   const [filter, setFilter] = useState<'unpaid' | 'all'>('unpaid');
@@ -65,7 +71,7 @@ export function OwnerBilling() {
   const save = (e: FormEvent) => {
     e.preventDefault();
     const x = edit!;
-    void run(() => api(`/api/owner/tenants/${x.firmId}/subscription`, { body: { planId: x.planId, cycle: x.cycle, startOn: x.startOn, trial: x.trial, discountPct: x.discountPct, notes: x.notes } }),
+    void run(() => api(`/api/owner/tenants/${x.firmId}/subscription`, { body: { planId: x.planId, cycle: x.cycle, startOn: x.startOn, trial: x.trial, discountPct: x.discountPct, notes: x.notes, implementation: x.implementation } }),
       t('bill.subSaved'), () => { setEdit(undefined); reload(); });
   };
   return (
@@ -93,19 +99,24 @@ export function OwnerBilling() {
               <select id="bill-plan" value={edit.planId} onChange={(e) => setEdit({ ...edit, planId: e.target.value })}>
                 <option value="">{t('bill.pickPlan')}</option>
                 {plans.filter((p) => p.active && (p.forKind === 'any' || p.forKind === edit.kind)).map((p) =>
-                  <option key={p.id} value={p.id}>{p.name} · {cur} {fmt(p.monthlyPrice)} / {t('bill.month')} · {cur} {fmt(p.yearlyPrice)} / {t('bill.year')}</option>)}
+                  <option key={p.id} value={p.id}>{p.annual
+                    ? `${p.name} · ${cur} ${fmt(p.setupPrice)} ${t('plan.once')} + ${cur} ${fmt(p.yearlyPrice)} / ${t('bill.year')}`
+                    : `${p.name} · ${cur} ${fmt(p.monthlyPrice)} / ${t('bill.month')} · ${cur} ${fmt(p.yearlyPrice)} / ${t('bill.year')}`}</option>)}
               </select></label>
-            <div className="f">{t('bill.cycle')}
+            {!plans.find((p) => p.id === edit.planId)?.annual && <div className="f">{t('bill.cycle')}
               <div className="seg" role="radiogroup">
                 {(['monthly', 'yearly'] as const).map((c) => <button key={c} type="button" role="radio" aria-checked={edit.cycle === c} id={`bill-cycle-${c}`}
                   className={edit.cycle === c ? 'on' : ''} onClick={() => setEdit({ ...edit, cycle: c })}>{t(`bill.cycle.${c}`)}</button>)}
-              </div></div>
+              </div></div>}
           </div>
           <div className="row">
             {edit.isNew && <label className="f">{t('bill.startOn')}<input id="bill-start" type="date" value={edit.startOn} onChange={(e) => setEdit({ ...edit, startOn: e.target.value })} /></label>}
             <label className="f">{t('bill.discount')}<input id="bill-discount" inputMode="decimal" value={edit.discountPct} onChange={(e) => setEdit({ ...edit, discountPct: e.target.value })} /></label>
           </div>
-          {edit.isNew && <label className="check"><input type="checkbox" id="bill-trial" checked={edit.trial} onChange={(e) => setEdit({ ...edit, trial: e.target.checked })} />
+          {(() => { const pl = plans.find((p) => p.id === edit.planId); return pl?.annual && Number(pl.implementationPrice) > 0 && (
+            <label className="check"><input type="checkbox" id="bill-implementation" checked={edit.implementation} onChange={(e) => setEdit({ ...edit, implementation: e.target.checked })} />
+              {t('bill.implementation', { amount: `${cur} ${fmt(pl.implementationPrice)}` })}</label>); })()}
+          {edit.isNew && plans.find((p) => p.id === edit.planId)?.annual !== true && <label className="check"><input type="checkbox" id="bill-trial" checked={edit.trial} onChange={(e) => setEdit({ ...edit, trial: e.target.checked })} />
             {t('bill.trial', { n: plans.find((p) => p.id === edit.planId)?.trialDays ?? 14 })}</label>}
           <label className="f">{t('bill.notes')}<input value={edit.notes} onChange={(e) => setEdit({ ...edit, notes: e.target.value })} /></label>
           <div className="small mut" style={{ marginBottom: 8 }}>{t(edit.isNew ? 'bill.startHint' : 'bill.changeHint')}</div>
@@ -132,9 +143,9 @@ export function OwnerBilling() {
                   <td className="num" data-label={t('bill.owedCol')}>{Number(c.owed) > 0 ? <span className={Number(c.overdue) > 0 ? 'bad' : ''}>{fmt(c.owed)}</span> : '—'}</td>
                   <td className="num"><span className="actions" style={{ justifyContent: 'flex-end' }}>
                     {(!s || s.status === 'cancelled')
-                      ? <button className="b small p" id={`bill-start-${c.firmId}`} onClick={() => setEdit({ firmId: c.firmId, kind: c.kind, planId: '', cycle: 'monthly', startOn: today().slice(8) > '28' ? today().slice(0, 8) + '28' : today(), trial: true, discountPct: '0', notes: '', isNew: true })}>{t('bill.startSub')}</button>
+                      ? <button className="b small p" id={`bill-start-${c.firmId}`} onClick={() => setEdit({ firmId: c.firmId, kind: c.kind, planId: '', cycle: 'yearly', startOn: today().slice(8) > '28' ? today().slice(0, 8) + '28' : today(), trial: true, discountPct: '0', notes: '', isNew: true, implementation: false })}>{t('bill.startSub')}</button>
                       : <>
-                        <button className="b small" onClick={() => setEdit({ firmId: c.firmId, kind: c.kind, planId: s.planId, cycle: s.cycle, startOn: s.startedOn, trial: false, discountPct: s.discountPct, notes: s.notes ?? '', isNew: false })}>{t('bill.changeSub')}</button>
+                        <button className="b small" onClick={() => setEdit({ firmId: c.firmId, kind: c.kind, planId: s.planId, cycle: s.cycle, startOn: s.startedOn, trial: false, discountPct: s.discountPct, notes: s.notes ?? '', isNew: false, implementation: Boolean(s.implementation) })}>{t('bill.changeSub')}</button>
                         <button className="b small" onClick={() => void run(() => api(`/api/owner/tenants/${c.firmId}/subscription/cancel`, { body: { cancel: !s.cancelAtPeriodEnd } }), undefined, reload)}>
                           {s.cancelAtPeriodEnd ? t('bill.keep') : t('bill.cancelSub')}</button>
                       </>}
@@ -223,7 +234,8 @@ function SellerSettings({ s, onSaved }: { s: Settings; onSaved: () => void }) {
 
 // ------------------------------------------------------------------ Owner: plans
 const EMPTY_PLAN: Omit<Plan, 'id'> = { code: '', name: '', nameAr: '', forKind: 'company', monthlyPrice: '', yearlyPrice: '', includedCompanies: 1, includedUsers: 3,
-  extraCompanyPrice: '0', extraUserPrice: '0', trialDays: 14, active: true };
+  extraCompanyPrice: '0', extraUserPrice: '0', trialDays: 14, active: true,
+  setupPrice: '0', implementationPrice: '0', extraModulePrice: '0', annual: false };
 export function OwnerPlans() {
   const { t, lang } = useI18n();
   const list = useApi<Plan[]>('/api/owner/plans');
@@ -235,7 +247,7 @@ export function OwnerPlans() {
   if (!list.data) return <Loading />;
   const num = (k: 'includedCompanies' | 'includedUsers' | 'trialDays') => (
     <input inputMode="numeric" id={`plan-${k}`} value={String(f![k])} onChange={(e) => setF({ ...f!, [k]: Number(e.target.value.replace(/\D/g, '') || 0) })} />);
-  const amt = (k: 'monthlyPrice' | 'yearlyPrice' | 'extraCompanyPrice' | 'extraUserPrice') => (
+  const amt = (k: 'monthlyPrice' | 'yearlyPrice' | 'extraCompanyPrice' | 'extraUserPrice' | 'setupPrice' | 'implementationPrice' | 'extraModulePrice') => (
     <input inputMode="decimal" id={`plan-${k}`} value={f![k]} onChange={(e) => setF({ ...f!, [k]: e.target.value })} />);
   return (
     <>
@@ -265,6 +277,14 @@ export function OwnerPlans() {
             <label className="f">{t('plan.inclUsers')}{num('includedUsers')}</label>
             <label className="f">{t('plan.extraUser', { cur })}{amt('extraUserPrice')}</label>
           </div>
+          <label className="check"><input type="checkbox" id="plan-annual" checked={f.annual} onChange={(e) => setF({ ...f, annual: e.target.checked })} />{t('plan.annualOnly')}</label>
+          {f.annual && (
+            <div className="row">
+              <label className="f">{t('plan.setupPrice', { cur })}{amt('setupPrice')}</label>
+              <label className="f">{t('plan.implementationPrice', { cur })}{amt('implementationPrice')}</label>
+              <label className="f">{t('plan.extraModulePrice', { cur })}{amt('extraModulePrice')}</label>
+            </div>
+          )}
           {f.id && <label className="check"><input type="checkbox" checked={f.active} onChange={(e) => setF({ ...f, active: e.target.checked })} />{t('plan.onSale')}</label>}
           <div className="actions"><button className="b p" id="plan-save" disabled={busy}>{t('save')}</button><button type="button" className="b" onClick={() => setF(undefined)}>{t('cancel')}</button></div>
         </form>
@@ -273,13 +293,21 @@ export function OwnerPlans() {
         {list.data.map((p) => (
           <div key={p.id} className={`card ${p.active ? '' : 'mut'}`}>
             <div className="actions"><h2 style={{ margin: 0 }}>{lang === 'ar' && p.nameAr ? p.nameAr : p.name}</h2><span className="spacer" /><span className="badge">{t(`plan.for.${p.forKind}`)}</span></div>
+            {p.annual ? (<>
+              <div style={{ fontSize: 22, margin: '8px 0' }}><b>{cur} {fmt(p.setupPrice)}</b> <span className="small mut">{t('plan.once')}</span></div>
+              <ul className="small" style={{ paddingInlineStart: 18 }}>
+                <li>{t('plan.annualMembership', { amount: `${cur} ${fmt(p.yearlyPrice)}` })}</li>
+                <li>{t('plan.modulesEach', { amount: `${cur} ${fmt(p.extraModulePrice)}` })}</li>
+                {Number(p.implementationPrice) > 0 && <li>{t('plan.implementationOptional', { amount: `${cur} ${fmt(p.implementationPrice)}` })}</li>}
+              </ul>
+            </>) : (<>
             <div style={{ fontSize: 22, margin: '8px 0' }}><b>{cur} {fmt(p.monthlyPrice)}</b> <span className="small mut">/ {t('bill.month')}</span></div>
             <div className="small mut">{t('plan.orYearly', { amount: `${cur} ${fmt(p.yearlyPrice)}` })}</div>
             <ul className="small" style={{ paddingInlineStart: 18 }}>
               <li>{t('plan.inclCompaniesN', { n: p.includedCompanies })}{Number(p.extraCompanyPrice) > 0 && <> · {t('plan.extraEach', { amount: `${cur} ${fmt(p.extraCompanyPrice)}` })}</>}</li>
               <li>{t('plan.inclUsersN', { n: p.includedUsers })}{Number(p.extraUserPrice) > 0 && <> · {t('plan.extraEach', { amount: `${cur} ${fmt(p.extraUserPrice)}` })}</>}</li>
               <li>{t('plan.trialN', { n: p.trialDays })}</li>
-            </ul>
+            </ul></>)}
             <div className="actions"><span className="small mut">{t('plan.customersN', { n: p.customers ?? 0 })}{!p.active && <> · {t('plan.notOnSale')}</>}</span><span className="spacer" />
               <button className="b small" onClick={() => setF({ ...p, nameAr: p.nameAr ?? '' })}>{t('bill.edit')}</button></div>
           </div>
@@ -292,7 +320,7 @@ export function OwnerPlans() {
 // ------------------------------------------------------------------ The customer's Administrator
 export function AdminBilling() {
   const { t } = useI18n();
-  const d = useApi<{ subscription: (Sub & { extraCompanyPrice: string; extraUserPrice: string }) | null; usage: { companies: number; users: number }; next: Quote | null; invoices: BillInvoice[]; seller: Settings }>('/api/admin/billing');
+  const d = useApi<{ subscription: (Sub & { extraCompanyPrice: string; extraUserPrice: string }) | null; usage: { companies: number; users: number; modules?: number }; next: Quote | null; invoices: BillInvoice[]; seller: Settings }>('/api/admin/billing');
   if (d.error) return <ErrorNote error={d.error} onRetry={d.reload} />;
   if (!d.data) return <Loading />;
   const { subscription: s, usage, next, invoices, seller } = d.data;
@@ -309,8 +337,10 @@ export function AdminBilling() {
         {s.status === 'trial' && <div className="notice">{t('bill.adminTrial', { date: s.trialEnds ?? '' })}</div>}
         <div className="grid">
           <div className="card fig"><small>{t('bill.plan')}</small><b>{s.planName}</b><small>{t(`bill.cycle.${s.cycle}`)} · <span className={`badge ${STATUS_BADGE[s.status]}`}>{t(`bill.st.${s.status}`)}</span></small></div>
-          {meter(usage.companies, s.includedCompanies, t('bill.companiesUsed'), s.extraCompanyPrice)}
-          {meter(usage.users, s.includedUsers, t('bill.usersUsed'), s.extraUserPrice)}
+          {(s as Sub & { annual?: boolean }).annual
+            ? <div className="card fig"><small>{t('bill.modulesUsed')}</small><b>{usage.modules ?? 0}</b><small>{t('bill.modulesHint')}</small></div>
+            : <>{meter(usage.companies, s.includedCompanies, t('bill.companiesUsed'), s.extraCompanyPrice)}
+                {meter(usage.users, s.includedUsers, t('bill.usersUsed'), s.extraUserPrice)}</>}
         </div>
         {next ? (
           <div className="card">

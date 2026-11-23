@@ -518,3 +518,16 @@ describe('Remove a customer and see a password', () => {
     expect(await kind()).toBe('password');
   });
 });
+
+describe('The new pricing in the owner console', () => {
+  it('the Plans page shows the one plan on sale with the one-time software price, the yearly membership, the module price and the optional implementation', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: p } = await newPage(1280);
+    await signIn(p, platform);
+    await p.goto(`${BASE}/owner/plans`, { waitUntil: 'networkidle' });
+    await waitForText(p, 'Nusuh Books');
+    const text = await p.locator('main').innerText();
+    for (const want of ['9,000.00', 'once', '1,500.00', 'Annual membership', '500.00', 'Each additional module', '5,000.00', 'Optional implementation']) expect(text, want).toContain(want);
+    await screenshotTo(p, 'pricing-plans');
+  });
+});

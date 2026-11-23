@@ -20,14 +20,16 @@ async function requireOwner(db: Db) {
 // ------------------------------------------------------------------ Plans
 const PLAN_COLS = `id, code, name, name_ar AS "nameAr", for_kind AS "forKind", monthly_price AS "monthlyPrice", yearly_price AS "yearlyPrice",
   included_companies AS "includedCompanies", included_users AS "includedUsers", extra_company_price AS "extraCompanyPrice",
-  extra_user_price AS "extraUserPrice", trial_days AS "trialDays", active`;
+  extra_user_price AS "extraUserPrice", trial_days AS "trialDays", active,
+  setup_price AS "setupPrice", implementation_price AS "implementationPrice", extra_module_price AS "extraModulePrice", annual`;
 export async function listPlans(db: Db) {
   return (await db.query(`SELECT ${PLAN_COLS}, (SELECT count(*) FROM subscriptions s WHERE s.plan_id = plans.id AND s.status <> 'cancelled')::int AS customers
     FROM plans ORDER BY active DESC, monthly_price`)).rows;
 }
 
 export interface PlanInput { code?: string; name?: string; nameAr?: string | null; forKind?: string; monthlyPrice?: string; yearlyPrice?: string;
-  includedCompanies?: number; includedUsers?: number; extraCompanyPrice?: string; extraUserPrice?: string; trialDays?: number; active?: boolean }
+  includedCompanies?: number; includedUsers?: number; extraCompanyPrice?: string; extraUserPrice?: string; trialDays?: number; active?: boolean;
+  setupPrice?: string; implementationPrice?: string; extraModulePrice?: string; annual?: boolean }
 export async function savePlan(db: Db, id: string | null, p: PlanInput) {
   await requireOwner(db);
   const name = String(p.name ?? '').trim();
@@ -35,21 +37,23 @@ export async function savePlan(db: Db, id: string | null, p: PlanInput) {
   if (!name) bad('Enter the plan name.', 'err.planName');
   if (!/^[a-z0-9_-]{2,30}$/.test(code)) bad('Give the plan a short code (letters, numbers, dashes).', 'err.planCode');
   if (!['firm', 'company', 'any'].includes(String(p.forKind))) bad('Choose who the plan is for.', 'err.planKind');
-  const money = [p.monthlyPrice, p.yearlyPrice, p.extraCompanyPrice ?? '0', p.extraUserPrice ?? '0'].map((x) => String(x ?? '').trim());
+  const money = [p.monthlyPrice, p.yearlyPrice, p.extraCompanyPrice ?? '0', p.extraUserPrice ?? '0', p.setupPrice ?? '0', p.implementationPrice ?? '0', p.extraModulePrice ?? '0'].map((x) => String(x ?? '').trim());
   if (money.some((x) => !MONEY.test(x))) bad('Enter the prices as amounts, for example 199 or 199.50.', 'err.planPrice');
   const ints = [p.includedCompanies, p.includedUsers, p.trialDays ?? 14].map(Number);
   if (ints.some((x) => !Number.isInteger(x) || x < 0) || ints[2]! > 90) bad('Enter whole numbers for what is included (trial up to 90 days).', 'err.planNumbers');
-  const vals = [code, name, p.nameAr?.trim() || null, p.forKind, ...money, ints[0], ints[1], ints[2], p.active !== false];
+  const vals = [code, name, p.nameAr?.trim() || null, p.forKind, ...money, ints[0], ints[1], ints[2], p.active !== false, p.annual === true];
   if (id) {
     const r = await db.query(`UPDATE plans SET code = $2, name = $3, name_ar = $4, for_kind = $5, monthly_price = $6, yearly_price = $7, extra_company_price = $8,
-      extra_user_price = $9, included_companies = $10, included_users = $11, trial_days = $12, active = $13 WHERE id = $1 RETURNING id`, [id, ...vals]);
+      extra_user_price = $9, setup_price = $10, implementation_price = $11, extra_module_price = $12, included_companies = $13, included_users = $14, trial_days = $15,
+      active = $16, annual = $17 WHERE id = $1 RETURNING id`, [id, ...vals]);
     if (!r.rows[0]) throw new HttpError(404, 'Not found.', 'err.notFound');
     return { id };
   }
   const dup = (await db.query('SELECT 1 FROM plans WHERE code = $1', [code])).rows[0];
   if (dup) bad('Another plan has this code.', 'err.planCodeTaken');
   return { id: (await db.query(`INSERT INTO plans (code, name, name_ar, for_kind, monthly_price, yearly_price, extra_company_price, extra_user_price,
-    included_companies, included_users, trial_days, active) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, vals)).rows[0].id as string };
+    setup_price, implementation_price, extra_module_price, included_companies, included_users, trial_days, active, annual)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`, vals)).rows[0].id as string };
 }
 
 // ------------------------------------------------------------------ Settings
@@ -73,12 +77,12 @@ export async function saveSettings(db: Db, s: { sellerName?: string; sellerVat?:
 // ------------------------------------------------------------------ Subscriptions
 const SUB_COLS = `s.id, s.firm_id AS "firmId", s.plan_id AS "planId", p.name AS "planName", s.cycle, s.status, to_char(s.started_on, 'YYYY-MM-DD') AS "startedOn",
   to_char(s.trial_ends, 'YYYY-MM-DD') AS "trialEnds", to_char(s.next_bill_on, 'YYYY-MM-DD') AS "nextBillOn", s.discount_pct AS "discountPct",
-  s.cancel_at_period_end AS "cancelAtPeriodEnd", s.notes`;
+  s.cancel_at_period_end AS "cancelAtPeriodEnd", s.notes, s.implementation, s.setup_billed AS "setupBilled"`;
 
 /** Every customer with its subscription, usage and what it owes (the owner's Billing page). */
 export async function overview(db: Db) {
   await requireOwner(db);
-  return (await db.query(`SELECT f.id AS "firmId", f.name, f.kind, f.status AS "tenantStatus", u.companies, u.users, f.admins,
+  return (await db.query(`SELECT f.id AS "firmId", f.name, f.kind, f.status AS "tenantStatus", u.companies, u.users, u.modules, f.admins,
       CASE WHEN s.id IS NULL THEN NULL ELSE jsonb_build_object('id', s.id, 'planId', s.plan_id, 'planName', p.name, 'cycle', s.cycle, 'status', s.status,
         'startedOn', s.started_on, 'trialEnds', s.trial_ends, 'nextBillOn', s.next_bill_on, 'discountPct', s.discount_pct::text,
         'cancelAtPeriodEnd', s.cancel_at_period_end, 'notes', s.notes, 'includedCompanies', p.included_companies, 'includedUsers', p.included_users,
@@ -90,22 +94,24 @@ export async function overview(db: Db) {
     ORDER BY f.name`)).rows;
 }
 
-export interface SubscriptionInput { planId?: string; cycle?: string; startOn?: string; trial?: boolean; discountPct?: string; notes?: string | null }
+export interface SubscriptionInput { planId?: string; cycle?: string; startOn?: string; trial?: boolean; discountPct?: string; notes?: string | null; implementation?: boolean }
 /** Starts or changes a customer's subscription. A change of plan, cycle or discount applies from the next bill. */
 export async function saveSubscription(db: Db, firmId: string, x: SubscriptionInput) {
   await requireOwner(db);
   const firm = (await db.query('SELECT kind FROM owner_tenants() WHERE id = $1', [firmId])).rows[0];
   if (!firm) throw new HttpError(404, 'Not found.', 'err.notFound');
-  const plan = (await db.query('SELECT id, for_kind, trial_days, active FROM plans WHERE id = $1', [x.planId])).rows[0];
+  const plan = (await db.query('SELECT id, for_kind, trial_days, active, annual FROM plans WHERE id = $1', [x.planId])).rows[0];
   if (!plan || !plan.active) bad('Choose a plan.', 'err.pickPlan');
   if (plan.for_kind !== 'any' && plan.for_kind !== firm.kind) bad('This plan is for another kind of customer.', 'err.planWrongKind');
+  if (plan.annual) x = { ...x, cycle: 'yearly' };   // the annual plan is billed yearly only
   if (x.cycle !== 'monthly' && x.cycle !== 'yearly') bad('Choose monthly or yearly.', 'err.cycle');
+  const implementation = x.implementation === true;   // the optional implementation (accounts fixation) service
   const disc = String(x.discountPct ?? '0').trim() || '0';
   if (!/^\d{1,3}(\.\d{1,2})?$/.test(disc) || Number(disc) > 100) bad('The discount is 0 to 100 percent.', 'err.discount');
   const notes = x.notes?.trim() || null;
   const cur = (await db.query('SELECT id, status FROM subscriptions WHERE firm_id = $1', [firmId])).rows[0];
   if (cur && cur.status !== 'cancelled') {
-    await db.query('UPDATE subscriptions SET plan_id = $2, cycle = $3, discount_pct = $4, notes = $5 WHERE id = $1', [cur.id, plan.id, x.cycle, disc, notes]);
+    await db.query('UPDATE subscriptions SET plan_id = $2, cycle = $3, discount_pct = $4, notes = $5, implementation = CASE WHEN setup_billed THEN implementation ELSE $6 END WHERE id = $1', [cur.id, plan.id, x.cycle, disc, notes, implementation]);
     return { id: cur.id as string };
   }
   const start = String(x.startOn ?? '');
@@ -114,14 +120,14 @@ export async function saveSubscription(db: Db, firmId: string, x: SubscriptionIn
   if (Number(start.slice(8)) > 28) bad('Start on day 1 to 28, so the bill date is the same every month.', 'err.startDay');
   let trialEnds = x.trial && plan.trial_days > 0 ? addDays(start, plan.trial_days) : null;
   if (trialEnds && Number(trialEnds.slice(8)) > 28) trialEnds = addDays(trialEnds.slice(0, 8) + '28', 4).slice(0, 8) + '01';
-  const vals = [plan.id, x.cycle, trialEnds ? 'trial' : 'active', start, trialEnds, trialEnds ?? start, disc, notes];
+  const vals = [plan.id, x.cycle, trialEnds ? 'trial' : 'active', start, trialEnds, trialEnds ?? start, disc, notes, implementation];
   if (cur) {   // a cancelled customer starts again
     await db.query(`UPDATE subscriptions SET plan_id = $2, cycle = $3, status = $4, started_on = $5, trial_ends = $6, next_bill_on = $7, discount_pct = $8,
-      notes = $9, cancel_at_period_end = false WHERE id = $1`, [cur.id, ...vals]);
+      notes = $9, implementation = $10, setup_billed = false, cancel_at_period_end = false WHERE id = $1`, [cur.id, ...vals]);
     return { id: cur.id as string };
   }
-  return { id: (await db.query(`INSERT INTO subscriptions (firm_id, plan_id, cycle, status, started_on, trial_ends, next_bill_on, discount_pct, notes)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, [firmId, ...vals])).rows[0].id as string };
+  return { id: (await db.query(`INSERT INTO subscriptions (firm_id, plan_id, cycle, status, started_on, trial_ends, next_bill_on, discount_pct, notes, implementation)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, [firmId, ...vals])).rows[0].id as string };
 }
 
 /** Cancel at the end of the period already billed (or now, for a trial), or take that back. */
@@ -164,9 +170,10 @@ export async function voidInvoice(db: Db, id: string, reason?: string) {
 export async function mine(db: Db) {
   const firmId = (await db.query('SELECT app_firm_id() AS f')).rows[0].f as string;
   const sub = (await db.query(`SELECT ${SUB_COLS}, p.included_companies AS "includedCompanies", p.included_users AS "includedUsers",
-      p.extra_company_price AS "extraCompanyPrice", p.extra_user_price AS "extraUserPrice"
+      p.extra_company_price AS "extraCompanyPrice", p.extra_user_price AS "extraUserPrice", p.annual,
+      p.setup_price AS "setupPrice", p.implementation_price AS "implementationPrice", p.extra_module_price AS "extraModulePrice"
     FROM subscriptions s JOIN plans p ON p.id = s.plan_id WHERE s.firm_id = $1`, [firmId])).rows[0] ?? null;
-  const usage = (await db.query('SELECT companies, users FROM billing_usage($1)', [firmId])).rows[0];
+  const usage = (await db.query('SELECT companies, users, modules FROM billing_usage($1)', [firmId])).rows[0];
   const next = sub && sub.status !== 'cancelled' && !sub.cancelAtPeriodEnd
     ? (await db.query('SELECT billing_quote($1, $2::date) AS q', [firmId, sub.nextBillOn])).rows[0].q : null;
   return { subscription: sub, usage, next, invoices: await invoices(db, firmId), seller: await settings(db) };

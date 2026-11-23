@@ -2,7 +2,7 @@
 // users charged on top; invoices are never changed, only paid or voided; overdue invoices mark the customer past due.
 // A customer's Administrator sees only its own billing; nobody else can change it.
 import { describe, it, expect, beforeAll } from 'vitest';
-import { app as appPool, as, seed, type Fixture } from './helpers.js';
+import { app as appPool, as, owner, seed, type Fixture } from './helpers.js';
 import * as B from '../src/books/billingService.js';
 
 let f: Fixture;
@@ -17,9 +17,14 @@ async function job(day: string) {
 }
 
 beforeAll(async () => {
+  // These tests are about the monthly plans. The new pricing (0068) took those off sale, so the tests use their own copies of them:
+  // the engine still bills such plans exactly as before, and the shared plans are left alone for other tests.
+  await owner.query(`INSERT INTO plans (code, name, name_ar, for_kind, monthly_price, yearly_price, included_companies, included_users, extra_company_price, extra_user_price, trial_days, active)
+    SELECT 'legacy_' || code, name, name_ar, for_kind, monthly_price, yearly_price, included_companies, included_users, extra_company_price, extra_user_price, trial_days, true
+    FROM plans WHERE code IN ('starter', 'business', 'firm', 'firm_plus') ON CONFLICT (code) DO NOTHING`);
   f = await seed();
   other = await seed();
-  planId = await plan('firm');
+  planId = await plan('legacy_firm');
 });
 
 describe('Plans and subscriptions', () => {
@@ -32,7 +37,7 @@ describe('Plans and subscriptions', () => {
   });
 
   it('a company plan cannot be given to an accounting firm, and bills start on day 1 to 28', async () => {
-    const starter = await plan('starter');
+    const starter = await plan('legacy_starter');
     await expect(as(f.platformOwner, (db) => B.saveSubscription(db, f.firmId, { planId: starter, cycle: 'monthly', startOn: '2026-01-01' }))).rejects.toThrow(/another kind/);
     await expect(as(f.platformOwner, (db) => B.saveSubscription(db, f.firmId, { planId, cycle: 'monthly', startOn: '2026-01-30' }))).rejects.toThrow(/day 1 to 28/);
   });
@@ -100,7 +105,7 @@ describe('Plans and subscriptions', () => {
   it('each Administrator sees only its own billing', async () => {
     const mine = await as(f.admin, (db) => B.mine(db));
     expect(mine.subscription?.planName).toBe('Firm');
-    expect(mine.usage).toEqual({ companies: 2, users: 7 });
+    expect(mine.usage).toMatchObject({ companies: 2, users: 7 });
     expect(mine.invoices.every((x: { firmId: string }) => x.firmId === f.firmId)).toBe(true);
     expect(mine.next.total).toBe(907.7);
     const theirs = (await as(other.admin, (db) => B.invoices(db))).map((x) => x.firmId);

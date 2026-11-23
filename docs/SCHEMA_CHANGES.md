@@ -571,3 +571,11 @@ Every change below is covered by a test in `test/`.
 |---|---|
 | `users.removed_at` (nullable date-time) | A removed person's row, name and history stay (posted entries and the audit log are never deleted); this records when they were removed so lists can hide them |
 | New `admin_remove_user(user, removed)` (security definer; the Administrator of that customer, or the platform owner acting for it; executable by `nusuh_app`, not by PUBLIC): removing locks the person out (the same lock as suspending), clears any unused sign-in link and stamps `removed_at`; restoring lets them in again. It refuses removing yourself, the platform owner, another customer's people, and the last active Administrator; only Nusuh Books can remove an Administrator | "Delete user" without deleting a row anything refers to. No table, policy or grant is loosened; row-level security is untouched |
+
+## 0068_pricing.sql
+| Change | Why |
+|---|---|
+| `plans`: new `setup_price`, `implementation_price`, `extra_module_price` (all >= 0, default 0) and `annual` | The new pricing: a one-time software price, an optional one-time implementation price, a yearly membership, and a yearly price per additional module |
+| `subscriptions`: new `implementation` (the customer chose the implementation service) and `setup_billed` (the one-time charges are on an invoice) | The one-time charges are billed once, on the first invoice, and the implementation is optional per customer |
+| `billing_usage()` replaced with one more column, `modules` (optional modules switched on across the customer's active companies, each counted once); `billing_quote()` and `billing_run()` replaced: an annual plan bills software (first invoice), implementation (first invoice, if chosen), membership and additional modules; other plans bill exactly as before; `billing_run` marks the one-time charges billed | The invoice engine carries the new pricing. Same owner-only checks and grants; row-level security untouched |
+| New plan "Nusuh Books" (software 9,000, implementation 5,000, membership 1,500 a year, 500 per additional module); the four older plans are set off sale, not deleted | The new pricing replaces the monthly plans for every kind of customer, and existing subscriptions and invoices stay readable |

@@ -121,7 +121,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
     const users = await db.query(
       `SELECT u.id, u.full_name AS name, u.email, m.role, m.client_role_id AS "clientRoleId", u.status,
               (u.invite_expires_at > now()) AS "invitePending", (u.password_hash IS NOT NULL) AS "passwordSet",
-              (u.totp_enabled_at IS NOT NULL) AS "twoFactor"
+              (u.totp_enabled_at IS NOT NULL) AS "twoFactor", (u.removed_at IS NOT NULL) AS removed
        FROM memberships m JOIN users u ON u.id = m.user_id
        WHERE m.company_id = $1 AND u.kind = 'client' ORDER BY u.full_name`, [id]);
     const staff = await db.query(
@@ -267,7 +267,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
   app.get('/api/admin/staff', async (req) => admin(req, async (db) => (await db.query(
     `SELECT u.id, u.full_name AS name, u.email, u.staff_role AS role, u.status,
             (u.totp_enabled_at IS NOT NULL) AS "twoFactor", (u.invite_expires_at > now()) AS "invitePending",
-            (u.password_hash IS NOT NULL) AS "passwordSet",
+            (u.password_hash IS NOT NULL) AS "passwordSet", (u.removed_at IS NOT NULL) AS removed,
             (SELECT coalesce(json_agg(m.company_id), '[]') FROM memberships m WHERE m.user_id = u.id) AS "clientIds",
             (SELECT coalesce(json_agg(c.name ORDER BY c.name), '[]') FROM memberships m JOIN companies c ON c.id = m.company_id
                WHERE m.user_id = u.id) AS clients
@@ -296,6 +296,19 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
         `UPDATE users SET status = $2 WHERE id = $1 AND firm_id = app_firm_id() AND kind <> 'admin'`,
         [id, req.body?.active ? 'active' : 'suspended']);
       if (!rowCount) throw new HttpError(404, 'Not found.', 'err.notFound');
+      return { ok: true };
+    });
+  });
+
+  /**
+   * Remove a person (or restore them). Their name stays on everything they ever did (posted entries and the audit log are
+   * permanent), so they are locked out and hidden, not erased. See db/migrations/0067_remove_user.sql for who may remove whom.
+   */
+  app.post<{ Params: { id: string }; Body: { removed?: boolean } }>('/api/admin/users/:id/remove', async (req) => {
+    const id = uuidParam(req.params.id);
+    if (id === req.userId) throw new HttpError(400, 'You cannot remove yourself.', 'err.selfRemove');
+    return admin(req, async (db) => {
+      await db.query('SELECT admin_remove_user($1, $2)', [id, req.body?.removed !== false]);
       return { ok: true };
     });
   });

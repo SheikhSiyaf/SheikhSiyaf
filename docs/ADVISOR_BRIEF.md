@@ -183,6 +183,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 
 ## 7. Where things stand and what is next
 
+**Remove a person (2026-11-23, migration 0067).** An Administrator can Remove (and Restore) the people of their own customer, and Nusuh Books can also remove an Administrator but never the last one. A removed person cannot sign in, any unused sign-in link stops working and they are hidden from the lists; their name stays on everything they did (posted entries and the audit log are never deleted). Nobody can remove themselves.
+
 **Remove a customer, and Show / Hide password (2026-11-23, migration 0066).** The owner console has Remove (with a plain confirmation) and Restore on every customer, plus "Show removed customers". Remove hides the customer, locks everyone in it out, cancels its subscription and keeps every book and the audit log (posted entries can never be deleted); Restore undoes it. A password box with Show / Hide is on the sign-in page and the choose-a-password page.
 
 **The Owner is not the Administrator (2026-11-23, migration 0065).** In a company that keeps its own books the owner (of Nusuh Books) now creates the company with TWO kinds of people: a separate Administrator login (users, roles and permissions, raise an issue; never the books) and the people who use the books (Owner, Finance, Sales and so on). The Owner job title no longer manages users by default; the right stays as an optional setting. This replaces the earlier "one login for the company owner" decision (Phase B). The Add customer flow needs at least one Administrator and one person who uses the books.

@@ -478,6 +478,31 @@ describe('Remove a customer and see a password', () => {
     expect((await db.query(`SELECT removed_at FROM firms WHERE id = $1`, [tenant.id])).rows[0].removed_at).toBeNull();
   });
 
+  it('the Administrator removes a person (hidden, cannot sign in, name kept), then restores them', async () => {
+    const tenant = (await db.query(`SELECT f.id, f.name FROM firms f WHERE f.kind = 'company' AND f.name LIKE 'Flow Test Trading %' ORDER BY f.created_at DESC LIMIT 1`)).rows[0] as { id: string; name: string };
+    const adminEmail = (await db.query(`SELECT email FROM users WHERE firm_id = $1 AND kind = 'admin' LIMIT 1`, [tenant.id])).rows[0].email as string;
+    const seller = (await db.query(`SELECT u.id, u.email FROM users u WHERE u.firm_id = $1 AND u.kind = 'client' AND u.full_name = 'Flow Sales'`, [tenant.id])).rows[0] as { id: string; email: string };
+    await db.query(`UPDATE users SET password_hash = (SELECT password_hash FROM users WHERE kind = 'owner' LIMIT 1), password_set_at = now() WHERE lower(email) = lower($1)`, [adminEmail]);
+    const { page: p } = await newPage(1280);
+    await signIn(p, adminEmail);
+    await p.goto(`${BASE}/admin/clients`, { waitUntil: 'networkidle' });
+    await p.locator(`#remove-user-${seller.id}`).waitFor({ timeout: 15000 });
+    await p.locator(`#remove-user-${seller.id}`).click();
+    await waitForText(p, 'Their name stays on everything they did');
+    await screenshotTo(p, 'remove-user-confirm');
+    await p.getByRole('button', { name: 'Yes, continue' }).click();
+    await p.waitForTimeout(1500);
+    expect(await p.locator('main').innerText()).not.toContain('Flow Sales');   // hidden from the list
+    expect((await db.query(`SELECT removed_at IS NOT NULL AS gone, status FROM users WHERE id = $1`, [seller.id])).rows[0]).toEqual({ gone: true, status: 'suspended' });
+    expect((await db.query(`SELECT full_name FROM users WHERE id = $1`, [seller.id])).rows[0].full_name).toBe('Flow Sales');   // the name stays
+    await p.locator('#show-removed-people').click();
+    await p.locator(`#restore-user-${seller.id}`).waitFor({ timeout: 15000 });
+    await screenshotTo(p, 'remove-user-removed-list');
+    await p.locator(`#restore-user-${seller.id}`).click();
+    await p.waitForTimeout(1500);
+    expect((await db.query(`SELECT removed_at FROM users WHERE id = $1`, [seller.id])).rows[0].removed_at).toBeNull();
+  });
+
   it('the sign-in page has a Show / Hide button on the password', async () => {
     const { page: p } = await newPage(1280);
     await p.goto(`${BASE}/`, { waitUntil: 'networkidle' });

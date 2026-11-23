@@ -21,7 +21,7 @@ interface StaffRow {
   id: string; name: string; email: string; role: string; status: string; twoFactor: boolean;
   invitePending: boolean | null; passwordSet: boolean; clientIds: string[]; clients: string[];
 }
-interface ClientUser { id: string; name: string; email: string; role: string; clientRoleId: string | null; status: string; invitePending: boolean | null; passwordSet: boolean; twoFactor: boolean }
+interface ClientUser { id: string; name: string; email: string; role: string; clientRoleId: string | null; status: string; invitePending: boolean | null; passwordSet: boolean; twoFactor: boolean; removed?: boolean }
 interface ClientDetail {
   company: Record<string, string | null> & { id: string; name: string; country: Country; status: string };
   users: ClientUser[];
@@ -526,19 +526,22 @@ function ClientPage({ id }: { id: string }) {
 }
 
 /** People with sign-in state and actions: new sign-in link, reset two-factor, suspend/reactivate. */
-function PeopleTable<P extends { id: string; name: string; email: string; status: string; invitePending: boolean | null; passwordSet: boolean; twoFactor: boolean }>(
+function PeopleTable<P extends { id: string; name: string; email: string; status: string; invitePending: boolean | null; passwordSet: boolean; twoFactor: boolean; removed?: boolean }>(
   { people, roleOf, extra, onChanged, onInvite }: {
     people: P[]; roleOf: (p: P) => React.ReactNode; extra?: (p: P) => React.ReactNode; onChanged: () => void; onInvite: (i: Invite) => void;
   }) {
   const { t, has } = useI18n();
-  const [confirm, setConfirm] = useState<{ kind: 'suspend' | 'reset'; p: P }>();
+  const [confirm, setConfirm] = useState<{ kind: 'suspend' | 'reset' | 'remove'; p: P }>();
+  const [showRemoved, setShowRemoved] = useState(false);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError(undefined);
     try { await fn(); onChanged(); } catch (e) { setError(errorText(t, has, e)); } finally { setBusy(false); }
   };
-  const signIn = (p: P) => p.status !== 'active' ? <span className="badge bad">{t('admin.suspended')}</span>
+  const removedCount = people.filter((p) => p.removed).length;
+  const shown = showRemoved ? people : people.filter((p) => !p.removed);   // removed people are hidden unless asked for
+  const signIn = (p: P) => p.removed ? <span className="badge bad">{t('admin.removedBadge')}</span> : p.status !== 'active' ? <span className="badge bad">{t('admin.suspended')}</span>
     : p.invitePending ? <span className="badge warn">{t('admin.invitePending')}</span>
     : !p.passwordSet ? <span className="badge warn">{t('admin.noPassword')}</span>
     : <span className="badge good">{t('admin.passwordSet')}</span>;
@@ -547,20 +550,22 @@ function PeopleTable<P extends { id: string; name: string; email: string; status
       {error && <div className="notice bad" role="alert">{error}</div>}
       {confirm && (
         <ConfirmBar busy={busy}
-          message={confirm.kind === 'suspend' ? t('admin.suspendUserConfirm', { name: confirm.p.name }) : t('admin.resetTwoFactorConfirm', { name: confirm.p.name })}
+          message={confirm.kind === 'suspend' ? t('admin.suspendUserConfirm', { name: confirm.p.name }) : confirm.kind === 'remove' ? t('admin.removeUserConfirm', { name: confirm.p.name }) : t('admin.resetTwoFactorConfirm', { name: confirm.p.name })}
           onNo={() => setConfirm(undefined)}
           onYes={() => {
             const { kind, p } = confirm;
             setConfirm(undefined);
-            void run(() => api(kind === 'suspend' ? `/api/admin/users/${p.id}/status` : `/api/admin/users/${p.id}/reset-two-factor`, { body: kind === 'suspend' ? { active: false } : {} }));
+            void run(() => api(kind === 'suspend' ? `/api/admin/users/${p.id}/status` : kind === 'remove' ? `/api/admin/users/${p.id}/remove` : `/api/admin/users/${p.id}/reset-two-factor`,
+              { body: kind === 'suspend' ? { active: false } : kind === 'remove' ? { removed: true } : {} }));
           }} />
       )}
+      {removedCount > 0 && <label className="small mut" style={{ display: 'block', margin: '0 0 6px' }}><input type="checkbox" id="show-removed-people" checked={showRemoved} onChange={(e) => setShowRemoved(e.target.checked)} /> {t('admin.showRemovedPeople', { n: removedCount })}</label>}
       <div className="wrap">
         <table className="people">
           <thead><tr><th>{t('col.name')}</th><th>{t('admin.role')}</th>{extra && <th>{t('admin.clientsHandled')}</th>}<th>{t('admin.signInState')}</th><th>{t('admin.twoFactor')}</th><th>{t('admin.actions')}</th></tr></thead>
           <tbody>
-            {people.map((p) => (
-              <tr key={p.id} className={p.status !== 'active' ? 'mut' : ''}>
+            {shown.map((p) => (
+              <tr key={p.id} className={p.status !== 'active' || p.removed ? 'mut' : ''}>
                 <td>{p.name}<div className="mut small ltr">{p.email}</div></td>
                 <td className="small" data-label={t('admin.role')}>{roleOf(p)}</td>
                 {extra && <td className="small" data-label={t('admin.clientsHandled')}>{extra(p)}</td>}
@@ -568,20 +573,26 @@ function PeopleTable<P extends { id: string; name: string; email: string; status
                 <td data-label={t('admin.twoFactor')}>{p.twoFactor ? <span className="badge good">{t('admin.on')}</span> : <span className="badge warn">{t('admin.off')}</span>}</td>
                 <td>
                   <div className="actions">
-                    {p.status === 'active' ? (
+                    {p.removed ? (
+                      <button className="b small" id={`restore-user-${p.id}`} disabled={busy} onClick={() => void run(() => api(`/api/admin/users/${p.id}/remove`, { body: { removed: false } }))}>{t('admin.restoreUser')}</button>
+                    ) : p.status === 'active' ? (
                       <>
                         <button className="b small" disabled={busy} onClick={() => void run(async () => onInvite((await api<{ invite: Invite }>(`/api/admin/users/${p.id}/invite`, { body: {} })).invite))}>{t('admin.newInvite')}</button>
                         {p.twoFactor && <button className="b small" disabled={busy} onClick={() => setConfirm({ kind: 'reset', p })}>{t('admin.resetTwoFactor')}</button>}
                         <button className="b small" disabled={busy} onClick={() => setConfirm({ kind: 'suspend', p })}>{t('admin.suspend')}</button>
+                        <button className="b small bad" id={`remove-user-${p.id}`} disabled={busy} onClick={() => setConfirm({ kind: 'remove', p })}>{t('admin.removeUser')}</button>
                       </>
                     ) : (
-                      <button className="b small" disabled={busy} onClick={() => void run(() => api(`/api/admin/users/${p.id}/status`, { body: { active: true } }))}>{t('admin.reactivate')}</button>
+                      <>
+                        <button className="b small" disabled={busy} onClick={() => void run(() => api(`/api/admin/users/${p.id}/status`, { body: { active: true } }))}>{t('admin.reactivate')}</button>
+                        <button className="b small bad" id={`remove-user-${p.id}`} disabled={busy} onClick={() => setConfirm({ kind: 'remove', p })}>{t('admin.removeUser')}</button>
+                      </>
                     )}
                   </div>
                 </td>
               </tr>
             ))}
-            {people.length === 0 && <tr><td colSpan={6} className="mut">{t('none')}</td></tr>}
+            {shown.length === 0 && <tr><td colSpan={6} className="mut">{t('none')}</td></tr>}
           </tbody>
         </table>
       </div>

@@ -565,3 +565,9 @@ Every change below is covered by a test in `test/`.
 | `owner_tenants()` replaced: one more column, `removed_at`; same rows, same owner-only check, same grant | The owner's list can hide removed customers and offer Restore |
 | `owner_update_tenant()` replaced: setting a customer active also clears `removed_at` | Suspend, reactivate and remove never disagree |
 | New `owner_remove_tenant(id, removed)` (security definer, owner only, executable by `nusuh_app`, not by PUBLIC): removing sets the customer to suspended (nobody in it can sign in), stamps `removed_at` and cancels its subscription; restoring reactivates it | "Remove customer" without deleting any book, entry or log row. No table, policy or grant is loosened; row-level security is untouched |
+
+## 0067_remove_user.sql
+| Change | Why |
+|---|---|
+| `users.removed_at` (nullable date-time) | A removed person's row, name and history stay (posted entries and the audit log are never deleted); this records when they were removed so lists can hide them |
+| New `admin_remove_user(user, removed)` (security definer; the Administrator of that customer, or the platform owner acting for it; executable by `nusuh_app`, not by PUBLIC): removing locks the person out (the same lock as suspending), clears any unused sign-in link and stamps `removed_at`; restoring lets them in again. It refuses removing yourself, the platform owner, another customer's people, and the last active Administrator; only Nusuh Books can remove an Administrator | "Delete user" without deleting a row anything refers to. No table, policy or grant is loosened; row-level security is untouched |

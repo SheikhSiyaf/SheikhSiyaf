@@ -389,23 +389,37 @@ export function BillingInvoicePage({ id, back }: { id: string; back: string }) {
         <button className="b" onClick={() => window.print()}>{t('pub.print')}</button>
         <TopControls />
       </div>
-      <div className="public-page">
-        <div className="actions" style={{ alignItems: 'flex-start' }}>
-          <div><h1 style={{ margin: 0 }}>{t('bill.taxInvoice')}</h1><div className="ltr">{x.number}</div></div>
-          <span className="spacer" />
-          <div style={{ textAlign: 'end' }}><b>{x.seller.sellerName}</b>{x.seller.sellerAddress && <div className="small">{x.seller.sellerAddress}</div>}
-            {x.seller.sellerVat && <div className="small ltr">{t('bill.vatNo')} {x.seller.sellerVat}</div>}</div>
-        </div>
-        <hr />
-        <div className="row">
-          <div className="f"><small className="mut" style={{ display: 'block' }}>{t('bill.billTo')}</small><b>{x.customer}</b></div>
-          <div className="f"><small className="mut" style={{ display: 'block' }}>{t('bill.issuedOn')}</small><span className="ltr">{x.issuedOn}</span></div>
-          <div className="f"><small className="mut" style={{ display: 'block' }}>{t('bill.dueOn')}</small><span className="ltr">{x.dueOn}</span></div>
-          <div className="f"><small className="mut" style={{ display: 'block' }}>{t('bill.period')}</small><span className="ltr">{x.periodStart} → {x.periodEnd}</span></div>
-        </div>
-        <QuoteLines q={x} cycle={x.cycle} />
-        <div style={{ marginTop: 10 }}><span className={`badge ${STATUS_BADGE[x.status]}`}>{t(`bill.st.${x.status}`)}</span>
-          {x.paidOn && <span className="small"> {t('bill.paidOnN', { date: x.paidOn })}</span>}{x.voidReason && <span className="small"> {x.voidReason}</span>}</div>
+      <div className="public-page binv">
+        <header className="binv-head">
+          <div>
+            <div className="binv-brand">{x.seller.sellerName}</div>
+            {x.seller.sellerAddress && <div className="binv-sub">{x.seller.sellerAddress}</div>}
+            {x.seller.sellerVat && <div className="binv-sub ltr">{t('bill.vatNo')} {x.seller.sellerVat}</div>}
+          </div>
+          <div className="binv-title">
+            <h1>{t('bill.taxInvoice')}</h1>
+            <div className="binv-no ltr">{x.number}</div>
+            <span className={`binv-stamp ${x.status}`}>{t(`bill.st.${x.status}`)}</span>
+          </div>
+        </header>
+        <section className="binv-meta">
+          <div className="binv-to"><small>{t('bill.billTo')}</small><b>{x.customer}</b></div>
+          <div><small>{t('bill.issuedOn')}</small><span className="ltr">{x.issuedOn}</span></div>
+          <div><small>{t('bill.dueOn')}</small><span className="ltr">{x.dueOn}</span></div>
+          <div><small>{t('bill.period')}</small><span className="ltr">{x.periodStart} → {x.periodEnd}</span></div>
+        </section>
+        <table className="binv-lines">
+          <thead><tr><th>{t('bill.description')}</th><th className="num">{t('bill.amount')}</th></tr></thead>
+          <tbody>{x.lines.map((l, k) => <tr key={k}><td>{lineText(t, l, x.cycle)}</td><td className="num ltr">{money(l.amount)}</td></tr>)}</tbody>
+        </table>
+        <table className="binv-totals"><tbody>
+          <tr><td>{t('bill.subtotal')}</td><td className="num ltr">{money(x.subtotal)}</td></tr>
+          {Number(x.discount) > 0 && <tr><td>{t('bill.discountLine')}</td><td className="num ltr">−{money(x.discount)}</td></tr>}
+          <tr><td>{t('bill.vatLine', { rate: String(Number(x.vatRate)) })}</td><td className="num ltr">{money(x.vat)}</td></tr>
+          <tr className="grand"><td>{t('bill.total')}</td><td className="num ltr">{x.currency} {money(x.total)}</td></tr>
+        </tbody></table>
+        {(x.paidOn || x.voidReason) && <div className="binv-note">{x.paidOn && t('bill.paidOnN', { date: x.paidOn })}{x.voidReason}</div>}
+        <footer className="binv-foot">{t('bill.invoiceThanks', { seller: x.seller.sellerName })}</footer>
       </div>
     </main>
   );

@@ -742,3 +742,29 @@ main.auth { padding: 0; display: grid; grid-template-columns: minmax(360px, 520p
 .pw-toggle:hover { text-decoration: underline; }
 .pw-toggle:focus-visible { outline: 2px solid var(--teal, #0f766e); outline-offset: -2px; }
 [dir="rtl"] .pw-toggle { border-radius: var(--radius, 8px) 0 0 var(--radius, 8px); }
+
+/* Billing invoice sent to a customer */
+.binv { padding: 36px 40px; font-size: 14px; color: #14213d; }
+.binv-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; padding-bottom: 22px; border-bottom: 3px solid #0f766e; }
+.binv-brand { font-size: 22px; font-weight: 700; color: #0f766e; margin-bottom: 4px; }
+.binv-sub { color: #5b6b7b; font-size: 13px; line-height: 1.5; }
+.binv-title { text-align: end; }
+.binv-title h1 { margin: 0; font-size: 26px; letter-spacing: .02em; text-transform: uppercase; }
+.binv-no { font-size: 15px; color: #5b6b7b; margin: 2px 0 8px; }
+.binv-stamp { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; border: 1.5px solid #5b6b7b; color: #5b6b7b; }
+.binv-stamp.paid { color: #0f766e; border-color: #0f766e; background: #e1f2f0; }
+.binv-stamp.overdue { color: #b42318; border-color: #b42318; background: #fdecea; }
+.binv-meta { display: grid; grid-template-columns: 2fr 1fr 1fr 1.6fr; gap: 18px; padding: 22px 0; }
+.binv-meta small { display: block; color: #5b6b7b; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
+.binv-meta b, .binv-meta span { font-size: 15px; }
+.binv-lines, .binv-totals { width: 100%; border-collapse: collapse; }
+.binv-lines th { background: #e1f2f0; color: #0f766e; text-align: start; padding: 10px 12px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.binv-lines th.num, .binv-lines td.num, .binv-totals td.num { text-align: end; white-space: nowrap; }
+.binv-lines td { padding: 12px; border-bottom: 1px solid #d5dde5; }
+.binv-totals { width: 55%; margin-inline-start: auto; margin-top: 14px; }
+.binv-totals td { padding: 6px 12px; }
+.binv-totals .grand td { border-top: 2px solid #14213d; font-size: 17px; font-weight: 700; padding-top: 10px; background: #f4f8f8; }
+.binv-note { margin-top: 14px; color: #5b6b7b; font-size: 13px; }
+.binv-foot { margin-top: 36px; padding-top: 14px; border-top: 1px solid #d5dde5; text-align: center; color: #5b6b7b; font-size: 12px; }
+@media (max-width: 640px) { .binv { padding: 18px 16px; } .binv-meta { grid-template-columns: 1fr 1fr; } .binv-totals { width: 100%; } .binv-title { text-align: start; } }
+@media print { .binv { padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }

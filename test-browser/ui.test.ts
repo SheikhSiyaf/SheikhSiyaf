@@ -557,3 +557,21 @@ describe('Bank feed: consent and exceptions', () => {
     await screenshotTo(pg, 'bank-exceptions');
   });
 });
+
+describe('The billing invoice sent to a customer', () => {
+  it('has a letterhead, a clear table of what is charged, totals and a status, and no sideways scrolling on a phone', async () => {
+    const inv = (await db.query(`SELECT id, number FROM billing_invoices ORDER BY created_at DESC LIMIT 1`)).rows[0] as { id: string; number: string } | undefined;
+    if (!inv) return;   // the demo data has no billing invoice: nothing to look at
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    for (const width of [1280, 390]) {
+      const { page: p } = await newPage(width);
+      await signIn(p, platform);
+      await p.goto(`${BASE}/owner/billing/${inv.id}`, { waitUntil: 'networkidle' });
+      await waitForText(p, inv.number);
+      const text = await p.locator('.binv').innerText();
+      for (const want of ['TAX INVOICE', 'Description', 'Amount', 'Subtotal', 'Total']) expect(text.toUpperCase(), want).toContain(want.toUpperCase());
+      expect(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+      await screenshotTo(p, `billing-invoice-${width}`);
+    }
+  });
+});

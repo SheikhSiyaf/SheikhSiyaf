@@ -550,3 +550,10 @@ Every change below is covered by a test in `test/`.
 | `demo_database_ok()`: true only when the marker exists AND no customer other than the platform and the demo firm exists | The demo site refuses to start, and every demo request is refused, against a database that holds a real customer. The objects exist in every database but do nothing outside a demo one |
 | `demo_entries_list()` and `demo_entry_user(key)` (security definer, answer only when `demo_database_ok()`), executable by `nusuh_app` | The only way the demo site reads the list and finds the demo user for a client type |
 | No existing table or policy is changed; nothing is inserted | Row-level security is not touched or weakened |
+
+## 0065_company_admin_separate.sql
+| Change | Why |
+|---|---|
+| `client_roles.can_manage_users` is set to false on every default Owner title, and its description no longer says it manages users | The Owner is not the Administrator: a company that runs its own books has a separate Administrator login (users, roles and permissions, raising issues) who never sees the books |
+| `add_default_client_roles()` replaced: the Owner title is created without the right, with the new description; every other title is unchanged | New customers start the same way |
+| The right itself (`can_manage_users`, `app_is_admin()`) is kept as an optional setting a job title can be given | Nothing built on it breaks; no table, column or policy is added, removed or loosened, so row-level security is untouched |

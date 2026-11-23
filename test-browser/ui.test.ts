@@ -295,6 +295,7 @@ describe('A company that runs its own books', () => {
       WHERE f.kind = 'company' AND u.kind = 'client' AND u.status = 'active' LIMIT 1`)).rows[0];
     await db.query('SELECT add_default_client_roles($1)', [solo.firm]);
     await db.query(`UPDATE memberships SET client_role_id = (SELECT id FROM client_roles WHERE firm_id = $1 AND name = 'Owner') WHERE user_id = $2 AND company_id = $3`, [solo.firm, solo.uid, solo.company]);
+    await db.query(`UPDATE client_roles SET can_manage_users = true WHERE firm_id = $1 AND name = 'Owner'`, [solo.firm]);   // optional since 0065: not on by default
     const { page: p } = await newPage();
     await signIn(p, solo.email);
     await p.goto(`${BASE}/c/${solo.company}/Home`, { waitUntil: 'networkidle' });
@@ -357,21 +358,26 @@ describe('Add customer: Company own accounts', () => {
     await p.locator('#reg-phone').fill('+966500000000');
     await p.locator('#own-w-next').click();
 
-    // Step 2: users. The first is an Owner; one more is added with another job title.
+    // Step 2: people. The first row is the company's Administrator, the second its Owner; a third person is added as Sales.
     await p.locator('#own-w-name-0').waitFor({ timeout: 15000 });
+    expect(await p.locator('#own-w-title-0').inputValue()).toBe('Administrator');
+    expect(await p.locator('#own-w-title-1').inputValue()).toBe('Owner');
     await screenshotTo(p, 'add-customer-2-users');
-    await p.locator('#own-w-name-0').fill('Flow Owner');
-    await p.locator('#own-w-email-0').fill(`flow.owner.${stamp}@example.com`);
+    await p.locator('#own-w-name-0').fill('Flow Admin');
+    await p.locator('#own-w-email-0').fill(`flow.admin.${stamp}@example.com`);
+    await p.locator('#own-w-name-1').fill('Flow Owner');
+    await p.locator('#own-w-email-1').fill(`flow.owner.${stamp}@example.com`);
     await p.locator('#own-w-add-user').click();
-    await p.locator('#own-w-name-1').fill('Flow Sales');
-    await p.locator('#own-w-email-1').fill(`flow.sales.${stamp}@example.com`);
-    await p.locator('#own-w-title-1').selectOption('Sales');
+    await p.locator('#own-w-name-2').fill('Flow Sales');
+    await p.locator('#own-w-email-2').fill(`flow.sales.${stamp}@example.com`);
+    await p.locator('#own-w-title-2').selectOption('Sales');
     await p.locator('#own-w-next').click();
 
     // Step 3: review, then create.
     await p.locator('#own-w-review').waitFor({ timeout: 15000 });
     const review = await p.locator('#own-company-wizard').innerText();
     expect(review).toContain(`Flow Test Trading ${stamp}`);
+    expect(review).toContain('Flow Admin');
     expect(review).toContain('Flow Owner');
     expect(review).toContain('Flow Sales');
     await screenshotTo(p, 'add-customer-3-review');
@@ -380,7 +386,7 @@ describe('Add customer: Company own accounts', () => {
     // Lands on the customer's page (its one company), with both sign-in links, and no way to add another company.
     await p.locator('#new-customer-done').waitFor({ timeout: 20000 });
     expect(p.url()).toMatch(/\/admin\/clients\/[0-9a-f-]{36}$/);
-    expect(await p.locator('input[aria-label]').count()).toBeGreaterThan(1);
+    expect(await p.locator('input[aria-label]').count()).toBeGreaterThan(2);   // three links: the Administrator, the Owner and Sales
     await screenshotTo(p, 'add-customer-4-customer-page');
     // A company with its own books is not an accounting firm: none of the firm wording is on its pages.
     const pageText = await p.locator('body').innerText();
@@ -398,26 +404,38 @@ describe('Add customer: Company own accounts', () => {
 
     const made = (await db.query(`SELECT (SELECT count(*) FROM companies c JOIN firms f ON f.id = c.firm_id WHERE f.name = $1)::int AS companies,
       (SELECT count(*) FROM users u JOIN firms f ON f.id = u.firm_id WHERE f.name = $1 AND u.kind = 'client')::int AS users`, [`Flow Test Trading ${stamp}`])).rows[0];
-    expect(made).toEqual({ companies: 1, users: 2 });
+    expect(made).toEqual({ companies: 1, users: 2 });   // two people use the books; the Administrator is a third login that does not
 
-    // The company's own Owner: their admin area is only the users, their roles and permissions, and a way to raise an issue.
-    const ownerEmail = `flow.owner.${stamp}@example.com`;
-    await db.query(`UPDATE users SET password_hash = (SELECT password_hash FROM users WHERE kind = 'owner' LIMIT 1), password_set_at = now() WHERE lower(email) = lower($1)`, [ownerEmail]);
+    // The company's Administrator (a separate login from its Owner): the admin area is only the users, their roles and
+    // permissions, and a way to raise an issue. No books, no Activity, E-invoices, Billing or Settings.
+    const adminEmail = `flow.admin.${stamp}@example.com`;
+    await db.query(`UPDATE users SET password_hash = (SELECT password_hash FROM users WHERE kind = 'owner' LIMIT 1), password_set_at = now() WHERE lower(email) = lower($1)`, [adminEmail]);
     const { page: q, errors: qerrs } = await newPage(1280);
-    await signIn(q, ownerEmail);
+    await signIn(q, adminEmail);
     await q.goto(`${BASE}/admin/clients`, { waitUntil: 'networkidle' });
     await q.locator('#raise-issue').waitFor({ timeout: 15000 });
     const side = await q.locator('nav.side').innerText();
     for (const want of ['Users', 'Roles and permissions', 'Raise an issue']) expect(side, want).toContain(want);
-    for (const gone of ['Activity', 'E-invoices', 'Billing', 'Settings', 'Companies', 'Staff']) expect(side, gone).not.toContain(gone);
+    for (const gone of ['Activity', 'E-invoices', 'Billing', 'Settings', 'Companies', 'Staff', 'Back to my books']) expect(side, gone).not.toContain(gone);
     const mine = await q.locator('main').innerText();
     expect(mine).toContain(`Flow Test Trading ${stamp}`);
     expect(mine).toContain('Flow Sales');
     for (const firmWord of ['Firm staff', 'All clients', 'Client users']) expect(mine, firmWord).not.toContain(firmWord);
-    await screenshotTo(q, 'add-customer-6-company-owner-admin');
+    await screenshotTo(q, 'add-customer-6-company-admin');
     await q.locator('#raise-issue').click();
     await q.locator('#sup-subject').waitFor({ timeout: 15000 });   // the form to raise an issue with Nusuh Books opens straight away
     await screenshotTo(q, 'add-customer-7-raise-issue');
+
+    // The company's Owner is not the Administrator: they use the books and have no way into the admin area.
+    const ownerEmail = `flow.owner.${stamp}@example.com`;
+    await db.query(`UPDATE users SET password_hash = (SELECT password_hash FROM users WHERE kind = 'owner' LIMIT 1), password_set_at = now() WHERE lower(email) = lower($1)`, [ownerEmail]);
+    const { page: r } = await newPage(1280);
+    await signIn(r, ownerEmail);
+    await r.waitForTimeout(1500);
+    expect(await r.locator('#manage-users').count()).toBe(0);
+    await r.goto(`${BASE}/admin/clients`, { waitUntil: 'networkidle' });
+    await r.waitForTimeout(1200);
+    expect(r.url()).not.toContain('/admin');
     expect(qerrs.filter((e) => !/favicon|status of 401/.test(e))).toEqual([]);
   });
 

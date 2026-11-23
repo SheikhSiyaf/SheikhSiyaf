@@ -44,27 +44,29 @@ const canEditDetails = (x: Tenant) => x.owner || x.kind === 'firm';
 export function AdminConsole({ me, path, onSignOut, owner, selfService }: { me: Me; path: string; onSignOut: () => void; owner?: boolean; selfService?: boolean }) {
   const { t } = useI18n();
   const settings = useApi<{ firmName: string; kind: 'firm' | 'company'; owner: boolean }>('/api/admin/settings');
-  const tenant: Tenant = { kind: settings.data?.kind ?? 'firm', owner: Boolean(settings.data?.owner), name: settings.data?.firmName ?? '', self: Boolean(selfService) };
+  const tenant: Tenant = { kind: settings.data?.kind ?? 'firm', owner: Boolean(settings.data?.owner), name: settings.data?.firmName ?? '', self: Boolean(selfService) || (settings.data?.kind === 'company' && !owner) };
   const seg = path.split('/');                       // ['', 'admin', tab, id?]
-  // A company's own Owner has only its users and their roles and permissions here (and Help, to raise an issue with Nusuh Books).
-  const tabs: (typeof TABS)[number][] = selfService ? ['Clients', 'Roles'] : TABS.filter((x) => !(x === 'Staff' && tenant.kind === 'company'));
+  // A company's own Administrator (a separate login from its Owner, who uses the books) has only its users and their roles and
+  // permissions here, and a way to raise an issue with Nusuh Books. The platform owner opening the customer sees the rest.
+  const limited = Boolean(tenant.self);
+  const tabs: (typeof TABS)[number][] = limited ? ['Clients', 'Roles'] : TABS.filter((x) => !(x === 'Staff' && tenant.kind === 'company'));
   const tab = (tabs.find((x) => x.toLowerCase() === seg[2]) ?? 'Clients');
   const clientId = tab === 'Clients' && seg[3] && seg[3] !== 'new' ? seg[3] : null;
   const adding = tab === 'Clients' && seg[3] === 'new' && tenant.kind !== 'company';   // never for a company's own books
-  const tabLabel = (x: string) => (x === 'Clients' && selfService ? t('admin.usersTab') : x === 'Clients' && tenant.kind === 'company' ? t('admin.companyTab') : t(`admin.${x}` as Key));
+  const tabLabel = (x: string) => (x === 'Clients' && limited ? t('admin.usersTab') : x === 'Clients' && tenant.kind === 'company' ? t('admin.companyTab') : t(`admin.${x}` as Key));
   const ownCompany = tab === 'Clients' && tenant.kind === 'company' && !clientId;   // the company IS the customer: its page, not a list
   const title = adding ? t('reg.title') : tabLabel(tab);
   if (!settings.data) return <main>{settings.error ? <ErrorNote error={settings.error} onRetry={settings.reload} /> : <Loading />}</main>;
   return (
     <div className="app">
-      <Sidebar subtitle={selfService ? tenant.name : owner ? tenant.name : t('admin.console')} user={me.user} roleLabel={selfService ? t('side.manageUsers') : owner ? t('own.role') : t('role.admin')} onSignOut={onSignOut}>
+      <Sidebar subtitle={limited || owner ? tenant.name : t('admin.console')} user={me.user} roleLabel={selfService ? t('side.manageUsers') : owner ? t('own.role') : t('role.admin')} onSignOut={onSignOut}>
         {selfService && me.companies[0] && <button id="back-to-books" onClick={() => navigate(`/c/${me.companies[0]!.id}/Home`)}>← {t('admin.backToBooks')}</button>}
         {tabs.map((x) => (
           <button key={x} className={x === tab ? 'on' : ''} onClick={() => navigate(`/admin/${x.toLowerCase()}`)} aria-current={x === tab ? 'page' : undefined}>
             {tabLabel(x)}
           </button>
         ))}
-        {selfService && <button id="raise-issue" onClick={() => window.dispatchEvent(new Event(RAISE_ISSUE))}>{t('admin.raiseIssue')}</button>}
+        {limited && <button id="raise-issue" onClick={() => window.dispatchEvent(new Event(RAISE_ISSUE))}>{t('admin.raiseIssue')}</button>}
       </Sidebar>
       <main>
         {owner && (

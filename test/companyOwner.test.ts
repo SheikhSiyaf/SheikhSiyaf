@@ -10,6 +10,7 @@ import { hashPassword } from '../src/auth/password.js';
 let f: Fixture;
 let server: FastifyInstance;
 let soloFirm = '', soloCompany = '', soloOwner = '', soloSales = '';
+let ownerDefaultManages: boolean | undefined;
 const emails: Record<string, string> = {};
 const soloRole: Record<string, string> = {};
 
@@ -19,6 +20,10 @@ beforeAll(async () => {
   soloFirm = (await owner.query(`INSERT INTO firms (name, kind) VALUES ('Solo Trading', 'company') RETURNING id`)).rows[0].id;
   await owner.query('SELECT add_default_client_roles($1)', [soloFirm]);
   for (const r of (await owner.query('SELECT id, name FROM client_roles WHERE firm_id = $1', [soloFirm])).rows) soloRole[r.name] = r.id;
+  // A new customer's Owner title does NOT manage users (the company's separate Administrator does, 0065). The right still exists as
+  // an optional setting on any job title, which is what these tests use: it is given to this Owner explicitly.
+  ownerDefaultManages = (await owner.query('SELECT can_manage_users FROM client_roles WHERE id = $1', [soloRole.Owner])).rows[0].can_manage_users;
+  await owner.query('UPDATE client_roles SET can_manage_users = true WHERE id = $1', [soloRole.Owner]);
   const c = await owner.connect();   // a company and its first client user are created together (a deferred database rule)
   try {
     await c.query('BEGIN');
@@ -48,7 +53,8 @@ const get = (cookie: string, url: string) => server.inject({ method: 'GET', url,
 const post = (cookie: string, url: string, payload: object) => server.inject({ method: 'POST', url, headers: { cookie }, payload });
 
 describe('The Owner of a company that runs its own books', () => {
-  it('has the right on the Owner title and it is reported to the screens', async () => {
+  it('has the right only when a job title is given it, and it is reported to the screens', async () => {
+    expect(ownerDefaultManages).toBe(false);   // by default the Owner is not the Administrator
     expect((await owner.query('SELECT can_manage_users FROM client_roles WHERE id = $1', [soloRole.Owner])).rows[0].can_manage_users).toBe(true);
     for (const n of ['Sales', 'Finance', 'Commercial', 'Client accountant', 'Client management']) {
       expect((await owner.query('SELECT can_manage_users FROM client_roles WHERE id = $1', [soloRole[n]])).rows[0].can_manage_users, n).toBe(false);

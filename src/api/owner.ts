@@ -11,6 +11,8 @@ import { baseUrl, uuidParam, type Ctx } from './context.js';
 import { companyValues, insertCompany, newInvite, person, setupCompanyBooks, text } from './admin.js';
 
 /** The job titles every customer starts with (db/migrations/0062_department_roles.sql); a new company's people are given one. */
+/** The one kind of person in a company's people list who is not a job title: the separate Administrator login. */
+export const ADMINISTRATOR = 'Administrator';
 export const COMPANY_JOB_TITLES = ['Owner', 'Finance', 'Sales', 'Commercial', 'Client accountant', 'Client management'] as const;
 
 async function requireOwner(db: Db) {
@@ -41,8 +43,9 @@ export function registerOwnerRoutes(app: FastifyInstance, { as, opts }: Ctx) {
   /**
    * "Company own accounts": ONE customer with ONE company, created in a single save with its people. Nothing here asks for
    * more companies: that belongs to accounting firms only. Everything happens in one database transaction, so either the
-   * customer, its company, its books and all its users exist, or nothing does. Each person gets one job title, which sets
-   * what they can open; at least one must be an Owner (the person who manages the company's users).
+   * customer, its company, its books and all its people exist, or nothing does. There are two kinds of person: the
+   * Administrator (at least one) manages the company's users, job titles and access, raises issues with Nusuh Books and
+   * never sees the books; the others use the books, and each has one job title that sets what they can open.
    */
   app.post<{ Body: { company?: Record<string, unknown>; users?: { name?: string; email?: string; jobTitle?: string }[] } }>('/api/owner/customers/company', async (req) => {
     const c = req.body?.company ?? {};
@@ -51,26 +54,29 @@ export function registerOwnerRoutes(app: FastifyInstance, { as, opts }: Ctx) {
     const name = v.name;
     if (!name) throw new HttpError(400, 'Enter the company name.', 'err.tenantName');
     const raw = Array.isArray(req.body?.users) ? req.body!.users! : [];
-    if (!raw.length) throw new HttpError(400, 'Add at least one person, and make one of them the Owner.', 'err.companyUsers');
+    if (!raw.length) throw new HttpError(400, 'Add the Administrator and at least one person who will use the books.', 'err.companyUsers');
     const people = raw.map((u) => {
       const p = person(u as Record<string, unknown>);
       const title = String(u?.jobTitle ?? '');
-      if (!(COMPANY_JOB_TITLES as readonly string[]).includes(title)) throw new HttpError(400, 'Choose a job title for each person.', 'err.roleChoose');
+      if (title !== ADMINISTRATOR && !(COMPANY_JOB_TITLES as readonly string[]).includes(title)) throw new HttpError(400, 'Choose a job title for each person.', 'err.roleChoose');
       return { ...p, title };
     });
     if (new Set(people.map((p) => p.email.toLowerCase())).size !== people.length) throw new HttpError(400, 'Each person needs a different email.', 'err.sameEmail');
-    if (!people.some((p) => p.title === 'Owner')) throw new HttpError(400, 'Make one person the Owner: they manage the company\'s users and see everything.', 'err.companyOwner');
+    if (!people.some((p) => p.title === ADMINISTRATOR)) throw new HttpError(400, 'Add an Administrator: the person who manages the company\'s users, roles and permissions.', 'err.companyAdmin');
+    if (!people.some((p) => p.title !== ADMINISTRATOR)) throw new HttpError(400, 'Add at least one person who will use the books (for example the Owner).', 'err.companyUsers');
     return owner(req, async (db) => {
       const customerId = (await db.query('SELECT owner_create_tenant($1, $2) AS id', [name, 'company'])).rows[0].id as string;
       await db.query("SELECT set_config('app.acting_firm', $1, true)", [customerId]);   // work inside the new customer for the rest
       const titles = new Map((await db.query(`SELECT name, id, default_for FROM client_roles WHERE firm_id = app_firm_id() AND status = 'active'`)).rows.map((r) => [r.name as string, r]));
       const companyId = await insertCompany(db, country, v);
       const invites = [];
-      for (const p of people) {
-        const t = titles.get(p.title);
-        if (!t) throw new HttpError(500, 'Something went wrong. Please try again.', 'err.server');
-        const u = (await db.query(`INSERT INTO users (firm_id, kind, full_name, email) VALUES (app_firm_id(), 'client', $1, $2) RETURNING id`, [p.name, p.email])).rows[0].id as string;
-        await db.query('INSERT INTO memberships (user_id, company_id, role, client_role_id) VALUES ($1, $2, $3, $4)', [u, companyId, t.default_for ?? 'client_accountant', t.id]);
+      // the company's first user of the books must exist in this same transaction (a deferred database rule), so books people go first
+      for (const p of [...people.filter((x) => x.title !== ADMINISTRATOR), ...people.filter((x) => x.title === ADMINISTRATOR)]) {
+        const isAdmin = p.title === ADMINISTRATOR;
+        const t = isAdmin ? undefined : titles.get(p.title);
+        if (!isAdmin && !t) throw new HttpError(500, 'Something went wrong. Please try again.', 'err.server');
+        const u = (await db.query(`INSERT INTO users (firm_id, kind, full_name, email) VALUES (app_firm_id(), $1, $2, $3) RETURNING id`, [isAdmin ? 'admin' : 'client', p.name, p.email])).rows[0].id as string;
+        if (t) await db.query('INSERT INTO memberships (user_id, company_id, role, client_role_id) VALUES ($1, $2, $3, $4)', [u, companyId, t.default_for ?? 'client_accountant', t.id]);
         invites.push({ userId: u, name: p.name, email: p.email, jobTitle: p.title, token: await newInvite(db, u, baseUrl(req, opts)) });
       }
       await setupCompanyBooks(db, companyId);

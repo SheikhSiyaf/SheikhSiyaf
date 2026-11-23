@@ -9,7 +9,8 @@ import { CompanyForm, toBody, useCompanyCheck, type Fields } from './AdminConsol
 import { holdInvites } from './pendingInvites.ts';
 
 const TITLES = ['Owner', 'Finance', 'Sales', 'Commercial', 'Client accountant', 'Client management'] as const;
-type Title = (typeof TITLES)[number];
+type Title = (typeof TITLES)[number] | 'Administrator';   // 'Administrator' is the company's separate admin login, not a job title
+const ALL_TITLES: Title[] = ['Administrator', ...TITLES];
 interface Person { name: string; email: string; jobTitle: Title }
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const CURRENCY = { SA: 'SAR', AE: 'AED', OM: 'OMR' } as const;
@@ -21,7 +22,7 @@ export function NewCompanyCustomer({ onCancel, onCreated }: { onCancel: () => vo
   const check = useCompanyCheck();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [f, setF] = useState<Fields>({ country: 'SA', legalForm: 'LLC', vatStatus: 'registered', fyEnd: '12-31', invoicePrefix: 'INV-', paymentTermsDays: '30' });
-  const [people, setPeople] = useState<Person[]>([{ name: '', email: '', jobTitle: 'Owner' }]);
+  const [people, setPeople] = useState<Person[]>([{ name: '', email: '', jobTitle: 'Administrator' }, { name: '', email: '', jobTitle: 'Owner' }]);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const set = (k: string, v: string) => setF((x) => ({ ...x, [k]: v }));
@@ -33,7 +34,8 @@ export function NewCompanyCustomer({ onCancel, onCreated }: { onCancel: () => vo
       if (!EMAIL.test(p.email.trim())) return t('v.email');
     }
     if (new Set(people.map((p) => p.email.trim().toLowerCase())).size !== people.length) return t('err.sameEmail');
-    if (!people.some((p) => p.jobTitle === 'Owner')) return t('err.companyOwner');
+    if (!people.some((p) => p.jobTitle === 'Administrator')) return t('err.companyAdmin');
+    if (!people.some((p) => p.jobTitle !== 'Administrator')) return t('err.companyUsers');
     return undefined;
   };
 
@@ -90,7 +92,7 @@ export function NewCompanyCustomer({ onCancel, onCreated }: { onCancel: () => vo
                 <label className="f">{t('own.w.email')}<input id={`own-w-email-${i}`} type="email" dir="ltr" value={p.email} onChange={(e) => setPerson(i, { email: e.target.value })} /></label>
                 <label className="f">{t('own.w.jobTitle')}
                   <select id={`own-w-title-${i}`} value={p.jobTitle} onChange={(e) => setPerson(i, { jobTitle: e.target.value as Title })}>
-                    {TITLES.map((x) => <option key={x} value={x}>{t(`own.w.title.${x}` as Key)}</option>)}
+                    {ALL_TITLES.map((x) => <option key={x} value={x}>{t(`own.w.title.${x}` as Key)}</option>)}
                   </select>
                 </label>
               </div>

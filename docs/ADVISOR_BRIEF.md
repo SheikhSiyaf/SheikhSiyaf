@@ -183,6 +183,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 
 ## 7. Where things stand and what is next
 
+**Deployed to the live site (2026-11-23).** The owner asked for the live Render site to be updated; migrations 0061 to 0064 run on its database at deploy. The separate demo site still needs the owner's hosting steps.
+
 **Demo mode built (2026-11-22).** Phase E is done and tested locally (see section 5); it needs the owner's hosting steps before the button works on the live site.
 
 **Single-company front door built (2026-11-22).** Phase B is done and tested (see section 5). Next candidates: moving a company under an accounting firm (owner console), then Google sign-in and the 15-day trial.

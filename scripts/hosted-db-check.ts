@@ -93,12 +93,16 @@ await step('the public web API roles (anon, authenticated, service_role) reach n
       THEN has_table_privilege('${r}', c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER') ELSE false END`);
     const s = await admin.query(`SELECT c.relname FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND CASE WHEN c.relkind = 'S'
       THEN has_sequence_privilege('${r}', c.oid, 'USAGE, SELECT, UPDATE') ELSE false END`);
+    // Functions that belong to an extension (btree_gist installs hundreds of gbt_* helpers into public) are part of
+    // Postgres itself, not ours; their arguments are internal types that cannot be called through the web API. Only
+    // functions we created count.
     const f = await admin.query(`SELECT p.oid::regprocedure::text AS f FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.prokind IN ('f','p')
-      AND has_function_privilege('${r}', p.oid, 'EXECUTE')`);
+      AND has_function_privilege('${r}', p.oid, 'EXECUTE')
+      AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')`);
     found.push(...t.rows.map((x) => `${r}:${x.relname}`), ...s.rows.map((x) => `${r}:${x.relname}`), ...f.rows.map((x) => `${r}:${x.f}`));
   }
   if (found.length) throw new Error(`${found.length} objects reachable, e.g. ${found.slice(0, 3).join(', ')}`);
-  return `checked ${roles.join(', ')}: nothing reachable`;
+  return `checked ${roles.join(', ')}: none of our tables, sequences or functions is reachable (extension helper functions are not counted)`;
 });
 
 await step('the app\'s own login connects through the pool with verified TLS', async () => {

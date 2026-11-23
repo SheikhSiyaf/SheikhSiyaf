@@ -14,10 +14,25 @@ export interface FeedContext {
   /** Open customer invoices (for the sandbox only, to make realistic transfers). */
   openInvoices?: { id: string; number: string; customer: string; issueDate: string; due: string }[];
 }
+/** A provider says the customer's consent has ended (withdrawn at the bank or the provider, or expired there). The feed stops until
+ *  the account is connected again. Adapters throw this instead of a plain error. */
+export class ConsentWithdrawnError extends Error {
+  constructor(message = 'The consent for this bank connection was withdrawn.') { super(message); this.name = 'ConsentWithdrawnError'; }
+}
+/**
+ * What an open-banking adapter must do. The rest of the program knows nothing about any one provider, so a provider can be
+ * replaced by writing a new adapter. Rules for every adapter:
+ *  - Return BOOKED transactions only, money in positive and money out negative, each with the provider's own stable id as
+ *    `externalId` when there is one (a line is then recognised however often it is fetched, and when it changes).
+ *  - Never keep or return a bank login: the customer signs in at the bank or the provider, which sends back a consent.
+ *  - Throw ConsentWithdrawnError when the provider says the consent has ended.
+ *  - `revoke` (optional) tells the provider to end the consent; called when the account is disconnected.
+ */
 export interface FeedProvider {
   ready: boolean;
   connect(accountRef: string): Promise<{ externalAccountId: string; consentDays: number }>;
   transactions(externalAccountId: string, from: string, to: string, ctx: FeedContext): Promise<StatementRow[]>;
+  revoke?(externalAccountId: string): Promise<void>;
 }
 
 const hash = (s: string) => createHash('sha256').update(s).digest();

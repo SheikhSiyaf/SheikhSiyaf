@@ -83,7 +83,7 @@ export async function importStatement(db: Db, bankAccountId: string, input: Impo
     if (!DATE.test(String(l.date))) bad(`Line ${i + 1}: the date is not right.`, 'err.date');
     const description = String(l.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 500);
     if (!description || amount === 0n) bad(`Line ${i + 1}: needs a description and an amount.`, 'err.statementLine');
-    return { date: String(l.date), description, reference: l.reference?.toString().trim() || null, amount: fromMinor(amount), balance: balance === null ? null : fromMinor(balance) };
+    return { date: String(l.date), description, reference: l.reference?.toString().trim() || null, amount: fromMinor(amount), balance: balance === null ? null : fromMinor(balance), externalId: l.externalId ? String(l.externalId) : null };
   });
   if (!lines.length) bad('The file has no statement lines.', 'err.noStatementLines');
   const prints = fingerprints(lines);
@@ -150,7 +150,7 @@ export async function statementLines(db: Db, bankAccountId: string, f: { status?
        AND ($3::date IS NULL OR s.txn_date >= $3) AND ($4::date IS NULL OR s.txn_date <= $4)
      ORDER BY s.txn_date DESC, s.created_at DESC`, [bankAccountId, f.status ?? null, f.from || null, f.to || null]);
   const open = rows.filter((r) => r.status === 'open');
-  if (!open.length) return rows.map((r) => ({ ...r, suggestion: null }));
+  if (!open.length) return rows.map((r) => ({ ...r, suggestion: null, exception: null }));
 
   const ledger = await unmatchedLedger(db, acct.accountId);
   const rules = (await db.query(
@@ -183,7 +183,31 @@ export async function statementLines(db: Db, bankAccountId: string, f: { status?
       accountCode: rule.accountCode, accountName: rule.accountName, accountNameAr: rule.accountNameAr, label: rule.label };
     return null;
   };
-  return rows.map((r) => ({ ...r, suggestion: r.status === 'open' ? suggest(r) : null }));
+  // An open line that nothing suggests is an EXCEPTION for a person to look at: "mismatch" when it clearly belongs to an open invoice or
+  // bill (the document number is in the text, or the name is) but the amount is different (short or too much paid), otherwise "unmatched".
+  const exceptionOf = (r: { description: string; reference: string | null; amount: string }) => {
+    const amt = toMinor(r.amount);
+    const want = amt > 0n ? ['invoice'] : ['bill', 'claim'];
+    const text = `${r.description} ${r.reference ?? ''}`.toLowerCase();
+    const byNumber = due.filter((d) => want.includes(d.type) && text.includes(String(d.number).toLowerCase()));
+    const byName = byNumber.length ? [] : due.filter((d) => want.includes(d.type) && similarity(d.contactName, r.description) >= 0.6)
+      .sort((a, b) => similarity(b.contactName, r.description) - similarity(a.contactName, r.description));
+    const doc = byNumber[0] ?? byName[0];
+    if (!doc) return { kind: 'unmatched' as const };
+    const paid = amt < 0n ? -amt : amt, owed = toMinor(doc.due);
+    return { kind: 'mismatch' as const, documentNumber: doc.number, contactName: doc.contactName, due: doc.due, difference: fromMinor(paid - owed), reason: paid < owed ? 'short' as const : 'over' as const };
+  };
+  return rows.map((r) => {
+    if (r.status !== 'open') return { ...r, suggestion: null, exception: null };
+    const suggestion = suggest(r);
+    return { ...r, suggestion, exception: suggestion ? null : exceptionOf(r) };
+  });
+}
+
+/** The lines a person has to look at: open lines with no suggested match (unmatched) or with the wrong amount for the document they belong to (mismatch). */
+export async function exceptions(db: Db, bankAccountId: string) {
+  const lines = (await statementLines(db, bankAccountId, { status: 'open' })).filter((l) => l.exception);
+  return { total: lines.length, unmatched: lines.filter((l) => l.exception!.kind === 'unmatched').length, mismatched: lines.filter((l) => l.exception!.kind === 'mismatch').length, lines };
 }
 
 /** Candidates in the books for one line: same amount and direction, any date. */

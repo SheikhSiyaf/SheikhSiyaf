@@ -35,7 +35,9 @@ export function registerBankRoutes(app: FastifyInstance, { as }: Ctx) {
     const f = (await BF.feedFor(db, uuidParam(req.params.id))).feed ?? (() => { throw new HttpError(400, 'This bank account is not connected.', 'err.feedNone'); })();
     return BF.sync(db, f.id);
   }));
-  app.post<{ Params: P }>('/api/bank-accounts/:id/feed/disconnect', async (req) => as(req, async (db) => { await BF.disconnect(db, uuidParam(req.params.id)); return { ok: true }; }));
+  app.post<{ Params: P }>('/api/bank-accounts/:id/feed/disconnect', async (req) => as(req, async (db) => ({ ok: true, ...(await BF.disconnect(db, uuidParam(req.params.id))) })));
+  app.post<{ Params: P }>('/api/bank-accounts/:id/feed/reconnect', async (req) => as(req, (db) => BF.reconnect(db, uuidParam(req.params.id))));
+  app.get<{ Params: P }>('/api/bank-accounts/:id/exceptions', async (req) => as(req, (db) => B.exceptions(db, uuidParam(req.params.id))));
   app.post<{ Params: P; Body: B.ImportInput }>('/api/bank-accounts/:id/import', async (req) => as(req, (db) => B.importStatement(db, uuidParam(req.params.id), req.body ?? {})));
   app.get<{ Params: P }>('/api/bank-accounts/:id/imports', async (req) => as(req, (db) => B.listImports(db, uuidParam(req.params.id))));
   app.post<{ Params: P }>('/api/bank-imports/:id/undo', async (req) => as(req, async (db) => ({ removed: await B.undoImport(db, uuidParam(req.params.id)) })));

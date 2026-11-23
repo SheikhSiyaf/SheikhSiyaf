@@ -531,3 +531,29 @@ describe('The new pricing in the owner console', () => {
     await screenshotTo(p, 'pricing-plans');
   });
 });
+
+describe('Bank feed: consent and exceptions', () => {
+  it('an ended consent shows a Reconnect prompt, Reconnect works in one press, and unexplained lines show under Exceptions', async () => {
+    // the demo company's own bank account; the feed row is put in place directly, as an ended consent
+    const id = (await db.query(`SELECT id FROM bank_accounts WHERE company_id = $1 AND kind = 'bank' ORDER BY created_at LIMIT 1`, [company])).rows[0].id as string;
+    const me = (await db.query(`SELECT id FROM users WHERE email = $1`, [accountant])).rows[0].id as string;
+    await db.query(`UPDATE bank_feeds SET status = 'disconnected' WHERE bank_account_id = $1 AND status <> 'disconnected'`, [id]);
+    await db.query(`INSERT INTO bank_feeds (company_id, bank_account_id, provider, status, external_account_id, consent_expires_on, synced_to, created_by)
+      VALUES ($1, $2, 'sandbox', 'expired', 'browser-check', current_date - 1, current_date - 3, $3)`, [company, id, me]);
+    // the demo accountant only views the bank: for this check (the last one, on the throwaway browser database) the job title may edit it
+    await db.query(`UPDATE client_roles SET permissions = permissions || '{"Bank":"edit"}'::jsonb WHERE id IN
+      (SELECT m.client_role_id FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.company_id = $1 AND u.email = $2)`, [company, accountant]);
+    const editor = accountant;
+    const { page: pg } = await newPage(1280);
+    await signIn(pg, editor!);
+    await pg.goto(`${BASE}/c/${company}/Bank/accounts/${id}`, { waitUntil: 'networkidle' });
+    await pg.locator('#feed-reconnect-prompt').waitFor({ timeout: 15000 });
+    await screenshotTo(pg, 'bank-feed-reconnect');
+    await pg.locator('#feed-reconnect').click();
+    await waitForText(pg, 'Reconnected');
+    expect(await pg.locator('#feed-reconnect').count()).toBe(0);
+    await pg.getByRole('tab', { name: /Exceptions/ }).click();
+    await waitForText(pg, 'Bank lines that nothing in your books explains');
+    await screenshotTo(pg, 'bank-exceptions');
+  });
+});

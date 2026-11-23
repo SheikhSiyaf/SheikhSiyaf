@@ -180,7 +180,9 @@ export function detectLayout(rows: string[][]): Layout | null {
   return null;
 }
 
-export interface StatementRow { date: string; description: string; reference: string | null; amount: string; balance: string | null }
+/** `externalId` is the bank's or provider's own id for the transaction when it gives one (bank feeds): it is the line's identity,
+ *  so a transaction that changes (pending to booked, a longer description) is still the same line. A statement file has none. */
+export interface StatementRow { date: string; description: string; reference: string | null; amount: string; balance: string | null; externalId?: string | null }
 
 /** Reads the lines below the header. Rows without a date or an amount (titles, opening balance, totals) are left out. */
 export function readStatement(rows: string[][], l: Layout): { lines: StatementRow[]; leftOut: number } {
@@ -216,6 +218,7 @@ export function findAccountInFile(rows: string[][], accounts: { id: string; iban
 export function fingerprints(lines: StatementRow[]): string[] {
   const seen = new Map<string, number>();
   return lines.map((l) => {
+    if (l.externalId) return `ext:${String(l.externalId).slice(0, 200)}`;   // the provider's own id: never counted twice
     const base = `${l.date}|${l.amount}|${l.description.toLowerCase().replace(/\s+/g, ' ')}|${l.balance ?? ''}`;
     const n = (seen.get(base) ?? 0) + 1;
     seen.set(base, n);

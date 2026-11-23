@@ -1949,6 +1949,7 @@ const routes: [string, RegExp, Handler][] = [
     const before = odb.lines.length; odb.lines = odb.lines.filter((l) => l.importId !== i.id || l.status === 'matched'); return { removed: before - odb.lines.length }; }],
   ['GET', /^\/api\/bank-accounts\/([\w-]+)\/lines$/, (m, _b, q) => linesM(m[1]!, q.get('status') ?? 'all')],
   ['GET', /^\/api\/bank-accounts\/([\w-]+)\/reconciliation$/, (m) => reconM(m[1]!)],
+  ['GET', /^\/api\/bank-accounts\/([\w-]+)\/exceptions$/, (m) => { const ls = linesM(m[1]!, 'open').filter((l) => !l.suggestion).map((l) => ({ ...l, exception: { kind: 'unmatched' as const } })); return { total: ls.length, unmatched: ls.length, mismatched: 0, lines: ls }; }],
   ['GET', /^\/api\/bank-accounts\/([\w-]+)\/feed$/, (m) => { bankOf(m[1]!);
     return { feed: feedRowM(feeds.find((f) => f.bankId === m[1] && f.status !== 'disconnected')), providers: [{ key: 'sandbox', ready: true }, { key: 'lean', ready: false }, { key: 'tarabut', ready: false }] }; }],
   ['POST', /^\/api\/bank-accounts\/([\w-]+)\/feed$/, (m, b) => { const bk = bankOf(m[1]!); canPostIn(bk.companyId);

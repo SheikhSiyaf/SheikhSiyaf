@@ -20,8 +20,10 @@ type Suggestion =
   | { kind: 'rule'; ruleId: string; accountId: string; costCentreId: string | null; vatCode: string; accountCode: string; accountName: string; accountNameAr: string | null; label: string | null };
 interface Line {
   id: string; date: string; description: string; reference: string | null; amount: string; balance: string | null; status: 'open' | 'matched' | 'ignored';
-  matchedMemo: string | null; suggestion: Suggestion | null;
+  matchedMemo: string | null; suggestion: Suggestion | null; exception?: LineException | null;
 }
+type LineException = { kind: 'unmatched' } | { kind: 'mismatch'; documentNumber: string; contactName: string; due: string; difference: string; reason: 'short' | 'over' };
+interface Exceptions { total: number; unmatched: number; mismatched: number; lines: Line[] }
 interface Recon {
   statementDate: string | null; statementBalance: string | null; booksBalance: string; adjustedBooks?: string; difference: string | null;
   inBooksOnly: { journalLineId: string; date: string; memo: string | null; amount: string }[]; onStatementOnly: { id: string; date: string; description: string; amount: string }[];
@@ -145,11 +147,12 @@ export function BankAccountPage({ books, id, filter }: { books: CompanyBooks; id
   const go = useGo(books.company.id);
   const acct = useApi<BankAccount>(`/api/bank-accounts/${id}`);
   const status = filter ?? 'open';
-  const lines = useApi<Line[]>(`/api/bank-accounts/${id}/lines?status=${status}`);
+  const exc = useApi<Exceptions>(`/api/bank-accounts/${id}/exceptions`);
+  const lines = useApi<Line[]>(`/api/bank-accounts/${id}/lines?status=${status === 'exceptions' ? 'open' : status}`);
   const recon = useApi<Recon>(`/api/bank-accounts/${id}/reconciliation`);
   const [editing, setEditing] = useState(false);
   const [msg, setMsg] = useState<string>();
-  const reload = () => { lines.reload(); recon.reload(); acct.reload(); };
+  const reload = () => { lines.reload(); recon.reload(); acct.reload(); exc.reload(); };
   if (acct.error) return <ErrorNote error={acct.error} onRetry={acct.reload} />;
   if (!acct.data) return <Loading />;
   const b = acct.data;
@@ -182,25 +185,26 @@ export function BankAccountPage({ books, id, filter }: { books: CompanyBooks; id
       {msg && <div className="notice">{msg}</div>}
       <div className="top" style={{ marginBottom: 10 }}>
         <div className="chips" role="tablist">
-          {(['open', 'matched', 'ignored', 'all'] as const).map((s) => (
-            <button key={s} role="tab" aria-selected={status === s} className={`b ${status === s ? 'p' : ''}`} onClick={() => go('Bank', 'accounts', id, s)}>{t(`bank.filter.${s}` as Key)}</button>
+          {(['open', 'exceptions', 'matched', 'ignored', 'all'] as const).map((s) => (
+            <button key={s} role="tab" aria-selected={status === s} className={`b ${status === s ? 'p' : ''}`} onClick={() => go('Bank', 'accounts', id, s)}>{t(`bank.filter.${s}` as Key)}{s === 'exceptions' && exc.data && exc.data.total > 0 ? ` (${exc.data.total})` : ''}</button>
           ))}
         </div>
         {books.canPost && status === 'open' && rules > 0 && <button className="b" onClick={applyRules}>{t('bank.applyRules', { n: rules })}</button>}
       </div>
       {lines.error && <ErrorNote error={lines.error} onRetry={lines.reload} />}
-      {!lines.data ? <Loading /> : lines.data.length === 0 ? (
-        <div className="card mut">{status === 'open' ? (b.lastStatementDate ? t('bank.nothingToReview') : t('bank.importFirst')) : t('none')}</div>
+      {status === 'exceptions' && <div className="small mut" style={{ marginBottom: 6 }}>{t('bank.exceptionsHint')}</div>}
+      {(() => { const shown = status === 'exceptions' ? exc.data?.lines : lines.data; return !shown ? <Loading /> : shown.length === 0 ? (
+        <div className="card mut">{status === 'exceptions' ? t('bank.noExceptions') : status === 'open' ? (b.lastStatementDate ? t('bank.nothingToReview') : t('bank.importFirst')) : t('none')}</div>
       ) : (
         <div className="card">
-          {lines.data.map((l) => <StatementLine key={l.id} books={books} line={l} onChange={reload} />)}
+          {shown.map((l) => <StatementLine key={l.id} books={books} line={l} onChange={reload} />)}
         </div>
-      )}
+      ); })()}
     </>
   );
 }
 
-interface Feed { id: string; provider: string; status: 'active' | 'expired' | 'error'; consentExpiresOn: string | null; lastSyncAt: string | null; syncedTo: string | null;
+interface Feed { id: string; provider: string; status: 'active' | 'expired' | 'error'; consentDaysLeft?: number | null; consentWarning?: boolean; consentExpiresOn: string | null; lastSyncAt: string | null; syncedTo: string | null;
   lastError: string | null; connectedBy: string | null }
 /** Direct bank feed (db/migrations/0038): connect the account through an open-banking provider; lines then come in by themselves. */
 function BankFeedCard({ books, id, onSynced }: { books: CompanyBooks; id: string; onSynced: () => void }) {
@@ -226,9 +230,11 @@ function BankFeedCard({ books, id, onSynced }: { books: CompanyBooks; id: string
       {f ? <>
         <div className="small mut">{t('feed.connected', { provider: t(`feed.provider.${f.provider}` as Key), name: f.connectedBy ?? '' })}
           {f.syncedTo && <> · {t('feed.syncedTo', { date: f.syncedTo })}</>}{f.consentExpiresOn && <> · {t('feed.consentTo', { date: f.consentExpiresOn })}</>}</div>
-        {f.status === 'expired' && <div className="small bad">{t('feed.expiredHint')}</div>}
+        {f.status === 'active' && f.consentWarning && <div className="notice" id="feed-consent-warning">{t('feed.consentSoon', { n: f.consentDaysLeft ?? 0 })}</div>}
+        {f.status === 'expired' && <div className="notice bad" id="feed-reconnect-prompt">{t('feed.expiredHint')}</div>}
         {f.lastError && <div className="small bad">{f.lastError}</div>}
         {books.canPost && <div className="actions" style={{ marginTop: 8 }}>
+          {f.status === 'expired' && <button className="b p" id="feed-reconnect" disabled={busy} onClick={() => void act('/reconnect', {}, () => t('feed.reconnected'))}>{t('feed.reconnect')}</button>}
           {f.status !== 'expired' && <button className="b p" id="feed-sync" disabled={busy} onClick={() => void act('/sync', {}, synced)}>{t('feed.syncNow')}</button>}
           <button className="b" id="feed-disconnect" disabled={busy} onClick={() => void act('/disconnect', {}, () => t('feed.disconnected'))}>{t('feed.disconnect')}</button>
         </div>}
@@ -285,7 +291,9 @@ function StatementLine({ books, line, onChange }: { books: CompanyBooks; line: L
             <button className="b small p" disabled={busy} onClick={() => act(`/api/bank-lines/${line.id}/pay`, { contactId: s.contactId })}>{t('bank.recordPayment')}</button></>}
           {s?.kind === 'rule' && <><span className="small">{t('bank.sugRule', { account: `${s.accountCode} ${local(s.accountName, s.accountNameAr)}` })}</span>
             <button className="b small p" disabled={busy} onClick={() => act(`/api/bank-lines/${line.id}/book`, { accountId: s.accountId, costCentreId: s.costCentreId, vatCode: s.vatCode, description: s.label })}>{t('bank.book')}</button></>}
-          {!s && <span className="small mut">{t('bank.noSuggestion')}</span>}
+          {!s && line.exception?.kind === 'mismatch' && <span className="small bad">{t(line.exception.reason === 'short' ? 'bank.excShort' : 'bank.excOver', { doc: line.exception.documentNumber, name: line.exception.contactName, due: line.exception.due, diff: line.exception.difference.replace('-', '') })}</span>}
+          {!s && line.exception?.kind === 'unmatched' && <span className="small bad">{t('bank.excUnmatched')}</span>}
+          {!s && !line.exception && <span className="small mut">{t('bank.noSuggestion')}</span>}
           <button className="b small" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? t('cancel') : t('bank.choose')}</button>
         </div>
       )}

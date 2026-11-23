@@ -5,7 +5,7 @@ import { runExclusive } from '../jobs/runJob.js';
 import type pg from 'pg';
 import { withSystem, type Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
-import { FEED_PROVIDERS } from '../bankfeeds/providers.js';
+import { ConsentWithdrawnError, FEED_PROVIDERS } from '../bankfeeds/providers.js';
 import { applyRules, getBankAccount, importStatement } from './bankService.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
@@ -13,13 +13,20 @@ const today = () => new Date().toISOString().slice(0, 10);
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 /** How far back the first sync reaches. */
 export const FIRST_SYNC_DAYS = 30;
+/** Every sync fetches this many days it already has, so a transaction that the bank books late is still caught. They are recognised, not doubled. */
+export const OVERLAP_DAYS = 3;
+/** From this many days before consent ends, the screen asks the person to renew it. */
+export const CONSENT_WARN_DAYS = 7;
 
 const FEED_COLS = `f.id, f.bank_account_id AS "bankAccountId", f.provider, f.status, f.external_account_id AS "externalAccountId",
   to_char(f.consent_expires_on, 'YYYY-MM-DD') AS "consentExpiresOn", f.last_sync_at AS "lastSyncAt", to_char(f.synced_to, 'YYYY-MM-DD') AS "syncedTo",
   f.last_error AS "lastError", (SELECT full_name FROM users WHERE id = f.created_by) AS "connectedBy"`;
 
 export async function feedFor(db: Db, bankAccountId: string) {
-  const feed = (await db.query(`SELECT ${FEED_COLS} FROM bank_feeds f WHERE f.bank_account_id = $1 AND f.status <> 'disconnected'`, [bankAccountId])).rows[0] ?? null;
+  const row = (await db.query(`SELECT ${FEED_COLS} FROM bank_feeds f WHERE f.bank_account_id = $1 AND f.status <> 'disconnected'`, [bankAccountId])).rows[0] ?? null;
+  // Days of consent left (negative once it has ended) and whether the screen should already ask for a renewal.
+  const left = row?.consentExpiresOn ? Math.round((Date.parse(`${row.consentExpiresOn}T00:00:00Z`) - Date.parse(`${today()}T00:00:00Z`)) / 86_400_000) : null;
+  const feed = row && { ...row, consentDaysLeft: left, consentWarning: row.status === 'active' && left !== null && left <= CONSENT_WARN_DAYS };
   return { feed, providers: Object.entries(FEED_PROVIDERS).map(([key, p]) => ({ key, ready: p.ready })) };
 }
 
@@ -41,16 +48,24 @@ export async function sync(db: Db, feedId: string, day = today()) {
     to_char(synced_to, 'YYYY-MM-DD') AS synced_to FROM bank_feeds WHERE id = $1 FOR UPDATE`, [feedId])).rows[0] ?? bad('Not found.', 'err.notFound');
   if (f.status === 'disconnected') bad('This bank feed is disconnected. Connect the bank again.', 'err.feedDisconnected');
   if (f.consent && f.consent < day) {
-    await db.query(`UPDATE bank_feeds SET status = 'expired' WHERE id = $1`, [feedId]);
-    return { imported: 0, skipped: 0, booked: 0, expired: true };
+    await db.query(`UPDATE bank_feeds SET status = 'expired', last_error = NULL WHERE id = $1`, [feedId]);
+    return { imported: 0, skipped: 0, booked: 0, expired: true, withdrawn: false };
   }
-  const from = f.synced_to ? addDays(f.synced_to, 1) : addDays(day, -FIRST_SYNC_DAYS);
+  // The next sync starts a few days back (OVERLAP_DAYS): lines already imported are recognised and skipped.
+  const from = f.synced_to ? addDays(f.synced_to, 1 - OVERLAP_DAYS) : addDays(day, -FIRST_SYNC_DAYS);
   let imported = 0, skipped = 0, booked = 0;
   if (from <= day) {
     const openInvoices = f.provider === 'sandbox' ? (await db.query(`SELECT d.id, d.number, c.name AS customer, to_char(d.issue_date, 'YYYY-MM-DD') AS "issueDate",
         document_amount_due(d.id)::numeric(18,2)::text AS due FROM documents d JOIN contacts c ON c.id = d.contact_id
       WHERE d.company_id = $1 AND d.type = 'invoice' AND d.status = 'issued' AND document_amount_due(d.id) > 0`, [f.company_id])).rows : [];
-    const lines = await FEED_PROVIDERS[f.provider]!.transactions(f.external_account_id, from, day, { feedId, openInvoices });
+    let lines;
+    try { lines = await FEED_PROVIDERS[f.provider]!.transactions(f.external_account_id, from, day, { feedId, openInvoices }); }
+    catch (e) {
+      if (!(e instanceof ConsentWithdrawnError)) throw e;
+      // The consent ended at the bank or the provider: nothing more is fetched until the account is connected again.
+      await db.query(`UPDATE bank_feeds SET status = 'expired', last_error = $2 WHERE id = $1`, [feedId, e.message.slice(0, 300)]);
+      return { imported: 0, skipped: 0, booked: 0, expired: true, withdrawn: true };
+    }
     if (lines.length) {
       const r = await importStatement(db, f.bank_account_id, { fileName: `Bank feed ${from} to ${day}`, lines, feedId });
       imported = r.imported; skipped = r.skipped;
@@ -58,12 +73,33 @@ export async function sync(db: Db, feedId: string, day = today()) {
     }
   }
   await db.query(`UPDATE bank_feeds SET status = 'active', last_error = NULL, last_sync_at = now(), synced_to = GREATEST(coalesce(synced_to, $2::date), $2::date) WHERE id = $1`, [feedId, day]);
-  return { imported, skipped, booked, expired: false };
+  return { imported, skipped, booked, expired: false, withdrawn: false };
 }
 
-export async function disconnect(db: Db, bankAccountId: string) {
-  const r = await db.query(`UPDATE bank_feeds SET status = 'disconnected' WHERE bank_account_id = $1 AND status <> 'disconnected' RETURNING id`, [bankAccountId]);
+/** Disconnects the account and asks the provider to end the consent (best effort: if the provider cannot be reached the account
+ *  is still disconnected here, and the person is told to end the consent in the bank's app). Imported lines stay. */
+export async function disconnect(db: Db, bankAccountId: string): Promise<{ providerNotified: boolean }> {
+  const r = await db.query(`UPDATE bank_feeds SET status = 'disconnected' WHERE bank_account_id = $1 AND status <> 'disconnected' RETURNING id, provider, external_account_id`, [bankAccountId]);
   if (!r.rowCount) bad('This bank account is not connected.', 'err.feedNone');
+  const { provider, external_account_id: ext } = r.rows[0] as { provider: string; external_account_id: string | null };
+  const revoke = FEED_PROVIDERS[provider]?.revoke;
+  if (!revoke || !ext) return { providerNotified: true };   // nothing to tell (the built-in sandbox bank)
+  try { await revoke(ext); return { providerNotified: true }; } catch { return { providerNotified: false }; }
+}
+
+/** One step to renew an expired or withdrawn connection: the same provider is connected again with a new consent, and the
+ *  sync carries on from where the old feed stopped (a few days back), so nothing is missed and nothing is doubled. */
+export async function reconnect(db: Db, bankAccountId: string, day = today()) {
+  const old = (await db.query(`SELECT provider, to_char(synced_to, 'YYYY-MM-DD') AS synced_to, status FROM bank_feeds WHERE bank_account_id = $1 AND status <> 'disconnected'`, [bankAccountId])).rows[0]
+    ?? bad('This bank account is not connected.', 'err.feedNone');
+  if (old.status === 'active') bad('This bank feed is still connected.', 'err.feedStillActive');
+  await db.query(`UPDATE bank_feeds SET status = 'disconnected' WHERE bank_account_id = $1 AND status <> 'disconnected'`, [bankAccountId]);
+  const p = FEED_PROVIDERS[old.provider] ?? bad('Choose the bank feed provider.', 'err.feedProvider');
+  const acct = await getBankAccount(db, bankAccountId);
+  const c = await p.connect(acct.iban ?? acct.accountNumber ?? acct.id);
+  const id = (await db.query(`INSERT INTO bank_feeds (company_id, bank_account_id, provider, external_account_id, consent_expires_on, synced_to, created_by)
+    VALUES ($1, $2, $3, $4, $5, $6, app_user_id()) RETURNING id`, [acct.companyId, bankAccountId, old.provider, c.externalAccountId, addDays(day, c.consentDays), old.synced_to])).rows[0].id as string;
+  return { id, ...(await sync(db, id, day)) };
 }
 
 /** The server's job: syncs each live feed not synced in the last six hours, as the person who connected it. */

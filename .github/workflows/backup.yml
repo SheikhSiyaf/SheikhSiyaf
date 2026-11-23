@@ -26,13 +26,15 @@ concurrency:
 jobs:
   backup:
     if: vars.BACKUP_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    # Pinned: the PostgreSQL project's package repository has no client for the newest runner image, and the dump tool
+    # must match the server (Supabase runs PostgreSQL 17).
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     services:
       # Where the rehearsal restore goes: an empty server of the version the application runs on.
       rehearsal:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_PASSWORD: postgres
         ports: ['5432:5432']
@@ -46,12 +48,12 @@ jobs:
       - uses: actions/checkout@v4
 
       # pg_dump must be the same major version as the server or newer; the runner's own copy may be older.
-      - name: Install the PostgreSQL 16 client
+      - name: Install the PostgreSQL 17 client
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client-16
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client-17
 
       - name: Back up and upload
         env:

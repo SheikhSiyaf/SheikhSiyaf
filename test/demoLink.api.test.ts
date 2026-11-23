@@ -5,6 +5,9 @@ import { app as appPool, owner, seed, type Fixture } from './helpers.js';
 import { buildServer } from '../src/api/server.js';
 import { hashPassword } from '../src/auth/password.js';
 import { verifyDemoToken } from '../src/demo/demoLink.js';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const SECRET = 'q'.repeat(20) + 'r'.repeat(20);
 let f: Fixture;
@@ -52,5 +55,20 @@ describe('Demo mode in the owner console', () => {
     const r = await without.inject({ method: 'GET', url: '/api/owner/demo-link', headers: { cookie: await login(without, 'platform') } });
     expect(r.statusCode).toBe(400);
     expect(r.json()).toMatchObject({ key: 'err.demoNotSet' });
+  });
+
+  it('opens the built-in preview (sample data in the browser, no database) when there is no demo site but the build has it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nb-web-'));
+    mkdirSync(join(dir, 'preview'));
+    writeFileSync(join(dir, 'preview', 'index.html'), '<p>preview</p>');
+    writeFileSync(join(dir, 'index.html'), '<p>app</p>');
+    const withPreview = buildServer({ pool: appPool, sessionSecret: 'test-secret', staticDir: dir });
+    try {
+      const r = await withPreview.inject({ method: 'GET', url: '/api/owner/demo-link', headers: { cookie: await login(withPreview, 'platform') } });
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toMatchObject({ url: '/preview/index.html' });
+      expect((await withPreview.inject({ method: 'GET', url: '/preview/index.html' })).body).toContain('preview');
+      expect((await withPreview.inject({ method: 'GET', url: '/api/owner/demo-link', headers: { cookie: await login(withPreview, 'partner') } })).statusCode).toBe(403);   // only the platform owner
+    } finally { await withPreview.close(); rmSync(dir, { recursive: true, force: true }); }
   });
 });

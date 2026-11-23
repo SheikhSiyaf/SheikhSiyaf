@@ -183,6 +183,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 
 ## 7. Where things stand and what is next
 
+**Demo preview inside the live site (2026-11-23).** The platform owner's Demo mode button now opens /preview/index.html when no separate demo site is set up: the in-browser demo (sample companies held in the page, nothing saved, no database, a banner on every screen). Ownership sample data was added to it; the hotel sample has no Rooms yet (the in-browser demo has none). Remove the `build:preview` step from `build:prod` to take it off the site. The seven brochure companies stay in a scratch database only: loading them into the live database would be permanent (posted entries and the audit log cannot be deleted).
+
 **Deployed to the live site (2026-11-23).** The owner asked for the live Render site to be updated; migrations 0061 to 0064 run on its database at deploy. The separate demo site still needs the owner's hosting steps.
 
 **Demo mode built (2026-11-22).** Phase E is done and tested locally (see section 5); it needs the owner's hosting steps before the button works on the live site.

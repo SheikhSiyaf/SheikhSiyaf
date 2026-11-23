@@ -23,6 +23,7 @@ import { FIRST_PIH, invoiceXml, kindFor } from '../../../src/einvoice/zatca/ubl.
 import { pintAeInScope, pintAeXml } from '../../../src/einvoice/pintAe.ts';
 import * as Fc from '../../../src/books/forecast.ts';
 import * as Im from '../../../src/books/importRules.ts';
+import { fmtPercent, fmtUnits, ownershipKind, parsePercent, parseUnits, percentsFromShares, PERCENT_TOTAL, splitByPercent } from '../../../src/books/ownershipRules.ts';
 import { cleanBarcode, internalEan, validBarcode } from '../../../src/books/barcode.ts';
 import * as AtR from '../../../src/books/attendanceRules.ts';
 import * as Fx from '../../../src/books/fx.ts';
@@ -200,7 +201,7 @@ function seed() {
     const id = uid();
     db.companies.push({ id, firmId: tenantOf(c.tenant), name: c.name, nameAr: c.nameAr, country: c.country, currency: c.currency, vatRate: c.vatRate, vatStatus: 'registered',
       vatNumber: c.vatNumber, crNumber: c.crNumber, city: c.city, invoicePrefix: c.invoicePrefix, paymentTermsDays: 30, status: 'active',
-      industry: c.industry, modules: [...DEFAULT_MODULES[c.industry]], fields: { legalForm: c.legalForm, address: c.address, fyEnd: '12-31' } });
+      industry: c.industry, modules: DEFAULT_MODULES[c.industry].filter((m) => m !== 'Rooms'), fields: { legalForm: c.legalForm, address: c.address, fyEnd: '12-31' } });
     for (const u of DEMO_USERS.filter((x) => x.companies.includes(c.key))) {
       const firm = tenantOf(c.tenant);
       const cr = u.kind !== 'client' ? null : u.clientRole ? rolesDb.find((r) => r.firmId === firm && r.name === u.clientRole)! : defaultRole(u.role as Role, firm);
@@ -4950,6 +4951,115 @@ seedSupport();
 seedEinvoicing();
 seedApprovals();
 db.activity.push({ id: uid(), firmId: firms.find((f) => f.name === DEMO_FIRM)!.id, at: new Date().toISOString(), actor: null, key: 'act.firmCreated', params: { name: DEMO_FIRM } });
+
+// Ownership (sample data held in the page, per company). Mirrors src/books/ownershipService.ts without the ledger:
+// owners, their holdings, and the movements between them and the company. Resets when the page reloads.
+interface MOwner { id: string; name: string; nameAr: string | null; idNumber: string | null; isActive: boolean; shares: string | null; percent: string; since: string }
+interface MMove { id: string; ownerId: string; kind: string; date: string; amount: string; memo: string | null; reversesId: string | null }
+const ownDb = new Map<string, { owners: MOwner[]; moves: MMove[] }>();
+function ownOf(companyId: string) {
+  let st = ownDb.get(companyId);
+  if (st) return st;
+  const co = db.companies.find((c) => c.id === companyId)!;
+  const kind = ownershipKind(String((co.fields as Record<string, unknown>).legalForm ?? ''));
+  const since = `${today().slice(0, 4)}-01-01`;
+  const mk = (name: string, nameAr: string, pct: string, shares: string | null): MOwner => ({ id: uid(), name, nameAr, idNumber: null, isActive: true, shares, percent: pct, since });
+  const owners = kind === 'sole' ? [mk('Khalid Al Rashid', 'خالد الراشد', '100.0000', null)]
+    : kind === 'partnership' ? [mk('Khalid Al Rashid', 'خالد الراشد', '60.0000', null), mk('Salman Al Dosari', 'سلمان الدوسري', '40.0000', null)]
+    : [mk('Khalid Al Rashid', 'خالد الراشد', '60.0000', '600.0000'), mk('Noura Al Fahad', 'نورة الفهد', '30.0000', '300.0000'), mk('Faisal Al Harbi', 'فيصل الحربي', '10.0000', '100.0000')];
+  const moves: MMove[] = owners.map((o) => ({ id: uid(), ownerId: o.id, kind: 'contribution', date: since, amount: fromMinor(toMinor('500000.00') * parsePercent(o.percent) / PERCENT_TOTAL), memo: 'Opening capital', reversesId: null }));
+  st = { owners, moves }; ownDb.set(companyId, st); return st;
+}
+const ownSigned = (m: MMove) => (m.reversesId ? -1n : 1n) * toMinor(m.amount);
+function ownOverview(companyId: string) {
+  const st = ownOf(companyId);
+  const co = db.companies.find((c) => c.id === companyId)!;
+  const legalForm = String((co.fields as Record<string, unknown>).legalForm ?? '');
+  let pct = 0n, shares = 0n;
+  const owners = st.owners.map((o) => {
+    const sum = (k: string) => st.moves.filter((m) => m.ownerId === o.id && m.kind === k).reduce((a, m) => a + ownSigned(m), 0n);
+    pct += parsePercent(o.percent); shares += o.shares ? parseUnits(o.shares) : 0n;
+    return { ...o, capital: fromMinor(sum('contribution')), current: fromMinor(sum('profit_allocation') - sum('drawing')), dividendsPayable: fromMinor(sum('dividend_declared') - sum('dividend_paid')) };
+  });
+  return { kind: ownershipKind(legalForm), legalForm, asOf: today(), owners, totalPercent: fmtPercent(pct), totalShares: fmtUnits(shares) };
+}
+const ownerName = (st: { owners: MOwner[] }, id: string) => st.owners.find((o) => o.id === id)!;
+function ownMoveRows(companyId: string) {
+  const st = ownOf(companyId);
+  const reversed = new Set(st.moves.filter((m) => m.reversesId).map((m) => m.reversesId));
+  return st.moves.map((m) => { const o = ownerName(st, m.ownerId); return { id: m.id, ownerId: m.ownerId, ownerName: o.name, ownerNameAr: o.nameAr, kind: m.kind, date: m.date, amount: m.amount, memo: m.memo, reversesId: m.reversesId, reversed: reversed.has(m.id) }; })
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+function ownAdd(companyId: string, ownerId: string, kind: string, date: string, amount: string, memo: string | null, reversesId: string | null = null) {
+  const st = ownOf(companyId); st.moves.push({ id: uid(), ownerId, kind, date, amount, memo, reversesId });
+}
+const ownAmount = (v: unknown) => { const a = String(v ?? '').trim(); if (!/^\d+(\.\d{1,2})?$/.test(a) || toMinor(a) <= 0n) fail(400, 'Enter an amount greater than zero.', 'err.amount'); return a; };
+const ownEq = (k: string) => (k === 'contribution' || k === 'profit_allocation' ? 1n : k === 'drawing' || k === 'dividend_declared' ? -1n : 0n);
+const ownRoutes: [string, RegExp, Handler][] = [
+  ['GET', /^\/api\/companies\/([\w-]+)\/ownership$/, (m) => ownOverview(inCo(m[1]!))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/owners$/, (m, b) => {
+    const id = inCo(m[1]!); canPostIn(id); const st = ownOf(id);
+    const name = String(b?.name ?? '').trim(); if (!name) fail(400, 'Enter the owner\'s name.', 'err.required');
+    const o: MOwner = { id: uid(), name, nameAr: b?.nameAr ? String(b.nameAr) : null, idNumber: b?.idNumber ? String(b.idNumber) : null, isActive: true, shares: null, percent: '0.0000', since: today() };
+    st.owners.push(o); return { id: o.id };
+  }],
+  ['POST', /^\/api\/owners\/([\w-]+)$/, (m, b) => {
+    for (const [cid, st] of ownDb) { const o = st.owners.find((x) => x.id === m[1]); if (o) { canPostIn(cid); if (b?.name) o.name = String(b.name); if (b?.nameAr !== undefined) o.nameAr = b.nameAr ? String(b.nameAr) : null; if (typeof b?.isActive === 'boolean') o.isActive = b.isActive; return { id: o.id }; } }
+    return fail(404, 'Not found.', 'err.notFound');
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/ownership\/holdings$/, (m, b) => {
+    const id = inCo(m[1]!); canPostIn(id); const st = ownOf(id);
+    const rows = (b?.holdings as { ownerId: string; shares?: string | null; percent?: string | null }[] | undefined) ?? [];
+    const kind = ownOverview(id).kind;
+    const pcts = kind === 'shares' ? (() => { try { return percentsFromShares(rows.map((r) => parseUnits(r.shares ?? '0'))); } catch (e) { return fail(400, (e as Error).message, 'err.ownerPercent'); } })() : rows.map((r) => { try { return parsePercent(r.percent ?? '0'); } catch (e) { return fail(400, (e as Error).message, 'err.ownerPercent'); } });
+    if (pcts.reduce((a, x) => a + x, 0n) !== PERCENT_TOTAL) fail(400, 'The percentages must total exactly 100.', 'err.ownerPercent');
+    const from = String(b?.effectiveFrom ?? today());
+    rows.forEach((r, i) => { const o = st.owners.find((x) => x.id === r.ownerId); if (o) { o.percent = fmtPercent(pcts[i]!); o.shares = kind === 'shares' ? fmtUnits(parseUnits(r.shares ?? '0')) : null; o.since = from; } });
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/ownership\/movements$/, (m) => ownMoveRows(inCo(m[1]!))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/ownership\/movements$/, (m, b) => {
+    const id = inCo(m[1]!); canPostIn(id);
+    const kind = String(b?.kind ?? ''); if (!['contribution', 'drawing', 'dividend_paid'].includes(kind)) fail(400, 'Choose what kind of movement this is.', 'err.required');
+    if (!ownOf(id).owners.some((o) => o.id === b?.ownerId)) fail(400, 'Choose the owner.', 'err.required');
+    ownAdd(id, String(b?.ownerId), kind, String(b?.date ?? today()), ownAmount(b?.amount), b?.memo ? String(b.memo) : null); return { id: uid() };
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/ownership\/profit-split$/, (m, b) => {
+    const id = inCo(m[1]!); canPostIn(id); const st = ownOf(id); const ov = st.owners.filter((o) => o.isActive);
+    const parts = splitByPercent(toMinor(ownAmount(b?.amount)), ov.map((o) => parsePercent(o.percent)));
+    ov.forEach((o, i) => ownAdd(id, o.id, 'profit_allocation', String(b?.date ?? today()), fromMinor(parts[i]!), b?.memo ? String(b.memo) : null));
+    return { entryId: uid(), parts: ov.map((o, i) => ({ id: uid(), ownerId: o.id, amount: fromMinor(parts[i]!) })) };
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/ownership\/dividends$/, (m, b) => {
+    const id = inCo(m[1]!); canPostIn(id); const st = ownOf(id); const ov = st.owners.filter((o) => o.isActive);
+    const parts = splitByPercent(toMinor(ownAmount(b?.amount)), ov.map((o) => parsePercent(o.percent)));
+    ov.forEach((o, i) => ownAdd(id, o.id, 'dividend_declared', String(b?.date ?? today()), fromMinor(parts[i]!), b?.memo ? String(b.memo) : null));
+    return { entryId: uid(), parts: ov.map((o, i) => ({ id: uid(), ownerId: o.id, amount: fromMinor(parts[i]!) })) };
+  }],
+  ['POST', /^\/api\/ownership-movements\/([\w-]+)\/reverse$/, (m, b) => {
+    for (const [cid, st] of ownDb) { const t = st.moves.find((x) => x.id === m[1]); if (t) {
+      canPostIn(cid);
+      if (t.reversesId || st.moves.some((x) => x.reversesId === t.id)) fail(400, 'That movement is already reversed.', 'err.reversed');
+      ownAdd(cid, t.ownerId, t.kind, today(), t.amount, b?.memo ? String(b.memo) : 'Reversal', t.id); return { entryId: uid() };
+    } }
+    return fail(404, 'Not found.', 'err.notFound');
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/ownership\/profit-suggestion$/, (m) => { inCo(m[1]!); return { netProfit: '412500.00' }; }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/ownership\/equity-statement$/, (m, _b, q) => {
+    const id = inCo(m[1]!); const st = ownOf(id);
+    const f = q.get('from') ?? `${today().slice(0, 4)}-01-01`, t = q.get('to') ?? today();
+    const owners = st.owners.map((o) => {
+      const mv = st.moves.filter((x) => x.ownerId === o.id);
+      const sum = (k: string) => mv.filter((x) => x.kind === k && x.date >= f && x.date <= t).reduce((a, x) => a + ownSigned(x), 0n);
+      const eq = (pred: (x: MMove) => boolean) => mv.filter(pred).reduce((a, x) => a + ownEq(x.kind) * ownSigned(x), 0n);
+      return { ownerId: o.id, name: o.name, nameAr: o.nameAr, opening: fromMinor(eq((x) => x.date < f)), contributions: fromMinor(sum('contribution')), profit: fromMinor(sum('profit_allocation')),
+        drawings: fromMinor(sum('drawing')), dividends: fromMinor(sum('dividend_declared')), closing: fromMinor(eq((x) => x.date <= t)) };
+    });
+    const tot = (k: 'opening' | 'contributions' | 'profit' | 'drawings' | 'dividends' | 'closing') => fromMinor(owners.reduce((a, o) => a + toMinor(o[k]), 0n));
+    return { from: f, to: t, owners, totals: { opening: tot('opening'), contributions: tot('contributions'), profit: tot('profit'), drawings: tot('drawings'), dividends: tot('dividends'), closing: tot('closing') } };
+  }],
+];
+routes.push(...ownRoutes);
 
 export function handle(method: string, url: string, body: unknown, actingTenant?: string | null): { status: number; data: unknown } {
   const [path, qs] = url.split('?') as [string, string | undefined];

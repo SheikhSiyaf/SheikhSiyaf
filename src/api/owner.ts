@@ -1,6 +1,8 @@
 // Platform owner (the seller of Nusuh Books): customer accounts (accounting firms and companies that run their own
 // books) and their first Administrator. The owner adds companies by working inside a customer's Administrator console
 // (header x-acting-tenant); like an Administrator, the owner never sees books.
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { signDemoToken } from '../demo/demoLink.js';
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
@@ -36,6 +38,8 @@ export function registerOwnerRoutes(app: FastifyInstance, { as, opts }: Ctx) {
   /** The platform owner's Demo mode button: a short-lived signed link to the demo site (src/demo/demoLink.ts). */
   app.get('/api/owner/demo-link', async (req) => owner(req, async () => {
     const d = opts.demoLink;
+    // No separate demo site: open the built-in preview (sample data held in the browser page, no database) when this build has it.
+    if (!d && opts.staticDir && existsSync(path.join(opts.staticDir, 'preview', 'index.html'))) return { url: '/preview/index.html', minutes: 0 };
     if (!d) throw new HttpError(400, 'The demo site is not set up yet. Ask your developer to finish the demo site settings.', 'err.demoNotSet');
     return { url: `${d.url.replace(/\/+$/, '')}/demo?t=${signDemoToken(d.secret, 'link', 900)}`, minutes: 15 };
   }));

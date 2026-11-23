@@ -11,7 +11,7 @@
     "dev": "concurrently -k -n api,web -c cyan,magenta \"tsx watch src/api/main.ts --api-only\" \"vite --config web/vite.config.ts\"",
     "build": "vite build --config web/vite.config.ts",
     "build:server": "tsc -p tsconfig.build.json",
-    "build:prod": "npm run build:server && npm run build",
+    "build:prod": "npm run build:server && npm run build && npm run build:preview",
     "start": "tsx src/api/main.ts",
     "start:prod": "node dist/api/main.js",
     "setup": "npm run db:migrate && npm run db:seed && npm run build",
@@ -29,6 +29,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p web",
     "test": "vitest run",
     "test:watch": "vitest",
+    "build:preview": "vite build --config web/vite.config.ts --mode demo && node scripts/place-preview.mjs",
     "build:demo": "vite build --config web/vite.config.ts --mode demo && node scripts/demo-page.mjs",
     "test:browser": "npm run build && vitest run --config vitest.browser.config.ts",
     "test:all": "npm run typecheck && npm test && npm run test:browser"

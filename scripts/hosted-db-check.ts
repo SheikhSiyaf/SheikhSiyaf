@@ -39,12 +39,17 @@ const admin = new pg.Client(clientConfig(adminUrl, config.databaseCa));
 // A local database (a dry run of this script) has no TLS to check; a hosted one must have it.
 const wantTls = clientConfig(adminUrl, config.databaseCa).ssl !== undefined;
 let pool: pg.Pool | undefined;
+/** Is THIS client's own connection encrypted? Asked of the client's socket, not of the database: behind a pooler (Supabase)
+ *  the database only sees the pooler's inner connection, so pg_stat_ssl would say "not encrypted" for a connection that
+ *  is encrypted all the way to the pooler. pg verifies the certificate itself (rejectUnauthorized) and refuses to connect
+ *  if it does not match, so "connected and encrypted" means verified TLS. */
+const clientTls = (c: pg.ClientBase): boolean => (c as unknown as { connection?: { stream?: { encrypted?: boolean } } }).connection?.stream?.encrypted === true;
 
 await step('connect as the project owner over verified TLS', async () => {
   await admin.connect();
   const r = (await admin.query(`SELECT current_user AS u, version() AS v, (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS su,
-    (SELECT rolcreaterole FROM pg_roles WHERE rolname = current_user) AS cr,
-    (SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()) AS ssl`)).rows[0];
+    (SELECT rolcreaterole FROM pg_roles WHERE rolname = current_user) AS cr`)).rows[0];
+  r.ssl = clientTls(admin);
   if (wantTls && !r.ssl) throw new Error('the connection is not encrypted');
   return `${String(r.v).split(' ').slice(0, 2).join(' ')}, owner is ${r.su ? 'a superuser' : 'NOT a superuser'}${r.cr ? ', may create roles' : ', may NOT create roles'}, ${r.ssl ? 'TLS on' : 'local, no TLS'}`;
 });
@@ -98,7 +103,9 @@ await step('the public web API roles (anon, authenticated, service_role) reach n
 
 await step('the app\'s own login connects through the pool with verified TLS', async () => {
   pool = createPool(appUrl, { ca: config.databaseCa, max: 10 });
-  const r = (await pool.query(`SELECT current_user AS u, (SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()) AS ssl`)).rows[0];
+  const c = await pool.connect();
+  let r: { u: string; ssl: boolean };
+  try { r = { u: (await c.query('SELECT current_user AS u')).rows[0].u, ssl: clientTls(c) }; } finally { c.release(); }
   if (r.u !== 'nusuh_app') throw new Error(`connected as ${r.u}, not nusuh_app (the user in HOSTED_DATABASE_URL must be nusuh_app.<project>)`);
   if (wantTls && !r.ssl) throw new Error('not encrypted');
   return `connected as nusuh_app, ${r.ssl ? 'TLS on' : 'local, no TLS'}`;

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, useApi } from '../api.ts';
 import { useI18n, type Key } from '../i18n.tsx';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
+import { RAISE_ISSUE } from './raise.ts';
 
 interface Thread { id: string; subject: string; category: string; status: 'open' | 'answered' | 'closed'; createdAt: string; lastMessageAt: string; firmId: string;
   customer: string; customerKind: string; openedBy: string; openedByName: string; company: string | null; messages: number; unread: number; lastBody: string; lastFromOwner: boolean }
@@ -102,6 +103,11 @@ export function SupportChat({ companyId }: { companyId?: string | null }) {
     catch (x) { setBad(errorText(t, has, x)); } finally { setBusy(false); }
   };
   const back = () => { setView({}); unread.reload(); };
+  useEffect(() => {   // "Raise an issue" buttons elsewhere open the new-issue form straight away
+    const go = () => { setOpen(true); setView({ new: true }); };
+    window.addEventListener(RAISE_ISSUE, go);
+    return () => window.removeEventListener(RAISE_ISSUE, go);
+  }, []);
   return (
     <>
       <button className="help-fab no-print" id="sup-open" aria-expanded={open} onClick={() => { setOpen(!open); if (open) back(); }}>

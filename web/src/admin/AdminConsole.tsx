@@ -10,6 +10,7 @@ import { AdminBilling } from './Billing.tsx';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
 import { ArabicHint, followArabic } from '../arabic.tsx';
 import { clearPendingInvites, takePendingInvites } from './pendingInvites.ts';
+import { RAISE_ISSUE } from '../support/raise.ts';
 
 type Country = 'SA' | 'AE' | 'OM';
 interface ClientRow {
@@ -34,7 +35,7 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 /** Which customer this console belongs to: an accounting firm or a company that runs its own books, and whether
  *  the platform owner is working in it (only the owner adds companies and changes a company's details). */
-interface Tenant { kind: 'firm' | 'company'; owner: boolean; name: string }
+interface Tenant { kind: 'firm' | 'company'; owner: boolean; name: string; self?: boolean }   // self: the company's own Owner, in their own admin area
 const TenantCtx = createContext<Tenant>({ kind: 'firm', owner: false, name: '' });
 const useTenant = () => useContext(TenantCtx);
 /** Company details may be changed by the owner, or by an accounting firm's Administrator for its clients. */
@@ -43,13 +44,15 @@ const canEditDetails = (x: Tenant) => x.owner || x.kind === 'firm';
 export function AdminConsole({ me, path, onSignOut, owner, selfService }: { me: Me; path: string; onSignOut: () => void; owner?: boolean; selfService?: boolean }) {
   const { t } = useI18n();
   const settings = useApi<{ firmName: string; kind: 'firm' | 'company'; owner: boolean }>('/api/admin/settings');
-  const tenant: Tenant = { kind: settings.data?.kind ?? 'firm', owner: Boolean(settings.data?.owner), name: settings.data?.firmName ?? '' };
+  const tenant: Tenant = { kind: settings.data?.kind ?? 'firm', owner: Boolean(settings.data?.owner), name: settings.data?.firmName ?? '', self: Boolean(selfService) };
   const seg = path.split('/');                       // ['', 'admin', tab, id?]
-  const tabs = TABS.filter((x) => !(x === 'Staff' && tenant.kind === 'company'));
+  // A company's own Owner has only its users and their roles and permissions here (and Help, to raise an issue with Nusuh Books).
+  const tabs: (typeof TABS)[number][] = selfService ? ['Clients', 'Roles'] : TABS.filter((x) => !(x === 'Staff' && tenant.kind === 'company'));
   const tab = (tabs.find((x) => x.toLowerCase() === seg[2]) ?? 'Clients');
   const clientId = tab === 'Clients' && seg[3] && seg[3] !== 'new' ? seg[3] : null;
   const adding = tab === 'Clients' && seg[3] === 'new' && tenant.kind !== 'company';   // never for a company's own books
-  const tabLabel = (x: string) => (x === 'Clients' && selfService ? t('admin.usersTab') : x === 'Clients' && tenant.kind === 'company' ? t('admin.Companies') : t(`admin.${x}` as Key));
+  const tabLabel = (x: string) => (x === 'Clients' && selfService ? t('admin.usersTab') : x === 'Clients' && tenant.kind === 'company' ? t('admin.companyTab') : t(`admin.${x}` as Key));
+  const ownCompany = tab === 'Clients' && tenant.kind === 'company' && !clientId;   // the company IS the customer: its page, not a list
   const title = adding ? t('reg.title') : tabLabel(tab);
   if (!settings.data) return <main>{settings.error ? <ErrorNote error={settings.error} onRetry={settings.reload} /> : <Loading />}</main>;
   return (
@@ -61,6 +64,7 @@ export function AdminConsole({ me, path, onSignOut, owner, selfService }: { me: 
             {tabLabel(x)}
           </button>
         ))}
+        {selfService && <button id="raise-issue" onClick={() => window.dispatchEvent(new Event(RAISE_ISSUE))}>{t('admin.raiseIssue')}</button>}
       </Sidebar>
       <main>
         {owner && (
@@ -70,16 +74,26 @@ export function AdminConsole({ me, path, onSignOut, owner, selfService }: { me: 
           </div>
         )}
         <div className="top">
-          <h1>{clientId ? '' : title}</h1>
+          <h1>{clientId || ownCompany ? '' : title}</h1>
           <TopControls />
         </div>
         <TenantCtx.Provider value={tenant}>
         {tab === 'Staff' ? <Staff /> : tab === 'Billing' ? <AdminBilling /> : tab === 'Roles' ? <Roles /> : tab === 'Activity' ? <Activity /> : tab === 'EInvoices' ? <UnsentEInvoices /> : tab === 'Settings' ? <Settings />
-          : adding && tenant.owner ? <AddClient /> : clientId ? <ClientPage id={clientId} /> : <Clients />}
+          : adding && tenant.owner ? <AddClient /> : clientId ? <ClientPage id={clientId} /> : ownCompany ? <OwnCompany /> : <Clients />}
         </TenantCtx.Provider>
       </main>
     </div>
   );
+}
+
+/** A company that keeps its own books: its one company IS the customer, so its page opens straight away. */
+function OwnCompany() {
+  const { t } = useI18n();
+  const list = useApi<ClientRow[]>('/api/admin/companies');
+  if (list.error) return <ErrorNote error={list.error} onRetry={list.reload} />;
+  if (!list.data) return <Loading />;
+  const c = list.data[0];
+  return c ? <ClientPage id={c.id} /> : <div className="mut">{t('admin.noClientsYet')}</div>;
 }
 
 // ------------------------------------------------------------------ Clients list
@@ -498,13 +512,13 @@ function ClientPage({ id }: { id: string }) {
       </div>}
 
       {/* Registration and entry settings */}
-      <form onSubmit={save} noValidate>
+      {!tenantInfo.self && <form onSubmit={save} noValidate>
         {!editable && <div className="notice small">{t('admin.detailsByOwner')}</div>}
         <fieldset disabled={!editable} style={{ border: 0, padding: 0, margin: 0 }}>
           <CompanyForm f={fields} set={(k, v) => setF((cur) => ({ ...(cur ?? fields), [k]: v }))} editing />
           {editable && <button className="b p" type="submit" disabled={busy || !f}>{t('admin.saveDetails')}</button>}
         </fieldset>
-      </form>
+      </form>}
     </>
   );
 }

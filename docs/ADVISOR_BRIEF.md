@@ -183,6 +183,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 
 ## 7. Where things stand and what is next
 
+**A company with its own books IS the customer (2026-11-23).** There is no "customer, then companies inside it": the owner console opens the company's own page, and no accounting firm handles it (a firm is its own customer type, with the company added as one of its clients). The company's Owner has only Users, Roles and permissions and a Raise an issue button (the Help chat to Nusuh Books); Activity, E-invoices, Billing and Settings are not shown to them. No schema change.
+
 **Add customer, "Company own accounts" is one flow (2026-11-23).** The owner console now makes ONE customer with ONE company and its people in a single save (POST /api/owner/customers/company, all-or-nothing in one transaction): company details, users with job titles (at least one Owner), review, then the customer's page with each person's one-time link. No add-companies screen exists for that kind of customer, and the server refuses a second company for it (err.oneCompany). The accounting firm flow is unchanged. No schema change.
 
 **Owner exception to standing rule 1 (2026-11-23).** The owner wrote that rule 1 is lifted for ONE real client on the live site. Every other company stays demo or test data. Order agreed: move to Supabase first (owner doing it within the hour), then add the real client there; ZATCA stays sandbox-only and no real emails are sent until the owner says otherwise.

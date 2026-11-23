@@ -393,12 +393,32 @@ describe('Add customer: Company own accounts', () => {
     await p.goto(`${BASE}/admin/clients/new`, { waitUntil: 'networkidle' });
     await p.waitForTimeout(1200);
     expect(await p.locator('#add-client').count()).toBe(0);
-    expect(await p.locator('#reg-name').count()).toBe(0);   // the "add company" form is not there either
+    expect(await p.locator('body').innerText()).not.toContain('Register client');   // the "add company" form is not there either: it is the company's own page
     expect(errs.filter((e) => !/favicon|status of 401/.test(e))).toEqual([]);   // the sign-in page's own 401 (nobody signed in yet) is expected
 
     const made = (await db.query(`SELECT (SELECT count(*) FROM companies c JOIN firms f ON f.id = c.firm_id WHERE f.name = $1)::int AS companies,
       (SELECT count(*) FROM users u JOIN firms f ON f.id = u.firm_id WHERE f.name = $1 AND u.kind = 'client')::int AS users`, [`Flow Test Trading ${stamp}`])).rows[0];
     expect(made).toEqual({ companies: 1, users: 2 });
+
+    // The company's own Owner: their admin area is only the users, their roles and permissions, and a way to raise an issue.
+    const ownerEmail = `flow.owner.${stamp}@example.com`;
+    await db.query(`UPDATE users SET password_hash = (SELECT password_hash FROM users WHERE kind = 'owner' LIMIT 1), password_set_at = now() WHERE lower(email) = lower($1)`, [ownerEmail]);
+    const { page: q, errors: qerrs } = await newPage(1280);
+    await signIn(q, ownerEmail);
+    await q.goto(`${BASE}/admin/clients`, { waitUntil: 'networkidle' });
+    await q.locator('#raise-issue').waitFor({ timeout: 15000 });
+    const side = await q.locator('nav.side').innerText();
+    for (const want of ['Users', 'Roles and permissions', 'Raise an issue']) expect(side, want).toContain(want);
+    for (const gone of ['Activity', 'E-invoices', 'Billing', 'Settings', 'Companies', 'Staff']) expect(side, gone).not.toContain(gone);
+    const mine = await q.locator('main').innerText();
+    expect(mine).toContain(`Flow Test Trading ${stamp}`);
+    expect(mine).toContain('Flow Sales');
+    for (const firmWord of ['Firm staff', 'All clients', 'Client users']) expect(mine, firmWord).not.toContain(firmWord);
+    await screenshotTo(q, 'add-customer-6-company-owner-admin');
+    await q.locator('#raise-issue').click();
+    await q.locator('#sup-subject').waitFor({ timeout: 15000 });   // the form to raise an issue with Nusuh Books opens straight away
+    await screenshotTo(q, 'add-customer-7-raise-issue');
+    expect(qerrs.filter((e) => !/favicon|status of 401/.test(e))).toEqual([]);
   });
 
   it('keeps the accounting firm flow as it was: name, kind and first Administrator, then the firm adds its client companies', async () => {

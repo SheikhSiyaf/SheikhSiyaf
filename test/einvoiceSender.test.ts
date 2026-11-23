@@ -206,7 +206,7 @@ describe('Warnings and the Administrator\'s list', () => {
     const row = list.find((r) => r.number === number)!;
     expect(Object.keys(row).sort()).toEqual(['attempts', 'company', 'hours_waiting', 'id', 'issued_at', 'last_error', 'next_attempt_at', 'number', 'status'].sort());
     expect(row).toMatchObject({ status: 'retrying', attempts: 1, last_error: 'connect ETIMEDOUT' });
-    expect(JSON.stringify(list)).not.toMatch(/888|Walk-in/);
+    expect(JSON.stringify(list)).not.toMatch(/888\.00|Walk-in/);   // the amount and the customer; a bare "888" can turn up inside a random id
     await expect(as(f.staff, (db) => db.query('SELECT * FROM admin_einvoices_unsent()'))).rejects.toThrow(/Only the Administrator/);
 
     expect(await notices('ZATCA: % not yet reported%')).toHaveLength(0);
@@ -224,7 +224,7 @@ describe('Warnings and the Administrator\'s list', () => {
     const over = await notices('Overdue:%');
     expect(over.length).toBe(h12.length);
     expect(over[0]!.body_text).toContain('notify them through the form on its website');
-    for (const m of [...h12, ...over]) expect(m.body_text).not.toMatch(/888|Walk-in/);
+    for (const m of [...h12, ...over]) expect(m.body_text).not.toMatch(/888\.00|Walk-in/);
     mode = 'ok';
     await run({ all: true });
     expect((await einvoiceOf(d)).status).toBe('reported');

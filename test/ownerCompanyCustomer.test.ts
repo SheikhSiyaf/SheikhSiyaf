@@ -82,26 +82,28 @@ describe('Add customer: Company own accounts', () => {
 
   it('asks for at least one Owner, a job title for everyone, and different emails; nothing is created when it refuses', async () => {
     const cookie = await signIn(platformEmail);
-    const before = (await owner.query(`SELECT count(*)::int AS n FROM firms`)).rows[0].n;
     const s = stamp();
-    const noOwner = await create(cookie, { company: company(`No Owner ${s}`), users: [{ name: 'Sam', email: `sam.${s}@example.com`, jobTitle: 'Sales' }] });
+    const noOwner = await create(cookie, { company: company(`Refused ${s} no owner`), users: [{ name: 'Sam', email: `sam.${s}@example.com`, jobTitle: 'Sales' }] });
     expect(noOwner.json()).toMatchObject({ key: 'err.companyOwner' });
-    expect((await create(cookie, { company: company(`No Users ${s}`), users: [] })).json()).toMatchObject({ key: 'err.companyUsers' });
-    expect((await create(cookie, { company: company(`No Title ${s}`), users: [{ name: 'A', email: `a.${s}@example.com`, jobTitle: 'Boss' }] })).json()).toMatchObject({ key: 'err.roleChoose' });
-    expect((await create(cookie, { company: company(`Same ${s}`), users: [{ name: 'A', email: `x.${s}@example.com`, jobTitle: 'Owner' }, { name: 'B', email: `X.${s}@example.com`, jobTitle: 'Sales' }] })).json()).toMatchObject({ key: 'err.sameEmail' });
-    expect((await create(cookie, { company: { ...company(`Bad VAT ${s}`), country: '' }, users: [{ name: 'A', email: `a.${s}@example.com`, jobTitle: 'Owner' }] })).statusCode).toBe(400);
-    expect((await owner.query(`SELECT count(*)::int AS n FROM firms`)).rows[0].n).toBe(before);
+    expect((await create(cookie, { company: company(`Refused ${s} no users`), users: [] })).json()).toMatchObject({ key: 'err.companyUsers' });
+    expect((await create(cookie, { company: company(`Refused ${s} no title`), users: [{ name: 'A', email: `a.${s}@example.com`, jobTitle: 'Boss' }] })).json()).toMatchObject({ key: 'err.roleChoose' });
+    expect((await create(cookie, { company: company(`Refused ${s} same email`), users: [{ name: 'A', email: `x.${s}@example.com`, jobTitle: 'Owner' }, { name: 'B', email: `X.${s}@example.com`, jobTitle: 'Sales' }] })).json()).toMatchObject({ key: 'err.sameEmail' });
+    expect((await create(cookie, { company: { ...company(`Refused ${s} no country`), country: '' }, users: [{ name: 'A', email: `a.${s}@example.com`, jobTitle: 'Owner' }] })).statusCode).toBe(400);
+    // only what THIS test tried is looked at: other test files add rows to the same database at the same time
+    expect((await owner.query(`SELECT count(*)::int AS n FROM firms WHERE name LIKE $1`, [`Refused ${s}%`])).rows[0].n).toBe(0);
+    expect((await owner.query(`SELECT count(*)::int AS n FROM users WHERE email LIKE $1`, [`%.${s}@example.com`])).rows[0].n).toBe(0);
   });
 
   it('is all-or-nothing: if one person cannot be created, no customer, company or user is left behind', async () => {
     const cookie = await signIn(platformEmail);
     const s = stamp();
-    const before = (await owner.query(`SELECT (SELECT count(*) FROM firms)::int AS f, (SELECT count(*) FROM companies)::int AS c, (SELECT count(*) FROM users)::int AS u`)).rows[0];
     // the second person's email already belongs to someone (the first test's Owner)
     const res = await create(cookie, { company: company(`Half Done ${s}`), users: [{ name: 'Fresh', email: `fresh.${s}@own-books.example.com`, jobTitle: 'Owner' }, { name: 'Taken', email: ownerEmail, jobTitle: 'Sales' }] });
     expect(res.statusCode).toBe(400);   // a clear refusal, not a crash
-    const after = (await owner.query(`SELECT (SELECT count(*) FROM firms)::int AS f, (SELECT count(*) FROM companies)::int AS c, (SELECT count(*) FROM users)::int AS u`)).rows[0];
-    expect(after).toEqual(before);
+    // only what THIS test tried is looked at: other test files add rows to the same database at the same time
+    expect((await owner.query(`SELECT count(*)::int AS n FROM firms WHERE name = $1`, [`Half Done ${s}`])).rows[0].n).toBe(0);
+    expect((await owner.query(`SELECT count(*)::int AS n FROM companies WHERE name = $1`, [`Half Done ${s}`])).rows[0].n).toBe(0);
+    expect((await owner.query(`SELECT count(*)::int AS n FROM users WHERE lower(email) = lower($1)`, [`fresh.${s}@own-books.example.com`])).rows[0].n).toBe(0);
   });
 
   it('is for the platform owner only', async () => {

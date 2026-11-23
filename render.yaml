@@ -77,16 +77,22 @@ services:
       - key: PUBLIC_URL
         sync: false
 
-      # Neon. Use the DIRECT connection string (not the one with "-pooler" in the host name): the background jobs rely
-      # on a connection that stays the same for the whole session. The login is nusuh_app, so row-level security
-      # applies to the server. Its password must match APP_DB_PASSWORD below.
+      # Supabase (PostgreSQL 17). Use the SESSION pooler address (Connect > Direct > Session pooler, port 5432), not the
+      # transaction pooler (6543): the background jobs rely on a connection that stays the same for the whole session.
+      # The user is nusuh_app.<project ref>, so row-level security applies to the server. The password must match
+      # APP_DB_PASSWORD below. Choose a letters-and-digits password so nothing has to be percent-encoded.
       - key: DATABASE_URL
         sync: false
-      # Only the migration uses this, as the database's owner role. The running server never does.
+      # Only the migration uses this, as the database's owner (postgres.<project ref>, also the session pooler). The
+      # running server never does.
       - key: DATABASE_ADMIN_URL
         sync: false
       # The password the migration sets on the nusuh_app role; it must match the one in DATABASE_URL.
       - key: APP_DB_PASSWORD
+        sync: false
+      # Supabase's certificate authority (Project Settings > Database > SSL configuration > download). The whole file, a
+      # public certificate, pasted as the value. Without it the connection is not verified.
+      - key: DATABASE_CA_CERT
         sync: false
 
       # Signs sign-in cookies. Render generates a random 256-bit value once, when the service is created, and keeps it;

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { ApiError, api, useApi } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
-import { ErrorNote } from '../ui.tsx';
+import { ErrorNote, PasswordInput } from '../ui.tsx';
 import { toggleTheme } from '../theme.ts';
 import { NusuhMark } from '../brand.tsx';
 
@@ -114,7 +114,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
                 </div>
                 <div className="row">
                   <label className="f">{t('login.password')}
-                    <input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} dir="ltr" />
+                    <PasswordInput id="login-password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
                   </label>
                 </div>
                 <div className="actions auth-actions">

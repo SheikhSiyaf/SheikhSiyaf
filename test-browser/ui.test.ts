@@ -452,3 +452,44 @@ describe('Add customer: Company own accounts', () => {
     await screenshotTo(p, 'add-customer-firm-form');
   });
 });
+
+describe('Remove a customer and see a password', () => {
+  it('the owner removes a customer (it is hidden, nobody there can sign in), then restores it', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const tenant = (await db.query(`SELECT f.id, f.name FROM firms f WHERE f.kind = 'company' AND f.name LIKE 'Flow Test Trading %' ORDER BY f.created_at DESC LIMIT 1`)).rows[0] as { id: string; name: string };
+    const { page: p } = await newPage(1280);
+    await signIn(p, platform);
+    await p.goto(`${BASE}/owner`, { waitUntil: 'networkidle' });
+    await p.locator(`#own-remove-${tenant.id}`).waitFor({ timeout: 15000 });
+    await p.locator(`#own-remove-${tenant.id}`).click();
+    await waitForText(p, 'Its books and history are kept on file');
+    await screenshotTo(p, 'remove-customer-confirm');
+    await p.getByRole('button', { name: 'Yes, continue' }).click();
+    await waitForText(p, 'was removed');
+    expect(await p.locator('table').innerText()).not.toContain(tenant.name);   // hidden from the list
+    expect((await db.query(`SELECT removed_at IS NOT NULL AS gone, status FROM firms WHERE id = $1`, [tenant.id])).rows[0]).toEqual({ gone: true, status: 'suspended' });
+    expect((await db.query(`SELECT count(*)::int AS n FROM companies WHERE firm_id = $1`, [tenant.id])).rows[0].n).toBe(1);   // the books stay on file
+    await p.locator('#own-show-removed').click();
+    await p.locator(`#own-restore-${tenant.id}`).waitFor({ timeout: 15000 });
+    expect(await p.locator('table').innerText()).toContain('Removed');
+    await screenshotTo(p, 'remove-customer-removed-list');
+    await p.locator(`#own-restore-${tenant.id}`).click();
+    await waitForText(p, 'was restored');
+    expect((await db.query(`SELECT removed_at FROM firms WHERE id = $1`, [tenant.id])).rows[0].removed_at).toBeNull();
+  });
+
+  it('the sign-in page has a Show / Hide button on the password', async () => {
+    const { page: p } = await newPage(1280);
+    await p.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await p.locator('#login-password').waitFor({ timeout: 15000 });
+    await p.locator('#login-password').fill('my-secret-pass');
+    const kind = () => p.evaluate(() => (document.getElementById('login-password') as HTMLInputElement).type);
+    expect(await kind()).toBe('password');
+    await p.getByRole('button', { name: 'Show the password' }).click();
+    expect(await kind()).toBe('text');
+    expect(await p.locator('#login-password').inputValue()).toBe('my-secret-pass');
+    await screenshotTo(p, 'login-show-password');
+    await p.getByRole('button', { name: 'Hide the password' }).click();
+    expect(await kind()).toBe('password');
+  });
+});

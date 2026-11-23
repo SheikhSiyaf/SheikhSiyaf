@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { api, useApi } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
 import { navigate } from '../router.ts';
-import { ErrorNote, Loading, TopControls } from '../ui.tsx';
+import { ErrorNote, Loading, PasswordInput, TopControls } from '../ui.tsx';
 
 export function AcceptInvite({ token, onDone }: { token: string; onDone: () => void }) {
   const { t } = useI18n();
@@ -49,12 +49,12 @@ export function AcceptInvite({ token, onDone }: { token: string; onDone: () => v
                 <input type="email" autoComplete="username" value={info.data.email} readOnly hidden />
                 <div className="row">
                   <label className="f">{t('invitePage.password')}
-                    <input type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} dir="ltr" />
+                    <PasswordInput id="invite-password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} />
                   </label>
                 </div>
                 <div className="row">
                   <label className="f">{t('invitePage.confirm')}
-                    <input type="password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} dir="ltr" />
+                    <PasswordInput id="invite-password-2" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} />
                   </label>
                 </div>
                 {pw && problem && <p className="small bad">{problem}</p>}

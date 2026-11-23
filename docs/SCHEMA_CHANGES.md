@@ -557,3 +557,11 @@ Every change below is covered by a test in `test/`.
 | `client_roles.can_manage_users` is set to false on every default Owner title, and its description no longer says it manages users | The Owner is not the Administrator: a company that runs its own books has a separate Administrator login (users, roles and permissions, raising issues) who never sees the books |
 | `add_default_client_roles()` replaced: the Owner title is created without the right, with the new description; every other title is unchanged | New customers start the same way |
 | The right itself (`can_manage_users`, `app_is_admin()`) is kept as an optional setting a job title can be given | Nothing built on it breaks; no table, column or policy is added, removed or loosened, so row-level security is untouched |
+
+## 0066_remove_customer.sql
+| Change | Why |
+|---|---|
+| `firms.removed_at` (nullable date-time) | A removed customer keeps all its books and audit history (posted entries and the audit log can never be deleted); this records when the platform owner removed it |
+| `owner_tenants()` replaced: one more column, `removed_at`; same rows, same owner-only check, same grant | The owner's list can hide removed customers and offer Restore |
+| `owner_update_tenant()` replaced: setting a customer active also clears `removed_at` | Suspend, reactivate and remove never disagree |
+| New `owner_remove_tenant(id, removed)` (security definer, owner only, executable by `nusuh_app`, not by PUBLIC): removing sets the customer to suspended (nobody in it can sign in), stamps `removed_at` and cancels its subscription; restoring reactivates it | "Remove customer" without deleting any book, entry or log row. No table, policy or grant is loosened; row-level security is untouched |

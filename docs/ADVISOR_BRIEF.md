@@ -183,6 +183,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 
 ## 7. Where things stand and what is next
 
+**Remove a customer, and Show / Hide password (2026-11-23, migration 0066).** The owner console has Remove (with a plain confirmation) and Restore on every customer, plus "Show removed customers". Remove hides the customer, locks everyone in it out, cancels its subscription and keeps every book and the audit log (posted entries can never be deleted); Restore undoes it. A password box with Show / Hide is on the sign-in page and the choose-a-password page.
+
 **The Owner is not the Administrator (2026-11-23, migration 0065).** In a company that keeps its own books the owner (of Nusuh Books) now creates the company with TWO kinds of people: a separate Administrator login (users, roles and permissions, raise an issue; never the books) and the people who use the books (Owner, Finance, Sales and so on). The Owner job title no longer manages users by default; the right stays as an optional setting. This replaces the earlier "one login for the company owner" decision (Phase B). The Add customer flow needs at least one Administrator and one person who uses the books.
 
 **A company with its own books IS the customer (2026-11-23).** There is no "customer, then companies inside it": the owner console opens the company's own page, and no accounting firm handles it (a firm is its own customer type, with the company added as one of its clients). The company's Owner has only Users, Roles and permissions and a Raise an issue button (the Help chat to Nusuh Books); Activity, E-invoices, Billing and Settings are not shown to them. No schema change.

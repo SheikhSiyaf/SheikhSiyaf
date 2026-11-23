@@ -24,7 +24,7 @@ export function registerOwnerRoutes(app: FastifyInstance, { as, opts }: Ctx) {
   const owner = <T>(req: Parameters<Ctx['as']>[0], fn: (db: Db) => Promise<T>) => as(req, async (db) => { await requireOwner(db); return fn(db); });
 
   app.get('/api/owner/tenants', async (req) => owner(req, async (db) => (await db.query(
-    `SELECT id, name, kind, status, created_at AS "createdAt", companies, users, admins FROM owner_tenants()`)).rows));
+    `SELECT id, name, kind, status, created_at AS "createdAt", companies, users, admins, removed_at AS "removedAt" FROM owner_tenants()`)).rows));
 
   /** A new customer with its first Administrator; returns the Administrator's sign-in link token. */
   app.post<{ Body: { name?: string; kind?: string; adminName?: string; adminEmail?: string } }>('/api/owner/tenants', async (req) => {
@@ -95,6 +95,15 @@ export function registerOwnerRoutes(app: FastifyInstance, { as, opts }: Ctx) {
 
   app.post<{ Params: { id: string }; Body: { name?: string; status?: string } }>('/api/owner/tenants/:id', async (req) => owner(req, async (db) => {
     await db.query('SELECT owner_update_tenant($1, $2, $3)', [uuidParam(req.params.id), String(req.body?.name ?? ''), String(req.body?.status ?? 'active')]);
+    return { ok: true };
+  }));
+
+  /**
+   * Remove a customer from the owner's list, or restore it. Its books and history are never deleted (posted entries and the
+   * audit log are permanent): removing locks everyone out, cancels the subscription and hides it; restoring undoes the lock.
+   */
+  app.post<{ Params: { id: string }; Body: { removed?: boolean } }>('/api/owner/tenants/:id/remove', async (req) => owner(req, async (db) => {
+    await db.query('SELECT owner_remove_tenant($1, $2)', [uuidParam(req.params.id), req.body?.removed !== false]);
     return { ok: true };
   }));
 

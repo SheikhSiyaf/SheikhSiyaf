@@ -734,3 +734,11 @@ main.auth { padding: 0; display: grid; grid-template-columns: minmax(360px, 520p
   .aside-preview { display: none; }
   .aside-features { grid-template-columns: 1fr; gap: 12px; }
 }
+
+/* Show / Hide on password boxes */
+.pw-field { position: relative; display: block; }
+.pw-field > input { width: 100%; padding-inline-end: 64px; }
+.pw-toggle { position: absolute; inset-block: 0; inset-inline-end: 0; border: 0; background: none; color: var(--teal, #0f766e); font: inherit; font-size: 13px; font-weight: 600; padding: 0 12px; cursor: pointer; border-radius: 0 var(--radius, 8px) var(--radius, 8px) 0; }
+.pw-toggle:hover { text-decoration: underline; }
+.pw-toggle:focus-visible { outline: 2px solid var(--teal, #0f766e); outline-offset: -2px; }
+[dir="rtl"] .pw-toggle { border-radius: var(--radius, 8px) 0 0 var(--radius, 8px); }

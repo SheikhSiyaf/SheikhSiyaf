@@ -1,5 +1,5 @@
 // Shared bits: top bar controls, error and loading states.
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type InputHTMLAttributes, type ReactNode } from 'react';
 import { ApiError, api, useApi } from './api.ts';
 import { useI18n } from './i18n.tsx';
 import { toggleTheme } from './theme.ts';
@@ -122,5 +122,19 @@ export function InviteBox({ invite, onClose }: { invite: Invite; onClose: () => 
         {copied === 'no' && <span className="small">{t('invite.copyFailed')}</span>}
       </div>
     </div>
+  );
+}
+
+/** A password box with a Show / Hide button, so a person can check what they typed. It is hidden again on every new visit. */
+export function PasswordInput(props: Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>) {
+  const { t } = useI18n();
+  const [shown, setShown] = useState(false);
+  return (
+    <span className="pw-field">
+      <input {...props} type={shown ? 'text' : 'password'} dir="ltr" />
+      <button type="button" className="pw-toggle" aria-pressed={shown} aria-label={t(shown ? 'pw.hideLabel' : 'pw.showLabel')} onClick={() => setShown(!shown)}>
+        {t(shown ? 'pw.hide' : 'pw.show')}
+      </button>
+    </span>
   );
 }

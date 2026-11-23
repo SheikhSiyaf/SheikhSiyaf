@@ -10,7 +10,7 @@ import { NewCompanyCustomer } from './NewCompany.tsx';
 import { OwnerSupport, useOwnerSupportUnread } from '../support/Support.tsx';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
 
-interface Tenant { id: string; name: string; kind: 'firm' | 'company'; status: 'active' | 'suspended'; createdAt: string; companies: number; users: number; admins: string | null }
+interface Tenant { id: string; name: string; kind: 'firm' | 'company'; status: 'active' | 'suspended'; createdAt: string; companies: number; users: number; admins: string | null; removedAt: string | null }
 
 /** Opens a customer's Administrator console as the owner. */
 export function openTenant(t: { id: string; name: string; kind: string }, to = '/admin/clients') {
@@ -58,6 +58,8 @@ function Customers() {
   const [invite, setInvite] = useState<Invite>();
   const [addAdmin, setAddAdmin] = useState<{ id: string; name: string; email: string }>();
   const [confirm, setConfirm] = useState<Tenant>();
+  const [confirmRemove, setConfirmRemove] = useState<Tenant>();
+  const [showRemoved, setShowRemoved] = useState(false);
   const [msg, setMsg] = useState<{ ok?: string; bad?: string }>({});
   const [busy, setBusy] = useState(false);
   const run = async (fn: () => Promise<unknown>, ok?: string) => {
@@ -68,7 +70,10 @@ function Customers() {
     e.preventDefault();
     void run(async () => { const r = await api<{ id: string; invite: Invite }>('/api/owner/tenants', { body: form }); setInvite(r.invite); setForm(undefined); });
   };
-  const rows = list.data ?? [];
+  const all = list.data ?? [];
+  const live = all.filter((x) => !x.removedAt);
+  const removedCount = all.length - live.length;
+  const rows = showRemoved ? all : live;   // removed customers are hidden unless asked for
   const kindPicker = (cur: NonNullable<typeof form>) => (
     <div className="seg" role="radiogroup" style={{ marginBottom: 10 }}>
       {(['company', 'firm'] as const).map((k) => <button key={k} type="button" role="radio" aria-checked={cur.kind === k} id={`own-kind-${k}`} className={cur.kind === k ? 'on' : ''} onClick={() => setForm({ ...cur, kind: k })}>{t(`own.kind.${k}`)}</button>)}
@@ -77,9 +82,9 @@ function Customers() {
   return (
     <>
         <div className="grid">
-          <div className="card fig"><small>{t('own.firms')}</small><b>{rows.filter((x) => x.kind === 'firm').length}</b><small>{t('own.firmsSub')}</small></div>
-          <div className="card fig"><small>{t('own.companies')}</small><b>{rows.filter((x) => x.kind === 'company').length}</b><small>{t('own.companiesSub')}</small></div>
-          <div className="card fig"><small>{t('own.booksTotal')}</small><b>{rows.reduce((s, x) => s + x.companies, 0)}</b><small>{t('own.usersN', { n: rows.reduce((s, x) => s + x.users, 0) })}</small></div>
+          <div className="card fig"><small>{t('own.firms')}</small><b>{live.filter((x) => x.kind === 'firm').length}</b><small>{t('own.firmsSub')}</small></div>
+          <div className="card fig"><small>{t('own.companies')}</small><b>{live.filter((x) => x.kind === 'company').length}</b><small>{t('own.companiesSub')}</small></div>
+          <div className="card fig"><small>{t('own.booksTotal')}</small><b>{live.reduce((s, x) => s + x.companies, 0)}</b><small>{t('own.usersN', { n: live.reduce((s, x) => s + x.users, 0) })}</small></div>
         </div>
         <div className="mut small" style={{ marginBottom: 10 }}>{t('own.hint')}</div>
         {msg.ok && <div className="notice">{msg.ok}</div>}
@@ -87,7 +92,10 @@ function Customers() {
         {invite && <InviteBox invite={invite} onClose={() => setInvite(undefined)} />}
         {confirm && <ConfirmBar busy={busy} message={t(confirm.status === 'active' ? 'own.suspendConfirm' : 'own.reactivateConfirm', { name: confirm.name })} onNo={() => setConfirm(undefined)}
           onYes={() => { const c = confirm; setConfirm(undefined); void run(() => api(`/api/owner/tenants/${c.id}`, { body: { name: c.name, status: c.status === 'active' ? 'suspended' : 'active' } })); }} />}
+        {confirmRemove && <ConfirmBar busy={busy} message={t('own.removeConfirm', { name: confirmRemove.name })} onNo={() => setConfirmRemove(undefined)}
+          onYes={() => { const c = confirmRemove; setConfirmRemove(undefined); void run(() => api(`/api/owner/tenants/${c.id}/remove`, { body: { removed: true } }), t('own.removed', { name: c.name })); }} />}
         <div className="actions" style={{ marginBottom: 10 }}>
+          {removedCount > 0 && <label className="small mut"><input type="checkbox" id="own-show-removed" checked={showRemoved} onChange={(e) => setShowRemoved(e.target.checked)} /> {t('own.showRemoved', { n: removedCount })}</label>}
           <span className="spacer" />
           {!form && <button className="b p" id="own-new" onClick={() => setForm({ name: '', kind: 'company', adminName: '', adminEmail: '' })}>{t('own.new')}</button>}
         </div>
@@ -120,8 +128,8 @@ function Customers() {
             <div className="wrap"><table className="stack">
               <thead><tr><th>{t('own.customer')}</th><th>{t('own.type')}</th><th className="num">{t('own.booksCol')}</th><th className="num">{t('own.usersCol')}</th><th>{t('own.admins')}</th><th /></tr></thead>
               <tbody>{rows.map((x) => (
-                <tr key={x.id} className={x.status === 'suspended' ? 'mut' : ''}>
-                  <td><b>{x.name}</b>{x.status === 'suspended' && <> <span className="badge bad">{t('admin.suspended')}</span></>}<div className="small mut ltr">{x.createdAt.slice(0, 10)}</div></td>
+                <tr key={x.id} className={x.status === 'suspended' || x.removedAt ? 'mut' : ''}>
+                  <td><b>{x.name}</b>{x.removedAt ? <> <span className="badge bad">{t('own.removedBadge')}</span></> : x.status === 'suspended' && <> <span className="badge bad">{t('admin.suspended')}</span></>}<div className="small mut ltr">{x.createdAt.slice(0, 10)}</div></td>
                   <td data-label={t('own.type')}><span className={`badge ${x.kind === 'company' ? 'good' : ''}`}>{t(`own.kind.${x.kind}`)}</span></td>
                   <td className="num" data-label={t('own.booksCol')}>{x.companies}</td>
                   <td className="num" data-label={t('own.usersCol')}>{x.users}</td>
@@ -135,9 +143,14 @@ function Customers() {
                       </form>
                     )}</td>
                   <td className="num"><span className="actions" style={{ justifyContent: 'flex-end' }}>
-                    <button className="b small p" disabled={x.status !== 'active'} onClick={() => openTenant(x)}>{t('own.open')}</button>
-                    {addAdmin?.id !== x.id && <button className="b small" onClick={() => setAddAdmin({ id: x.id, name: '', email: '' })}>{t('own.addAdmin')}</button>}
-                    <button className="b small" onClick={() => setConfirm(x)}>{x.status === 'active' ? t('admin.suspend') : t('admin.reactivate')}</button>
+                    {x.removedAt ? (
+                      <button className="b small p" id={`own-restore-${x.id}`} disabled={busy} onClick={() => void run(() => api(`/api/owner/tenants/${x.id}/remove`, { body: { removed: false } }), t('own.restored', { name: x.name }))}>{t('own.restore')}</button>
+                    ) : (<>
+                      <button className="b small p" disabled={x.status !== 'active'} onClick={() => openTenant(x)}>{t('own.open')}</button>
+                      {addAdmin?.id !== x.id && <button className="b small" onClick={() => setAddAdmin({ id: x.id, name: '', email: '' })}>{t('own.addAdmin')}</button>}
+                      <button className="b small" onClick={() => setConfirm(x)}>{x.status === 'active' ? t('admin.suspend') : t('admin.reactivate')}</button>
+                      <button className="b small bad" id={`own-remove-${x.id}`} onClick={() => setConfirmRemove(x)}>{t('own.remove')}</button>
+                    </>)}
                   </span></td>
                 </tr>
               ))}</tbody>

@@ -88,6 +88,8 @@ function Clients() {
   const local = useLocalName();
   const list = useApi<ClientRow[]>('/api/admin/companies');
   const [q, setQ] = useState('');
+  const tenantInfo = useTenant();
+  const own = tenantInfo.kind === 'company';   // a company with its own books: its company and its users, no firm wording
   if (list.error) return <ErrorNote error={list.error} onRetry={list.reload} />;
   if (!list.data) return <Loading />;
   const needle = q.trim().toLowerCase();
@@ -101,19 +103,18 @@ function Clients() {
   ];
   return (
     <>
-      <div className="grid">
+      {!own && <div className="grid">
         {figs.map(([label, n]) => <div key={label} className="card fig"><small>{label}</small><b>{n}</b></div>)}
-      </div>
-      <div className="top" style={{ marginBottom: 10 }}>
+      </div>}
+      {!own && <div className="top" style={{ marginBottom: 10 }}>
         <input type="search" placeholder={t('admin.searchClients')} value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: '1 1 240px' }} aria-label={t('search')} />
-        {useTenant().kind === 'company' ? null   // a company that keeps its own books is one company, made when the customer is added
-          : useTenant().owner ? <button className="b p" id="add-client" onClick={() => navigate('/admin/clients/new')}>{t('admin.addClient')}</button>
+        {tenantInfo.owner ? <button className="b p" id="add-client" onClick={() => navigate('/admin/clients/new')}>{t('admin.addClient')}</button>
           : <span className="small mut">{t('admin.ownerAdds')}</span>}
-      </div>
+      </div>}
       <div className="card">
         <div className="wrap">
           <table>
-            <thead><tr><th>{t('col.client')}</th><th>{t('col.country')}</th><th>{t('admin.crNo')}</th><th>{t('col.vat')}</th><th className="num">{t('admin.clientUsers')}</th><th>{t('admin.staffAssigned')}</th><th /></tr></thead>
+            <thead><tr><th>{t(own ? 'col.companyName' : 'col.client')}</th><th>{t('col.country')}</th><th>{t('admin.crNo')}</th><th>{t('col.vat')}</th><th className="num">{t(own ? 'admin.usersTab' : 'admin.clientUsers')}</th>{!own && <th>{t('admin.staffAssigned')}</th>}<th /></tr></thead>
             <tbody>
               {rows.map((c) => (
                 <tr key={c.id}>
@@ -125,16 +126,16 @@ function Clients() {
                   <td className="ltr">{c.crNumber}</td>
                   <td className="ltr">{c.vatStatus === 'unregistered' ? <span className="badge warn">{t('admin.unregistered')}</span> : c.vatNumber}</td>
                   <td className="num">{c.clientUsers}</td>
-                  <td className="small">{c.staff.join(', ') || <span className="badge warn">{t('admin.withoutStaff')}</span>}</td>
+                  {!own && <td className="small">{c.staff.join(', ') || <span className="badge warn">{t('admin.withoutStaff')}</span>}</td>}
                   <td className="num"><button className="b p" onClick={() => navigate(`/admin/clients/${c.id}`)}>{t('admin.manage')}</button></td>
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan={7} className="mut">{list.data.length ? t('admin.noMatch') : t('admin.noClientsYet')}</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={own ? 6 : 7} className="mut">{list.data.length ? t('admin.noMatch') : t('admin.noClientsYet')}</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
-      <p className="mut small">{t('admin.neverBooks')}</p>
+      <p className="mut small">{t(own ? 'admin.neverBooksOwn' : 'admin.neverBooks')}</p>
     </>
   );
 }
@@ -427,9 +428,9 @@ function ClientPage({ id }: { id: string }) {
 
   return (
     <>
-      <div className="actions" style={{ marginBottom: 10 }}>
+      {tenantInfo.kind !== 'company' && <div className="actions" style={{ marginBottom: 10 }}>
         <button className="b" onClick={() => navigate('/admin/clients')}>{t('admin.allClients')}</button>
-      </div>
+      </div>}
       <div className="top">
         <h1 style={{ flex: '1 1 auto' }}>{local(c.name, c.nameAr ?? null)}</h1>
         <span className={`badge ${suspended ? 'bad' : 'good'}`}>{suspended ? t('admin.suspended') : t('admin.active')}</span>
@@ -451,7 +452,7 @@ function ClientPage({ id }: { id: string }) {
 
       {/* Client users */}
       <div className="card">
-        <h2>{t('admin.clientUsersTitle')}</h2>
+        <h2>{t(tenantInfo.kind === 'company' ? 'admin.usersTab' : 'admin.clientUsersTitle')}</h2>
         <PeopleTable people={d.data.users} onChanged={d.reload} onInvite={setInvite}
           roleOf={(u) => (
             <select aria-label={t('admin.role')} value={u.clientRoleId ?? ''} disabled={busy}
@@ -462,7 +463,7 @@ function ClientPage({ id }: { id: string }) {
           )} />
         <div className="small mut" style={{ marginTop: 6 }}>{t('admin.rolesHint')} <a href="/admin/roles" onClick={(e) => { e.preventDefault(); navigate('/admin/roles'); }}>{t('admin.Roles')}</a></div>
         <form onSubmit={addUser} style={{ marginTop: 12 }}>
-          <b className="small">{t('admin.addClientUser')}</b>
+          <b className="small">{t(tenantInfo.kind === 'company' ? 'admin.addUser' : 'admin.addClientUser')}</b>
           {nuError && <div className="small bad">{nuError}</div>}
           <div className="row" style={{ marginTop: 6 }}>
             <label className="f">{t('reg.firstUserName')}<input id="nu-name" value={nu.name} onChange={(e) => setNu({ ...nu, name: e.target.value })} /></label>
@@ -946,7 +947,7 @@ function Settings() {
         {msg.ok && <div className="notice">{msg.ok}</div>}
         {msg.bad && <div className="notice bad">{msg.bad}</div>}
         <div className="actions">
-          <label className="f" style={{ flex: '1 1 240px' }}>{t('settings.firmName')}
+          <label className="f" style={{ flex: '1 1 240px' }}>{t(tenantInfo.kind === 'company' ? 'settings.companyName' : 'settings.firmName')}
             <input id="firm-name" value={name ?? s.data.firmName} disabled={!canEditDetails(tenantInfo)} onChange={(e) => setName(e.target.value)} />
           </label>
           {canEditDetails(tenantInfo) && <button className="b p" type="submit" disabled={busy || name === undefined} style={{ alignSelf: 'flex-end' }}>{t('save')}</button>}

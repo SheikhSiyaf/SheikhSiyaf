@@ -382,6 +382,14 @@ describe('Add customer: Company own accounts', () => {
     expect(p.url()).toMatch(/\/admin\/clients\/[0-9a-f-]{36}$/);
     expect(await p.locator('input[aria-label]').count()).toBeGreaterThan(1);
     await screenshotTo(p, 'add-customer-4-customer-page');
+    // A company with its own books is not an accounting firm: none of the firm wording is on its pages.
+    const pageText = await p.locator('body').innerText();
+    for (const firmWord of ['Firm staff', 'Client users', 'All clients', 'Add client user', 'Without staff']) expect(pageText, firmWord).not.toContain(firmWord);
+    await p.goto(`${BASE}/admin/clients`, { waitUntil: 'networkidle' });
+    await p.waitForTimeout(1200);
+    const listText = await p.locator('body').innerText();
+    for (const firmWord of ['Staff assigned', 'Total clients', 'Without staff', 'Add client', 'Client\n']) expect(listText, firmWord).not.toContain(firmWord);
+    await screenshotTo(p, 'add-customer-5-company-page');
     await p.goto(`${BASE}/admin/clients/new`, { waitUntil: 'networkidle' });
     await p.waitForTimeout(1200);
     expect(await p.locator('#add-client').count()).toBe(0);

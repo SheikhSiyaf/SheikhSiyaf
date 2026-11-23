@@ -332,3 +332,77 @@ describe('Demo mode in the platform owner\'s account', () => {
     expect(await q.locator('#demo-switch').count()).toBe(0);
   });
 });
+
+describe('Add customer: Company own accounts', () => {
+  it('is one flow (details, users, review): it never shows an add-companies screen and lands on the customer\'s page with the sign-in links', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: p, errors: errs } = await newPage(1280);
+    await signIn(p, platform);
+    await p.goto(`${BASE}/owner`, { waitUntil: 'networkidle' });
+    await p.locator('#own-new').waitFor({ timeout: 15000 });
+    await p.locator('#own-new').click();
+    await p.locator('#own-company-wizard').waitFor({ timeout: 15000 });
+    expect(await p.locator('body').innerText()).toContain('Company own accounts');
+    await screenshotTo(p, 'add-customer-1-details');
+
+    // Step 1: the company's details. Nothing else is asked for here.
+    const stamp = String(Date.now()).slice(-6);
+    await p.locator('#reg-name').fill(`Flow Test Trading ${stamp}`);
+    await p.locator('#reg-industry').selectOption('trading');
+    await p.locator('#reg-cr').fill(`10${Date.now().toString().slice(-8)}`);
+    await p.locator('#reg-vat').fill(`3${String(Date.now()).slice(-13).padStart(13, '1')}3`);
+    await p.locator('#reg-address').fill('King Fahd Road');
+    await p.locator('#reg-city').fill('Riyadh');
+    await p.locator('#reg-email').fill('info@flow-test.example.com');
+    await p.locator('#reg-phone').fill('+966500000000');
+    await p.locator('#own-w-next').click();
+
+    // Step 2: users. The first is an Owner; one more is added with another job title.
+    await p.locator('#own-w-name-0').waitFor({ timeout: 15000 });
+    await screenshotTo(p, 'add-customer-2-users');
+    await p.locator('#own-w-name-0').fill('Flow Owner');
+    await p.locator('#own-w-email-0').fill(`flow.owner.${stamp}@example.com`);
+    await p.locator('#own-w-add-user').click();
+    await p.locator('#own-w-name-1').fill('Flow Sales');
+    await p.locator('#own-w-email-1').fill(`flow.sales.${stamp}@example.com`);
+    await p.locator('#own-w-title-1').selectOption('Sales');
+    await p.locator('#own-w-next').click();
+
+    // Step 3: review, then create.
+    await p.locator('#own-w-review').waitFor({ timeout: 15000 });
+    const review = await p.locator('#own-company-wizard').innerText();
+    expect(review).toContain(`Flow Test Trading ${stamp}`);
+    expect(review).toContain('Flow Owner');
+    expect(review).toContain('Flow Sales');
+    await screenshotTo(p, 'add-customer-3-review');
+    await p.locator('#own-w-next').click();
+
+    // Lands on the customer's page (its one company), with both sign-in links, and no way to add another company.
+    await p.locator('#new-customer-done').waitFor({ timeout: 20000 });
+    expect(p.url()).toMatch(/\/admin\/clients\/[0-9a-f-]{36}$/);
+    expect(await p.locator('input[aria-label]').count()).toBeGreaterThan(1);
+    await screenshotTo(p, 'add-customer-4-customer-page');
+    await p.goto(`${BASE}/admin/clients/new`, { waitUntil: 'networkidle' });
+    await p.waitForTimeout(1200);
+    expect(await p.locator('#add-client').count()).toBe(0);
+    expect(await p.locator('#reg-name').count()).toBe(0);   // the "add company" form is not there either
+    expect(errs.filter((e) => !/favicon|status of 401/.test(e))).toEqual([]);   // the sign-in page's own 401 (nobody signed in yet) is expected
+
+    const made = (await db.query(`SELECT (SELECT count(*) FROM companies c JOIN firms f ON f.id = c.firm_id WHERE f.name = $1)::int AS companies,
+      (SELECT count(*) FROM users u JOIN firms f ON f.id = u.firm_id WHERE f.name = $1 AND u.kind = 'client')::int AS users`, [`Flow Test Trading ${stamp}`])).rows[0];
+    expect(made).toEqual({ companies: 1, users: 2 });
+  });
+
+  it('keeps the accounting firm flow as it was: name, kind and first Administrator, then the firm adds its client companies', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: p } = await newPage(1280);
+    await signIn(p, platform);
+    await p.goto(`${BASE}/owner`, { waitUntil: 'networkidle' });
+    await p.locator('#own-new').waitFor({ timeout: 15000 });
+    await p.locator('#own-new').click();
+    await p.locator('#own-kind-firm').click();
+    await p.locator('#own-admin-name').waitFor({ timeout: 15000 });
+    expect(await p.locator('#own-company-wizard').count()).toBe(0);
+    await screenshotTo(p, 'add-customer-firm-form');
+  });
+});

@@ -8,7 +8,10 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
 import { baseUrl, uuidParam, type Ctx } from './context.js';
-import { newInvite } from './admin.js';
+import { companyValues, insertCompany, newInvite, person, setupCompanyBooks, text } from './admin.js';
+
+/** The job titles every customer starts with (db/migrations/0062_department_roles.sql); a new company's people are given one. */
+export const COMPANY_JOB_TITLES = ['Owner', 'Finance', 'Sales', 'Commercial', 'Client accountant', 'Client management'] as const;
 
 async function requireOwner(db: Db) {
   if (!(await db.query('SELECT app_is_owner() AS o')).rows[0].o) throw new HttpError(403, 'Only the platform owner can do this.', 'err.ownerOnly');
@@ -32,6 +35,46 @@ export function registerOwnerRoutes(app: FastifyInstance, { as, opts }: Ctx) {
       await db.query("SELECT set_config('app.acting_firm', $1, true)", [id]);   // work inside the new customer for the rest
       const u = (await db.query(`INSERT INTO users (firm_id, kind, full_name, email) VALUES ($1, 'admin', $2, $3) RETURNING id`, [id, adminName, adminEmail])).rows[0].id;
       return { id, invite: { userId: u, name: adminName, email: adminEmail, token: await newInvite(db, u, baseUrl(req, opts)) } };
+    });
+  });
+
+  /**
+   * "Company own accounts": ONE customer with ONE company, created in a single save with its people. Nothing here asks for
+   * more companies: that belongs to accounting firms only. Everything happens in one database transaction, so either the
+   * customer, its company, its books and all its users exist, or nothing does. Each person gets one job title, which sets
+   * what they can open; at least one must be an Owner (the person who manages the company's users).
+   */
+  app.post<{ Body: { company?: Record<string, unknown>; users?: { name?: string; email?: string; jobTitle?: string }[] } }>('/api/owner/customers/company', async (req) => {
+    const c = req.body?.company ?? {};
+    const country = text(c, 'country') ?? '';
+    const v = companyValues(c, country);
+    const name = v.name;
+    if (!name) throw new HttpError(400, 'Enter the company name.', 'err.tenantName');
+    const raw = Array.isArray(req.body?.users) ? req.body!.users! : [];
+    if (!raw.length) throw new HttpError(400, 'Add at least one person, and make one of them the Owner.', 'err.companyUsers');
+    const people = raw.map((u) => {
+      const p = person(u as Record<string, unknown>);
+      const title = String(u?.jobTitle ?? '');
+      if (!(COMPANY_JOB_TITLES as readonly string[]).includes(title)) throw new HttpError(400, 'Choose a job title for each person.', 'err.roleChoose');
+      return { ...p, title };
+    });
+    if (new Set(people.map((p) => p.email.toLowerCase())).size !== people.length) throw new HttpError(400, 'Each person needs a different email.', 'err.sameEmail');
+    if (!people.some((p) => p.title === 'Owner')) throw new HttpError(400, 'Make one person the Owner: they manage the company\'s users and see everything.', 'err.companyOwner');
+    return owner(req, async (db) => {
+      const customerId = (await db.query('SELECT owner_create_tenant($1, $2) AS id', [name, 'company'])).rows[0].id as string;
+      await db.query("SELECT set_config('app.acting_firm', $1, true)", [customerId]);   // work inside the new customer for the rest
+      const titles = new Map((await db.query(`SELECT name, id, default_for FROM client_roles WHERE firm_id = app_firm_id() AND status = 'active'`)).rows.map((r) => [r.name as string, r]));
+      const companyId = await insertCompany(db, country, v);
+      const invites = [];
+      for (const p of people) {
+        const t = titles.get(p.title);
+        if (!t) throw new HttpError(500, 'Something went wrong. Please try again.', 'err.server');
+        const u = (await db.query(`INSERT INTO users (firm_id, kind, full_name, email) VALUES (app_firm_id(), 'client', $1, $2) RETURNING id`, [p.name, p.email])).rows[0].id as string;
+        await db.query('INSERT INTO memberships (user_id, company_id, role, client_role_id) VALUES ($1, $2, $3, $4)', [u, companyId, t.default_for ?? 'client_accountant', t.id]);
+        invites.push({ userId: u, name: p.name, email: p.email, jobTitle: p.title, token: await newInvite(db, u, baseUrl(req, opts)) });
+      }
+      await setupCompanyBooks(db, companyId);
+      return { id: customerId, companyId, invites };
     });
   });
 

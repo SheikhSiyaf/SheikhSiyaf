@@ -38,13 +38,13 @@ export async function newInvite(db: Db, userId: string, base?: string): Promise<
   return token;
 }
 
-function text(o: Record<string, unknown>, k: string): string | null {
+export function text(o: Record<string, unknown>, k: string): string | null {
   const v = o[k];
   return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
 }
 
 /** Registration fields shared by "Add client" and "Edit client". Country is fixed after registration. */
-function companyValues(c: Record<string, unknown>, country: string) {
+export function companyValues(c: Record<string, unknown>, country: string) {
   const d = COUNTRY_DEFAULTS[country];
   if (!d) throw new HttpError(400, 'Choose the country.', 'err.country');
   const registered = text(c, 'vatStatus') !== 'unregistered';
@@ -70,7 +70,22 @@ function companyValues(c: Record<string, unknown>, country: string) {
   };
 }
 
-function person(b: Record<string, unknown> | undefined) {
+/** Adds the company row for the customer the database session is working in (shared by both ways of adding a company). */
+export async function insertCompany(db: Db, country: string, v: ReturnType<typeof companyValues>): Promise<string> {
+  const cols = Object.keys(v);
+  const { rows } = await db.query(
+    `INSERT INTO companies (firm_id, country, currency, ${cols.join(', ')})
+     VALUES (app_firm_id(), $1, $2, ${cols.map((_, i) => `$${i + 3}`).join(', ')}) RETURNING id`,
+    [country, COUNTRY_DEFAULTS[country]!.currency, ...Object.values(v)]);
+  return rows[0].id as string;
+}
+
+/** The chart of accounts, head office cost centre and monthly periods of a new company. */
+export async function setupCompanyBooks(db: Db, companyId: string): Promise<void> {
+  await db.query('SELECT setup_company_books($1, $2, $3)', [companyId, JSON.stringify(CHART_TEMPLATE), new Date().getFullYear()]);
+}
+
+export function person(b: Record<string, unknown> | undefined) {
   const name = String(b?.name ?? '').trim();
   const email = String(b?.email ?? '').trim();
   if (!name || !email) throw new HttpError(400, 'Enter the name and email.', 'err.nameEmail');
@@ -131,12 +146,11 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
 
     return admin(req, async (db) => {
       if (!(await db.query('SELECT app_is_owner() AS o')).rows[0].o) throw new HttpError(403, 'Only Nusuh Books adds companies. Ask us to add one.', 'err.ownerOnly');
-      const cols = Object.keys(v);
-      const { rows } = await db.query(
-        `INSERT INTO companies (firm_id, country, currency, ${cols.join(', ')})
-         VALUES (app_firm_id(), $1, $2, ${cols.map((_, i) => `$${i + 3}`).join(', ')}) RETURNING id`,
-        [country, COUNTRY_DEFAULTS[country]!.currency, ...Object.values(v)]);
-      const companyId: string = rows[0].id;
+      // A company that keeps its own books is ONE company: it is created with its customer (Add customer), never added to.
+      if ((await db.query(`SELECT 1 FROM firms f WHERE f.id = app_firm_id() AND f.kind = 'company' AND EXISTS (SELECT 1 FROM companies c WHERE c.firm_id = f.id)`)).rows[0]) {
+        throw new HttpError(400, 'A company that keeps its own books has one company. Add people to it instead.', 'err.oneCompany');
+      }
+      const companyId = await insertCompany(db, country, v);
       const u = await db.query(
         `INSERT INTO users (firm_id, kind, full_name, email) VALUES (app_firm_id(), 'client', $1, $2) RETURNING id`,
         [first.name, first.email]);
@@ -146,7 +160,7 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
           `INSERT INTO memberships (user_id, company_id, role)
            SELECT id, $2, staff_role FROM users WHERE id = $1 AND kind = 'firm_staff' AND firm_id = app_firm_id()`, [staffId, companyId]);
       }
-      await db.query('SELECT setup_company_books($1, $2, $3)', [companyId, JSON.stringify(CHART_TEMPLATE), new Date().getFullYear()]);
+      await setupCompanyBooks(db, companyId);
       const token = await newInvite(db, u.rows[0].id, baseUrl(req, opts));
       return { id: companyId, invite: { userId: u.rows[0].id, name: first.name, email: first.email, token } };
     });

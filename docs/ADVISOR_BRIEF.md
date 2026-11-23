@@ -183,6 +183,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 
 ## 7. Where things stand and what is next
 
+**Add customer, "Company own accounts" is one flow (2026-11-23).** The owner console now makes ONE customer with ONE company and its people in a single save (POST /api/owner/customers/company, all-or-nothing in one transaction): company details, users with job titles (at least one Owner), review, then the customer's page with each person's one-time link. No add-companies screen exists for that kind of customer, and the server refuses a second company for it (err.oneCompany). The accounting firm flow is unchanged. No schema change.
+
 **Owner exception to standing rule 1 (2026-11-23).** The owner wrote that rule 1 is lifted for ONE real client on the live site. Every other company stays demo or test data. Order agreed: move to Supabase first (owner doing it within the hour), then add the real client there; ZATCA stays sandbox-only and no real emails are sent until the owner says otherwise.
 
 **Demo preview inside the live site (2026-11-23).** The platform owner's Demo mode button now opens /preview/index.html when no separate demo site is set up: the in-browser demo (sample companies held in the page, nothing saved, no database, a banner on every screen). Ownership sample data was added to it; the hotel sample has no Rooms yet (the in-browser demo has none). Remove the `build:preview` step from `build:prod` to take it off the site. The seven brochure companies stay in a scratch database only: loading them into the live database would be permanent (posted entries and the audit log cannot be deleted).

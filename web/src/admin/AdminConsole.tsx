@@ -9,6 +9,7 @@ import { navigate } from '../router.ts';
 import { AdminBilling } from './Billing.tsx';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
 import { ArabicHint, followArabic } from '../arabic.tsx';
+import { clearPendingInvites, takePendingInvites } from './pendingInvites.ts';
 
 type Country = 'SA' | 'AE' | 'OM';
 interface ClientRow {
@@ -47,7 +48,7 @@ export function AdminConsole({ me, path, onSignOut, owner, selfService }: { me: 
   const tabs = TABS.filter((x) => !(x === 'Staff' && tenant.kind === 'company'));
   const tab = (tabs.find((x) => x.toLowerCase() === seg[2]) ?? 'Clients');
   const clientId = tab === 'Clients' && seg[3] && seg[3] !== 'new' ? seg[3] : null;
-  const adding = tab === 'Clients' && seg[3] === 'new';
+  const adding = tab === 'Clients' && seg[3] === 'new' && tenant.kind !== 'company';   // never for a company's own books
   const tabLabel = (x: string) => (x === 'Clients' && selfService ? t('admin.usersTab') : x === 'Clients' && tenant.kind === 'company' ? t('admin.Companies') : t(`admin.${x}` as Key));
   const title = adding ? t('reg.title') : tabLabel(tab);
   if (!settings.data) return <main>{settings.error ? <ErrorNote error={settings.error} onRetry={settings.reload} /> : <Loading />}</main>;
@@ -105,7 +106,8 @@ function Clients() {
       </div>
       <div className="top" style={{ marginBottom: 10 }}>
         <input type="search" placeholder={t('admin.searchClients')} value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: '1 1 240px' }} aria-label={t('search')} />
-        {useTenant().owner ? <button className="b p" id="add-client" onClick={() => navigate('/admin/clients/new')}>{t(useTenant().kind === 'company' ? 'admin.addCompany' : 'admin.addClient')}</button>
+        {useTenant().kind === 'company' ? null   // a company that keeps its own books is one company, made when the customer is added
+          : useTenant().owner ? <button className="b p" id="add-client" onClick={() => navigate('/admin/clients/new')}>{t('admin.addClient')}</button>
           : <span className="small mut">{t('admin.ownerAdds')}</span>}
       </div>
       <div className="card">
@@ -138,11 +140,11 @@ function Clients() {
 }
 
 // ------------------------------------------------------------------ Registration form (add and edit)
-type Fields = Record<string, string>;
+export type Fields = Record<string, string>;
 /** The form keeps the chosen modules as "Restaurant,Assets"; the API takes a list. */
-const toBody = (f: Fields) => ({ ...f, modules: (f.modules ?? '').split(',').filter(Boolean) });
+export const toBody = (f: Fields) => ({ ...f, modules: (f.modules ?? '').split(',').filter(Boolean) });
 
-function useCompanyCheck() {
+export function useCompanyCheck() {
   const { t } = useI18n();
   return (f: Fields): string | undefined => {
     const country = (f.country ?? 'SA') as Country;
@@ -162,7 +164,8 @@ function useCompanyCheck() {
   };
 }
 
-function CompanyForm({ f, set, editing }: { f: Fields; set: (k: string, v: string) => void; editing?: boolean }) {
+/** `fyStart` asks for the month the financial year STARTS (the first day of it); it is stored as the day the year ends. */
+export function CompanyForm({ f, set, editing, fyStart }: { f: Fields; set: (k: string, v: string) => void; editing?: boolean; fyStart?: boolean }) {
   const { t } = useI18n();
   const v = (k: string) => f[k] ?? '';
   const on = (k: string) => (e: { target: { value: string } }) => set(k, e.target.value);
@@ -260,14 +263,26 @@ function CompanyForm({ f, set, editing }: { f: Fields; set: (k: string, v: strin
       <div className="card">
         <h2>{t('reg.settings')}</h2>
         <div className="row">
-          <label className="f">{t('reg.fyEnd')}
-            <select id="reg-fy" value={v('fyEnd') || '12-31'} onChange={on('fyEnd')}>
-              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => {
-                const val = `${String(m).padStart(2, '0')}-${String(lastDay(m)).padStart(2, '0')}`;
-                return <option key={m} value={val}>{lastDay(m)} {t(`month.${m}` as Key)}</option>;
-              })}
-            </select>
-          </label>
+          {fyStart ? (() => {
+            const endMonth = Number((v('fyEnd') || '12-31').slice(0, 2));
+            const startMonth = endMonth === 12 ? 1 : endMonth + 1;
+            return (
+              <label className="f">{t('reg.fyStart')}
+                <select id="reg-fy" value={startMonth} onChange={(e) => { const s = Number(e.target.value); const m = s === 1 ? 12 : s - 1; set('fyEnd', `${String(m).padStart(2, '0')}-${String(lastDay(m)).padStart(2, '0')}`); }}>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => <option key={m} value={m}>1 {t(`month.${m}` as Key)}</option>)}
+                </select>
+              </label>
+            );
+          })() : (
+            <label className="f">{t('reg.fyEnd')}
+              <select id="reg-fy" value={v('fyEnd') || '12-31'} onChange={on('fyEnd')}>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => {
+                  const val = `${String(m).padStart(2, '0')}-${String(lastDay(m)).padStart(2, '0')}`;
+                  return <option key={m} value={val}>{lastDay(m)} {t(`month.${m}` as Key)}</option>;
+                })}
+              </select>
+            </label>
+          )}
           <label className="f">{t('reg.invoicePrefix')}<input id="reg-prefix" value={v('invoicePrefix')} onChange={on('invoicePrefix')} dir="ltr" maxLength={12} /></label>
           <label className="f">{t('reg.paymentTerms')}<input id="reg-terms" type="number" min={0} max={365} value={v('paymentTermsDays')} onChange={on('paymentTermsDays')} /></label>
         </div>
@@ -375,10 +390,12 @@ function ClientPage({ id }: { id: string }) {
   const [busy, setBusy] = useState(false);
   const [confirmSuspend, setConfirmSuspend] = useState(false);
   const [invite, setInvite] = useState<Invite>();
+  const [pending, setPending] = useState<Invite[]>(() => takePendingInvites(id));   // links made when the customer was added
   const [nu, setNu] = useState({ name: '', email: '', role: '' });
   const [nuError, setNuError] = useState<string>();
   const [ticks, setTicks] = useState<Record<string, boolean>>({});   // shown at once, confirmed by the server
   useEffect(() => setTicks({}), [d.data]);
+  useEffect(() => { clearPendingInvites(); }, []);   // the links stay in this page's state, not in memory elsewhere
 
   if (d.error) return <ErrorNote error={d.error} onRetry={d.reload} />;
   if (!d.data) return <Loading />;
@@ -428,6 +445,8 @@ function ClientPage({ id }: { id: string }) {
       {suspended && <div className="notice warn">{t('admin.clientSuspendedNote')}</div>}
       {msg.ok && <div className="notice">{msg.ok}</div>}
       {msg.bad && <div className="notice bad" role="alert">{msg.bad}</div>}
+      {pending.length > 0 && <div className="notice good" role="status" id="new-customer-done">{t('own.w.created', { n: pending.length })}</div>}
+      {pending.map((p) => <InviteBox key={p.userId} invite={p} onClose={() => setPending((x) => x.filter((y) => y.userId !== p.userId))} />)}
       {invite && <InviteBox invite={invite} onClose={() => setInvite(undefined)} />}
 
       {/* Client users */}
@@ -458,8 +477,8 @@ function ClientPage({ id }: { id: string }) {
         </form>
       </div>
 
-      {/* Firm staff for this client */}
-      <div className="card">
+      {/* Firm staff for this client (a company that keeps its own books has no firm staff) */}
+      {tenantInfo.kind !== 'company' && <div className="card">
         <h2>{t('reg.assignStaff')}</h2>
         <div className="mut small" style={{ marginBottom: 8 }}>{t('admin.staffForClientHint')}</div>
         <div className="check-list">
@@ -475,7 +494,7 @@ function ClientPage({ id }: { id: string }) {
             </label>
           ))}
         </div>
-      </div>
+      </div>}
 
       {/* Registration and entry settings */}
       <form onSubmit={save} noValidate>

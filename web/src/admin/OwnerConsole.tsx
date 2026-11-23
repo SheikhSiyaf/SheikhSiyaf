@@ -6,16 +6,17 @@ import { api, setActingTenant, useApi, type Me } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
 import { navigate } from '../router.ts';
 import { OwnerBilling, OwnerPlans } from './Billing.tsx';
+import { NewCompanyCustomer } from './NewCompany.tsx';
 import { OwnerSupport, useOwnerSupportUnread } from '../support/Support.tsx';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
 
 interface Tenant { id: string; name: string; kind: 'firm' | 'company'; status: 'active' | 'suspended'; createdAt: string; companies: number; users: number; admins: string | null }
 
 /** Opens a customer's Administrator console as the owner. */
-export function openTenant(t: { id: string; name: string; kind: string }) {
+export function openTenant(t: { id: string; name: string; kind: string }, to = '/admin/clients') {
   setActingTenant(t.id);
   try { sessionStorage.setItem('nb_acting_name', t.name); sessionStorage.setItem('nb_acting_kind', t.kind); } catch { /* not kept */ }
-  navigate('/admin/clients');
+  navigate(to);
 }
 
 const OWNER_TABS = [['customers', '/owner'], ['support', '/owner/support'], ['billing', '/owner/billing'], ['plans', '/owner/plans']] as const;
@@ -68,6 +69,11 @@ function Customers() {
     void run(async () => { const r = await api<{ id: string; invite: Invite }>('/api/owner/tenants', { body: form }); setInvite(r.invite); setForm(undefined); });
   };
   const rows = list.data ?? [];
+  const kindPicker = (cur: NonNullable<typeof form>) => (
+    <div className="seg" role="radiogroup" style={{ marginBottom: 10 }}>
+      {(['company', 'firm'] as const).map((k) => <button key={k} type="button" role="radio" aria-checked={cur.kind === k} id={`own-kind-${k}`} className={cur.kind === k ? 'on' : ''} onClick={() => setForm({ ...cur, kind: k })}>{t(`own.kind.${k}`)}</button>)}
+    </div>
+  );
   return (
     <>
         <div className="grid">
@@ -85,12 +91,19 @@ function Customers() {
           <span className="spacer" />
           {!form && <button className="b p" id="own-new" onClick={() => setForm({ name: '', kind: 'company', adminName: '', adminEmail: '' })}>{t('own.new')}</button>}
         </div>
-        {form && (
+        {form && form.kind === 'company' && (
+          <div className="card inset">
+            <h2>{t('own.new')}</h2>
+            {kindPicker(form)}
+            <div className="small mut" style={{ marginBottom: 8 }}>{t('own.kindHint.company')}</div>
+            <NewCompanyCustomer onCancel={() => setForm(undefined)}
+              onCreated={(c) => { setForm(undefined); list.reload(); openTenant({ id: c.id, name: c.name, kind: 'company' }, `/admin/clients/${c.companyId}`); }} />
+          </div>
+        )}
+        {form && form.kind === 'firm' && (
           <form className="card inset" onSubmit={create}>
             <h2>{t('own.new')}</h2>
-            <div className="seg" role="radiogroup" style={{ marginBottom: 10 }}>
-              {(['company', 'firm'] as const).map((k) => <button key={k} type="button" role="radio" aria-checked={form.kind === k} id={`own-kind-${k}`} className={form.kind === k ? 'on' : ''} onClick={() => setForm({ ...form, kind: k })}>{t(`own.kind.${k}`)}</button>)}
-            </div>
+            {kindPicker(form)}
             <div className="small mut" style={{ marginBottom: 8 }}>{t(`own.kindHint.${form.kind}`)}</div>
             <label className="f">{t('own.name')}<input id="own-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></label>
             <div className="row">

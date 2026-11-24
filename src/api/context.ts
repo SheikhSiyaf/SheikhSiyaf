@@ -12,6 +12,8 @@ export interface ServerOptions {
   encryptionKey?: string;
   /** Base address for invitation links; empty means the address the browser is using. */
   publicUrl?: string;
+  /** REDIRECT_OLD_ADDRESS=on: the old *.onrender.com address sends page loads on to publicUrl. */
+  redirectOldAddress?: boolean;
   cookieSecure?: boolean;
   demoLogins?: boolean;
   /** This server IS the demo site (its own database of fictional companies, src/api/demo.ts). The secret is shared with the live app. */

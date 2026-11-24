@@ -38,6 +38,7 @@ export const config = {
   encryptionKey: env.ENCRYPTION_KEY || (production ? '' : DEV_ENCRYPTION_KEY),
   /** Address used in links in emails, e.g. https://books.example.com. In production the only address used. */
   publicUrl: env.PUBLIC_URL || '',
+  redirectOldAddress: env.REDIRECT_OLD_ADDRESS === 'on',
   /** Show the demo sign-in buttons on the sign-in page. Never on in production. */
   demoLogins: env.DEMO_LOGINS === 'true' && !production,
   /** This deployment is the demo site: its own database of fictional companies, opened from the live app by a signed link. */

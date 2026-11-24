@@ -39,11 +39,18 @@ class Window {
   }
 }
 
-export function registerHardening(app: FastifyInstance, o: { pool: pg.Pool; https: boolean; publicUrl?: string }) {
+export function registerHardening(app: FastifyInstance, o: { pool: pg.Pool; https: boolean; publicUrl?: string; redirectOldAddress?: boolean }) {
   const limits = new Window();
   const publicHost = (() => { try { return o.publicUrl ? new URL(o.publicUrl).host : ''; } catch { return ''; } })();
 
-  app.addHook('onRequest', async (req: FastifyRequest) => {
+  // After the move to its own domain, page loads on the old Render address (*.onrender.com) go on to the new one.
+  // Off until REDIRECT_OLD_ADDRESS=on; only GET and HEAD move (a changing request is never silently re-sent); /health stays.
+  const moveFromRender = Boolean(o.redirectOldAddress && o.publicUrl && publicHost && !publicHost.endsWith('.onrender.com'));
+
+  app.addHook('onRequest', async (req: FastifyRequest, reply) => {
+    if (moveFromRender && ['GET', 'HEAD'].includes(req.method) && /\.onrender\.com$/i.test(String(req.headers.host ?? '').replace(/:\d+$/, '')) && !/^\/health(\?|$)/.test(req.url)) {
+      return reply.redirect(`${o.publicUrl!.replace(/\/+$/, '')}${req.url}`, 308);
+    }
     const path = routePath(req);
     const rule = LIMITS.find(([re]) => re.test(path));
     if (rule && !limits.take(`${rule[0].source}|${req.ip}`, rule[1])) throw new HttpError(429, 'Too many requests. Wait a minute and try again.', 'err.tooMany');

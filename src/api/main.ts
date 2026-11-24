@@ -47,6 +47,7 @@ const app = buildServer({
   encryptionKey: config.encryptionKey,   // never SESSION_SECRET (src/config.ts)
   production: config.production,
   publicUrl: config.publicUrl,
+  redirectOldAddress: config.redirectOldAddress,
   cookieSecure: config.cookieSecure,
   demoLogins: config.demoLogins,
   demoSite: config.demoSite ? { linkSecret: config.demoLinkSecret } : undefined,

@@ -63,7 +63,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   const { pool } = opts;
   app.decorateRequest('userId', null);
   app.decorateRequest('sessionVersion', null);
-  registerHardening(app, { pool, https: Boolean(opts.cookieSecure || opts.production), publicUrl: opts.publicUrl });
+  registerHardening(app, { pool, https: Boolean(opts.cookieSecure || opts.production), publicUrl: opts.publicUrl, redirectOldAddress: opts.redirectOldAddress });
 
   app.addHook('onRequest', async (req) => {
     const s = verifySession(opts.sessionSecret, readCookie(req.headers.cookie, SESSION_COOKIE));

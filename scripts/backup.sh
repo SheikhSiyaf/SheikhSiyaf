@@ -15,6 +15,15 @@
 #   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY   the storage login (use one that can only write to this bucket)
 set -euo pipefail
 
+# A value pasted into a host's settings page often carries a hidden line break or space at the end. A database name or
+# web address ending in one is a different, wrong name, so every setting is trimmed before it is used.
+trim() { printf '%s' "${!1:-}" | tr -d '[:space:]'; }
+for v in BACKUP_DATABASE_URL BACKUP_S3_BUCKET AWS_ENDPOINT_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+  if [ -n "${!v:-}" ]; then export "$v=$(trim "$v")"; fi
+done
+# The passphrase may hold spaces inside it, so only its ends are trimmed.
+if [ -n "${BACKUP_PASSPHRASE:-}" ]; then BACKUP_PASSPHRASE="$(printf '%s' "$BACKUP_PASSPHRASE" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"; export BACKUP_PASSPHRASE; fi
+
 : "${BACKUP_DATABASE_URL:?BACKUP_DATABASE_URL is not set}"
 : "${BACKUP_PASSPHRASE:?BACKUP_PASSPHRASE is not set}"
 if [ "${#BACKUP_PASSPHRASE}" -lt 16 ]; then echo "BACKUP_PASSPHRASE must be at least 16 characters." >&2; exit 2; fi

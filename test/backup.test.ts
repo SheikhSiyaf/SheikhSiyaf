@@ -71,6 +71,24 @@ describe('backup.sh', () => {
     expect(bytes.includes(Buffer.from('CREATE TABLE'))).toBe(false);
   });
 
+  it('ignores a space or line break pasted at the end of the database address or the passphrase', async () => {
+    const d2 = mkdtempSync(join(tmpdir(), 'backup-ws-'));
+    try {
+      const r = run('bash', ['scripts/backup.sh'], { BACKUP_DATABASE_URL: `${at(SOURCE)}\n`, BACKUP_PASSPHRASE: `${PASS}\n`, BACKUP_DIR: d2 });
+      expect(r.status, r.stderr).toBe(0);
+      const made = readdirSync(d2).filter((f) => f.endsWith('.dump.gpg'));
+      expect(made).toHaveLength(1);
+      // and the restore side opens it with the same pasted passphrase (a line break at the end)
+      const target = `nusuh_backup_ws`;
+      await admin.query(`DROP DATABASE IF EXISTS ${target} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${target}`);
+      try {
+        const rr = run('bash', ['scripts/restore.sh', join(d2, made[0]!), at(target)], { BACKUP_PASSPHRASE: `${PASS}\n` });
+        expect(rr.status, rr.stderr).toBe(0);
+      } finally { await admin.query(`DROP DATABASE IF EXISTS ${target} WITH (FORCE)`); }
+    } finally { rmSync(d2, { recursive: true, force: true }); }
+  });
+
   it('refuses to run without a database, without a passphrase, or with a short one, and keeps no file', () => {
     const before = readdirSync(dir).length;
     expect(run('bash', ['scripts/backup.sh'], { BACKUP_DATABASE_URL: '', BACKUP_PASSPHRASE: PASS, BACKUP_DIR: dir }).status).not.toBe(0);

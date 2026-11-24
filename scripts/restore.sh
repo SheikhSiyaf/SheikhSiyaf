@@ -10,6 +10,8 @@ set -euo pipefail
 
 file="${1:?usage: restore.sh <backup file> <target database url>}"
 target="${2:?usage: restore.sh <backup file> <target database url>}"
+# Same trimming as backup.sh: a hidden line break pasted at the end of the passphrase must not change it.
+if [ -n "${BACKUP_PASSPHRASE:-}" ]; then BACKUP_PASSPHRASE="$(printf '%s' "$BACKUP_PASSPHRASE" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"; export BACKUP_PASSPHRASE; fi
 : "${BACKUP_PASSPHRASE:?BACKUP_PASSPHRASE is not set}"
 [ -s "$file" ] || { echo "No such backup: $file" >&2; exit 2; }
 

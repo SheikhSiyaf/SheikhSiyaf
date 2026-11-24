@@ -1,4 +1,4 @@
-import { encryptionKeyOf } from './context.js';
+import { baseUrl, encryptionKeyOf } from './context.js';
 // Sign-in, two-factor, invitations and the signed-in person's own account.
 import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
@@ -10,6 +10,9 @@ import { newTotpSecret, otpauthUri, totpStep } from '../auth/totp.js';
 import { decryptSecret, encryptSecret } from '../auth/secretBox.js';
 import { DEMO_PASSWORD, DEMO_USERS } from '../db/demoData.js';
 import { LOGIN_LIMITS, Throttle, accountKey } from '../auth/throttle.js';
+import * as E from '../books/emailService.js';
+import { emailChangeConfirm, emailChangedAlert } from '../email/templates.js';
+import { randomBytes } from 'node:crypto';
 
 export const MIN_PASSWORD = 10;
 export const hashInviteToken = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -175,5 +178,66 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
     // The new secret ends every older sign-in (0053); this browser gets a fresh cookie.
     reply.header('set-cookie', await sessionFor(userId));
     return { ok: true };
+  });
+
+  // -------------------------------------------------------------- your own sign-in email
+  // The sign-in email is the account. It changes only through a link sent to the NEW address, after the person proves who
+  // they are (password, and the two-factor code when it is on). A changed sign-in email ends every older sign-in.
+  app.get('/api/me/email-settings', async (req) => as(req, async (db) => {
+    const r = (await db.query('SELECT * FROM own_email_settings()')).rows[0];
+    if (!r) throw new HttpError(401, 'Please sign in.', 'err.signIn');
+    const pending = (await db.query('SELECT purpose, new_email AS "newEmail", expires_at AS "expiresAt" FROM own_pending_email_changes()')).rows;
+    const tf = (await db.query('SELECT (totp_enabled_at IS NOT NULL) AS t FROM users WHERE id = app_user_id()')).rows[0]?.t === true;
+    return { email: r.email, backupEmail: r.kind === 'owner' ? r.backup_email : null, backupVerified: r.kind === 'owner' ? r.backup_verified : false, kind: r.kind, twoFactor: tf, pending };
+  }));
+
+  app.post<{ Body: { purpose?: string; newEmail?: string; password?: string; code?: string } }>('/api/me/email-change', async (req) => {
+    const purpose = req.body?.purpose === 'backup' ? 'backup' : req.body?.purpose === 'main' ? 'main' : null;
+    const newEmail = String(req.body?.newEmail ?? '').trim().toLowerCase();
+    if (!purpose) throw new HttpError(400, 'Choose which email to change.', 'err.format');
+    if (!E.EMAIL.test(newEmail)) throw new HttpError(400, 'Enter a valid email address.', 'err.email');
+    const me = (await as(req, (db) => db.query('SELECT u.id, u.email, u.full_name AS name, u.firm_id AS "firmId", u.kind FROM users u WHERE u.id = app_user_id() AND u.status = \'active\''))).rows[0];
+    if (!me) throw new HttpError(401, 'Please sign in.', 'err.signIn');
+    if (purpose === 'backup' && me.kind !== 'owner') throw new HttpError(403, 'Only the platform owner has a backup email.', 'err.backupOwnerOnly');
+    // Proof of identity: the password (counted like a sign-in, so it cannot be guessed here) and the two-factor code when it is on.
+    const acct = accountKey(me.email);
+    await accounts.check(acct);
+    const a = (await pool.query('SELECT id, password_hash, totp_secret_enc FROM auth_user_by_email($1)', [me.email])).rows[0];
+    if (!a || !(await verifyPassword(String(req.body?.password ?? ''), a.password_hash))) {
+      await accounts.fail(acct);
+      throw new HttpError(401, 'The password is not right.', 'err.passwordWrong');
+    }
+    if (a.totp_secret_enc) {
+      await codes.check(me.id);
+      let good = false;
+      try { good = await useCode(me.id, decryptSecret(key, a.totp_secret_enc), String(req.body?.code ?? '')); } catch { good = false; }
+      if (!good) { await codes.fail(me.id); throw new HttpError(400, 'Enter the current code from your authenticator app.', 'err.currentCode'); }
+      await codes.clear(me.id);
+    }
+    await accounts.clear(acct);
+    const token = randomBytes(32).toString('base64url');
+    await as(req, (db) => db.query('SELECT * FROM email_change_request($1, $2, $3)', [purpose, newEmail, hashInviteToken(token)]));
+    // The link goes to the NEW address: only someone who can read it can finish the change.
+    await E.queue(pool, { firmId: me.firmId, kind: 'notice', to: newEmail, toName: me.name, mail: emailChangeConfirm(me.name, purpose, newEmail, `${baseUrl(req, opts)}/confirm-email/${token}`) });
+    return { ok: true, sentTo: newEmail };
+  });
+
+  // The link in the email. Opening it only shows what it would do; pressing the button confirms (so a mail scanner that
+  // opens links cannot confirm by itself).
+  app.get<{ Params: { token: string } }>('/api/email-change/:token', async (req) => {
+    const r = (await pool.query('SELECT purpose, new_email AS "newEmail" FROM email_change_info($1)', [hashInviteToken(req.params.token)])).rows[0];
+    if (!r) throw new HttpError(404, 'This link has expired or was already used. Ask for a new one from Settings.', 'err.changeLinkInvalid');
+    return r;
+  });
+  app.post<{ Params: { token: string } }>('/api/email-change/:token', async (req) => {
+    const r = (await pool.query('SELECT * FROM email_change_confirm($1)', [hashInviteToken(req.params.token)])).rows[0];
+    if (!r?.ok) throw new HttpError(404, 'This link has expired or was already used. Ask for a new one from Settings.', 'err.changeLinkInvalid');
+    // Tell the old address (and the verified backup) what changed, in case it was not them.
+    const alert = emailChangedAlert(r.full_name, r.purpose, r.old_email, r.new_email);
+    const to = r.purpose === 'main' ? [r.old_email, r.backup_email] : [r.old_email];
+    for (const addr of to.filter((x: string | null): x is string => Boolean(x))) {
+      await E.queue(pool, { kind: 'notice', to: addr, toName: r.full_name, mail: alert }).catch(() => undefined);
+    }
+    return { ok: true, purpose: r.purpose };
   });
 }

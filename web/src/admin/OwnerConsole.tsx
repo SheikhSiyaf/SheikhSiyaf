@@ -6,6 +6,7 @@ import { api, setActingTenant, useApi, type Me } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
 import { navigate } from '../router.ts';
 import { OwnerBilling, OwnerPlans } from './Billing.tsx';
+import { OwnerSettings } from './OwnerSettings.tsx';
 import { NewCompanyCustomer } from './NewCompany.tsx';
 import { OwnerSupport, useOwnerSupportUnread } from '../support/Support.tsx';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
@@ -19,7 +20,7 @@ export function openTenant(t: { id: string; name: string; kind: string }, to = '
   navigate(to);
 }
 
-const OWNER_TABS = [['customers', '/owner'], ['support', '/owner/support'], ['billing', '/owner/billing'], ['plans', '/owner/plans']] as const;
+const OWNER_TABS = [['customers', '/owner'], ['support', '/owner/support'], ['billing', '/owner/billing'], ['plans', '/owner/plans'], ['settings', '/owner/settings']] as const;
 
 export function OwnerConsole({ me, path, onSignOut }: { me: Me; path: string; onSignOut: () => void }) {
   const { t, has } = useI18n();
@@ -33,7 +34,7 @@ export function OwnerConsole({ me, path, onSignOut }: { me: Me; path: string; on
       if (w) { w.opener = null; w.location.replace(r.url); } else window.location.assign(r.url);
     } catch (e) { w?.close(); setDemoMsg(errorText(t, has, e)); }
   };
-  const tab = path.startsWith('/owner/billing') ? 'billing' : path.startsWith('/owner/plans') ? 'plans' : path.startsWith('/owner/support') ? 'support' : 'customers';
+  const tab = path.startsWith('/owner/billing') ? 'billing' : path.startsWith('/owner/plans') ? 'plans' : path.startsWith('/owner/settings') ? 'settings' : path.startsWith('/owner/support') ? 'support' : 'customers';
   const unread = useOwnerSupportUnread();
   const title = t(`own.tab.${tab}`);
   return (
@@ -45,7 +46,7 @@ export function OwnerConsole({ me, path, onSignOut }: { me: Me; path: string; on
       <main>
         <div className="top"><h1>{title}</h1><TopControls /></div>
         {demoMsg && <div className="notice bad" role="alert" id="demo-msg">{demoMsg}</div>}
-        {tab === 'billing' ? <OwnerBilling /> : tab === 'plans' ? <OwnerPlans /> : tab === 'support' ? <OwnerSupport /> : <Customers />}
+        {tab === 'billing' ? <OwnerBilling /> : tab === 'plans' ? <OwnerPlans /> : tab === 'settings' ? <OwnerSettings /> : tab === 'support' ? <OwnerSupport /> : <Customers />}
       </main>
     </div>
   );

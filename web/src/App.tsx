@@ -15,6 +15,7 @@ import { Workspace } from './books/Workspace.tsx';
 import { AdminConsole } from './admin/AdminConsole.tsx';
 import { AcceptInvite } from './pages/AcceptInvite.tsx';
 import { Security } from './pages/Security.tsx';
+import { ConfirmEmail } from './pages/ConfirmEmail.tsx';
 import { ErrorNote, Loading } from './ui.tsx';
 import { PrintHost } from './print/Print.tsx';
 
@@ -49,7 +50,7 @@ function Screens() {
   useEffect(() => {
     if (!user) return;
     if (path === '/demo') return;   // the demo site's client-type picker is reachable while signed in
-    if (path.startsWith('/invite/') || path.startsWith('/i/') || path.startsWith('/pay/') || path === '/security') return;
+    if (path.startsWith('/invite/') || path.startsWith('/confirm-email/') || path.startsWith('/i/') || path.startsWith('/pay/') || path === '/security') return;
     if (user.kind === 'owner') {
       if (path.startsWith('/admin') && !getActingTenant()) navigate('/owner');
       else if (!path.startsWith('/owner') && !path.startsWith('/admin')) navigate('/owner');
@@ -68,6 +69,8 @@ function Screens() {
   if (shared) return <PublicDocument key={path} token={shared[1]!} paid={shared[2] ?? new URLSearchParams(window.location.search).get('paid')} />;
   const sandboxPay = /^\/pay\/sandbox\/([\w-]+)$/.exec(path);
   if (sandboxPay) return <SandboxPay refId={sandboxPay[1]!} />;
+  const confirmEmail = /^\/confirm-email\/([\w-]+)$/.exec(path);
+  if (confirmEmail) return <ConfirmEmail token={confirmEmail[1]!} onDone={me.reload} />;
   const invite = /^\/invite\/([\w-]+)$/.exec(path);
   if (invite) return <AcceptInvite token={invite[1]!} onDone={me.reload} />;
 

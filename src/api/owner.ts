@@ -9,6 +9,9 @@ import type { Db } from '../db/session.js';
 import { HttpError } from './errors.js';
 import { baseUrl, uuidParam, type Ctx } from './context.js';
 import { companyValues, insertCompany, newInvite, person, setupCompanyBooks, text } from './admin.js';
+import { emailConfig } from '../email/transport.js';
+import { sendQueued } from '../email/mailer.js';
+import { testEmail } from '../email/templates.js';
 
 /** The job titles every customer starts with (db/migrations/0062_department_roles.sql); a new company's people are given one. */
 /** The one kind of person in a company's people list who is not a job title: the separate Administrator login. */
@@ -20,7 +23,7 @@ async function requireOwner(db: Db) {
 }
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
-export function registerOwnerRoutes(app: FastifyInstance, { as, opts }: Ctx) {
+export function registerOwnerRoutes(app: FastifyInstance, { as, opts, pool }: Ctx) {
   const owner = <T>(req: Parameters<Ctx['as']>[0], fn: (db: Db) => Promise<T>) => as(req, async (db) => { await requireOwner(db); return fn(db); });
 
   app.get('/api/owner/tenants', async (req) => owner(req, async (db) => (await db.query(
@@ -82,6 +85,40 @@ export function registerOwnerRoutes(app: FastifyInstance, { as, opts }: Ctx) {
       await setupCompanyBooks(db, companyId);
       return { id: customerId, companyId, invites };
     });
+  });
+
+  /**
+   * The owner's Settings page: the sign-in email and backup email, which email service is in use (never its key), and the
+   * last test emails with what became of each.
+   */
+  const settings = async (db: Db) => {
+    const r = (await db.query('SELECT * FROM own_email_settings()')).rows[0];
+    const cfg = emailConfig();
+    return {
+      email: r.email, backupEmail: r.backup_email, backupVerified: r.backup_verified,
+      twoFactor: (await db.query('SELECT (totp_enabled_at IS NOT NULL) AS t FROM users WHERE id = app_user_id()')).rows[0]?.t === true,
+      pending: (await db.query('SELECT purpose, new_email AS "newEmail", expires_at AS "expiresAt" FROM own_pending_email_changes()')).rows,
+      service: { provider: cfg.provider, from: cfg.from, keySet: Boolean(cfg.key) },
+      tests: (await db.query('SELECT id, created_at AS "createdAt", to_email AS "to", status, attempts, last_error AS "lastError", sent_at AS "sentAt" FROM owner_email_tests()')).rows,
+    };
+  };
+  app.get('/api/owner/settings', async (req) => owner(req, settings));
+
+  /** Sends a test email to the owner's own address(es) now, through the same queue every email uses, and reports what happened. */
+  app.post('/api/owner/settings/test-email', async (req) => {
+    const waiting = new Set<string>(await owner(req, async (db) => {
+      const me = (await db.query('SELECT full_name AS name FROM users WHERE id = app_user_id()')).rows[0];
+      const mail = testEmail(me.name, new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC');
+      return (await db.query('SELECT outbox_id FROM owner_queue_test_emails($1, $2, $3)', [mail.subject, mail.text, mail.html])).rows.map((r) => r.outbox_id as string);
+    }));
+    // Now, not at the next minute: the owner is waiting for the answer. Other emails may be ahead in the queue, so keep going
+    // (a few rounds at most) until these have been tried.
+    for (let round = 0; round < 10 && waiting.size; round++) {
+      const done = await sendQueued(pool, { limit: 20 }).catch(() => []);
+      for (const d of done) waiting.delete(d.id);
+      if (!done.length) break;
+    }
+    return owner(req, settings);
   });
 
   /** The platform owner's Demo mode button: a short-lived signed link to the demo site (src/demo/demoLink.ts). */

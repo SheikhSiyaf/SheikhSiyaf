@@ -575,3 +575,27 @@ describe('The billing invoice sent to a customer', () => {
     }
   });
 });
+
+describe('Owner Settings', () => {
+  it('shows the sign-in email, an empty backup email, the email service without a key, and a test button that reports what happened', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: p } = await newPage(1280);
+    await signIn(p, platform);
+    await p.goto(`${BASE}/owner/settings`, { waitUntil: 'networkidle' });
+    await p.locator('#oset-main-email').waitFor({ timeout: 15000 });
+    expect((await p.locator('#oset-main-email').innerText()).toLowerCase()).toBe(platform.toLowerCase());
+    expect(await p.locator('#oset-backup-none').count()).toBe(1);
+    const text = await p.locator('main').innerText();
+    for (const want of ['Email service', 'Main email', 'Backup email', 'Test email']) expect(text, want).toContain(want);
+    expect(text).not.toMatch(/re_[A-Za-z0-9]{6}/);
+    // the change form asks for the password and does nothing by itself
+    await p.locator('#oset-main-change').click();
+    await p.locator('#oset-main-password').waitFor({ timeout: 5000 });
+    expect(await p.locator('#oset-main-send').isDisabled()).toBe(true);
+    await screenshotTo(p, 'owner-settings');
+    // the test email: this server has no email service, so the answer is "Waiting" with the reason, not a crash
+    await p.locator('#oset-test-send').click();
+    await p.locator('#oset-test-list').waitFor({ timeout: 15000 });
+    expect(await p.locator('#oset-test-list').innerText()).toContain('Waiting');
+  });
+});

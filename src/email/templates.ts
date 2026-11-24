@@ -42,3 +42,31 @@ export const approvalMail = (who: string, what: string, company: string, by: str
   bilingual(`Waiting for your approval: ${what} · بانتظار اعتمادك`,
     [`Hello ${who},`, `${by} sent ${what} at ${company} for approval.`, `Open Nusuh Books to approve or reject it: ${link}`],
     [`مرحباً ${who}،`, `أرسل ${by} ${what} في ${company} للاعتماد.`, `افتح نُصح للاعتماد أو الرفض: ${link}`], 'Nusuh Books');
+
+/** The link that confirms a new sign-in email or a backup email (one hour, used once). Sent to the NEW address. */
+export const emailChangeConfirm = (name: string, purpose: 'main' | 'backup', newEmail: string, link: string): Mail => purpose === 'main'
+  ? bilingual('Confirm your new sign-in email · تأكيد البريد الجديد لتسجيل الدخول',
+    [`Hello ${name},`, `Someone asked to use ${newEmail} as the sign-in email of your Nusuh Books account. To confirm it is you, open this link within one hour:`, link,
+      'After you confirm, you sign in with this new address and sign in again on every device. If it was not you, ignore this email: nothing changes.'],
+    [`مرحباً ${name}،`, `طُلب استخدام ${newEmail} بريداً لتسجيل الدخول إلى حسابك في نُصح. للتأكد أنه أنت، افتح هذا الرابط خلال ساعة:`, link,
+      'بعد التأكيد تدخل بهذا العنوان الجديد وتسجّل الدخول من جديد على كل جهاز. إن لم تطلب ذلك فتجاهل هذه الرسالة: لن يتغير شيء.'], 'Nusuh Books')
+  : bilingual('Confirm your backup email · تأكيد البريد الاحتياطي',
+    [`Hello ${name},`, `Someone asked to add ${newEmail} as the backup email of your Nusuh Books account. To confirm it is you, open this link within one hour:`, link,
+      'If it was not you, ignore this email: nothing changes.'],
+    [`مرحباً ${name}،`, `طُلب إضافة ${newEmail} بريداً احتياطياً لحسابك في نُصح. للتأكد أنه أنت، افتح هذا الرابط خلال ساعة:`, link, 'إن لم تطلب ذلك فتجاهل هذه الرسالة: لن يتغير شيء.'], 'Nusuh Books');
+
+/** After a change, to the old sign-in email (and the verified backup): what changed, and what to do if it was not them. */
+export const emailChangedAlert = (name: string, what: 'main' | 'backup', oldEmail: string, newEmail: string): Mail => what === 'main'
+  ? bilingual('Your Nusuh Books sign-in email was changed · تم تغيير بريد تسجيل الدخول',
+    [`Hello ${name},`, `The sign-in email of your Nusuh Books account was changed from ${oldEmail} to ${newEmail}, and you were signed out everywhere.`,
+      'If you did this, no action is needed. If you did not, contact Nusuh Books at once.'],
+    [`مرحباً ${name}،`, `تم تغيير بريد تسجيل الدخول لحسابك في نُصح من ${oldEmail} إلى ${newEmail}، وتم تسجيل خروجك من كل الأجهزة.`,
+      'إن كنت أنت من فعل ذلك فلا حاجة لأي إجراء. وإن لم تكن أنت فتواصل مع نُصح فوراً.'], 'Nusuh Books')
+  : bilingual('A backup email was added to your Nusuh Books account · إضافة بريد احتياطي',
+    [`Hello ${name},`, `${newEmail} was added as the backup email of your Nusuh Books account.`, 'If you did this, no action is needed. If you did not, contact Nusuh Books at once.'],
+    [`مرحباً ${name}،`, `تمت إضافة ${newEmail} بريداً احتياطياً لحسابك في نُصح.`, 'إن كنت أنت من فعل ذلك فلا حاجة لأي إجراء. وإن لم تكن أنت فتواصل مع نُصح فوراً.'], 'Nusuh Books');
+
+/** The owner's test email: proof that sending works. */
+export const testEmail = (name: string, sentAt: string): Mail => bilingual('Nusuh Books test email · رسالة اختبار من نُصح',
+  [`Hello ${name},`, `This is a test email from Nusuh Books, sent ${sentAt}. If you can read it, email sending works.`],
+  [`مرحباً ${name}،`, `هذه رسالة اختبار من نُصح، أُرسلت ${sentAt}. إن وصلتك فإن إرسال البريد يعمل.`], 'Nusuh Books');

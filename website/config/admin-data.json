@@ -1,0 +1,23 @@
+{
+  "_about": "The data your admin page will manage. Today it is read from this file at build time; set ADMIN_DATA_URL to read the same shape from an API instead (see README). Keep the shape exactly as it is.",
+
+  "appUrl": "https://app.nusuhbooks.com/",
+
+  "company": {
+    "_TODO": "DUMMY PLACEHOLDERS. Replace with the real commercial registration (CR), VAT number and address before launch. 'npm run build:production' refuses to build while these dummy values are present.",
+    "legalName": "Nusuh Books",
+    "cr": "0000000000",
+    "vat": "300000000000003",
+    "address": ""
+  },
+
+  "bank": {
+    "_about": "Leave all four empty until you have them. While empty, the site shows 'our bank details are on your invoice' and never shows a half-filled block.",
+    "accountName": "",
+    "bank": "",
+    "iban": "",
+    "swift": ""
+  },
+
+  "testimonials": []
+}

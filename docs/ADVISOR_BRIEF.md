@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-20 (readiness check over every API route before hosting; three crash fixes; VAT rounded once per category as ZATCA requires).
+Last updated: 2026-11-24 (public marketing website built in website/; earlier: owner Settings and verified email change; readiness check over every API route).
 
 ---
 
@@ -182,6 +182,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 - **Product direction (owner, 2026-11-22).** (1) Add ownership: owners/partners/shareholders, shares and percentages, capital contributions, drawings, dividends and partner profit split, for sole proprietor, partnership and LLC. (2) Sell direct to businesses, like Zoho Books: one company runs its own finances; firm features are hidden, not deleted. Order: Phase A ownership, then Phase B single-company front door. Nothing built yet.
 
 ## 7. Where things stand and what is next
+
+**Marketing website (2026-11-24, no migration, folder website/).** The public site for nusuhbooks.com, built from the design canvas: 45 static pages (home, 16 module and 7 industry pages, pricing, order, how to pay, confirm payment, legal set), a Node build with no dependencies, and one PHP form handler (api/submit.php) that sends Contact, Book a demo, Confirm payment and Order to hello@ through Resend; order totals are recomputed on the server from config/pricing.json. Prices, contact facts, bank and company details live in config/ (admin-data.json is the file stand-in for the admin page; the dummy CR and VAT stop a production build). Checked against the design pixel for pixel at three widths, Lighthouse 96 to 100, 22 site, form and browser tests (website/README.md). Not done: real Resend delivery (needs the website key on Hostinger), Hostinger upload, the payment gateway, Arabic text.
 
 **Owner Settings and verified email change (2026-11-24, migration 0069).** New Settings tab in the owner console: the sign-in email (changed only through a link sent to the new address, after the password and two-factor code; every older sign-in ends; the old address is told), an optional backup email (counts after its own link; gets security alerts), the email service (provider, sender, whether a key is set; never the key) and a Send test email button (only to the owner's own addresses, 5 a day, shows Waiting, Sent or Failed with the provider's reason). Everyone else (clients, staff, Administrators) has the same verified change under "My account" (the small menu above their name): their sign-in email and a Change button, with no backup email and no test email. Delivery to an inbox is not detected: Sent means the email service accepted it.
 

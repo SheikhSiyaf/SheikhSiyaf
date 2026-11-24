@@ -1,0 +1,14 @@
+{
+  "name": "nusuh-books-website",
+  "private": true,
+  "type": "module",
+  "description": "Public marketing site for Nusuh Books (static pages plus one small PHP form handler).",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:production": "node scripts/build.mjs --production",
+    "preview": "node scripts/preview.mjs",
+    "test": "node scripts/build.mjs && node --test --test-concurrency=1 tests/site.test.mjs tests/forms.test.mjs tests/browser.test.mjs",
+    "brand-images": "node scripts/make-brand-images.mjs"
+  },
+  "engines": { "node": ">=18" }
+}

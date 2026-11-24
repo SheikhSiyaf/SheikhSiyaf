@@ -1,0 +1,19 @@
+{
+  "_about": "Where form messages go and the short messages the forms show. Secrets (the Resend key) are NOT here; see api/config.local.php.example.",
+  "to": "hello@nusuhbooks.com",
+  "subjects": {
+    "contact": "Website message",
+    "demo": "Demo request",
+    "payment": "Payment confirmation",
+    "order": "New order, Nusuh Books"
+  },
+  "messages": {
+    "sending": "Sending…",
+    "success": "Thank you. We have your message and will reply by email.",
+    "error": "We could not send this just now. Please try again, or email {{contact.email}}.",
+    "invalid": "Please check the highlighted fields.",
+    "tooMany": "Too many attempts. Please try again in a few minutes.",
+    "orderDoneTitle": "Thank you. Your order is in.",
+    "orderDoneText": "We will email your invoice, with our bank details, to the address you gave."
+  }
+}

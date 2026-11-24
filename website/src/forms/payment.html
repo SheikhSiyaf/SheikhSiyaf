@@ -1,0 +1,16 @@
+<form class="js-form" data-form="payment" action="/api/submit.php" method="post" novalidate enctype="multipart/form-data">
+<input type="hidden" name="type" value="payment">
+<div class="nb-hp" aria-hidden="true"><label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+<div class="ct-f">
+  <label>Company name<input type="text" name="company" autocomplete="organization" required maxlength="160"></label>
+  <label>Email<input type="email" name="email" autocomplete="email" required maxlength="160"></label>
+  <label>Invoice number<input type="text" name="invoice" required maxlength="60"></label>
+  <label>Amount paid (SAR)<input type="text" name="amount" inputmode="decimal" required maxlength="30"></label>
+  <label>Date of transfer<input type="date" name="date" required></label>
+  <label>Bank and reference used<input type="text" name="reference" maxlength="160"></label>
+  <label>Transfer receipt<input type="file" name="receipt" accept="application/pdf,image/jpeg,image/png,image/webp"></label>
+</div>
+<p class="form-msg" role="alert" data-error hidden></p>
+<p class="form-msg ok" role="status" data-ok hidden></p>
+<div class="ct-acts"><button type="submit" class="btn btn-ink">Confirm payment<span class="arr">→</span></button></div>
+</form>

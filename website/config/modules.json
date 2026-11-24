@@ -1,0 +1,73 @@
+{
+  "_about": "The ten optional modules a company can switch on (SAR per year each). Names and descriptions are exactly as in the design. Used by the Order page and by the order e-mail.",
+  "core": [
+    "Sales and invoicing",
+    "Purchases and expenses",
+    "Banking and reconciliation",
+    "Reports and VAT",
+    "Review and sign-off",
+    "Users, roles and audit"
+  ],
+  "optional": [
+    {
+      "id": "Inventory",
+      "name": "Inventory",
+      "desc": "Items, levels and value per store, with reorder points.",
+      "page": "/modules/inventory/"
+    },
+    {
+      "id": "Warehouse",
+      "name": "Warehouse counter",
+      "desc": "Scan to issue or receive, on a screen built for standing up.",
+      "page": "/modules/warehouse/"
+    },
+    {
+      "id": "Assets",
+      "name": "Fixed assets",
+      "desc": "Register, depreciation posted for you, and disposals recorded properly.",
+      "page": "/modules/assets/"
+    },
+    {
+      "id": "Projects",
+      "name": "Projects",
+      "desc": "Budget against actual job by job, with a warning as the budget tightens.",
+      "page": "/modules/projects/"
+    },
+    {
+      "id": "Rentals",
+      "name": "Rentals",
+      "desc": "Hire contracts, usage that drives the bill, and returns with condition.",
+      "page": "/modules/rentals/"
+    },
+    {
+      "id": "Rooms",
+      "name": "Rooms and front desk",
+      "desc": "Room types and seasonal rates, a calendar that refuses to double-book, and a guest bill that becomes one invoice.",
+      "page": "/modules/rooms/"
+    },
+    {
+      "id": "Restaurant",
+      "name": "Restaurant till",
+      "desc": "Menu items selling to their own income accounts, open orders at the table.",
+      "page": "/modules/restaurant/"
+    },
+    {
+      "id": "Payroll",
+      "name": "HR and payroll",
+      "desc": "Payroll runs posted to the ledger, end of service and leave.",
+      "page": "/modules/payroll/"
+    },
+    {
+      "id": "CRM",
+      "name": "CRM",
+      "desc": "Leads and stages, contact history, and a won deal that becomes a quote and then an invoice.",
+      "page": "/modules/crm/"
+    },
+    {
+      "id": "Portal",
+      "name": "Customer portal",
+      "desc": "Customers open the invoice from a link, settle it there, and send back documents.",
+      "page": "/modules/portal/"
+    }
+  ]
+}

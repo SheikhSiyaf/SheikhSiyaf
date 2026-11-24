@@ -1,0 +1,90 @@
+<!--meta {"stem":"Cart","path":"/order/","title":"Nusuh Books — order","description":"Choose your modules, review what you pay once and what you pay each year, then pay by bank transfer. All prices are in Saudi riyals and exclude VAT.","pageClass":"page","navOn":null} -->
+<section class="hero on-dark" style="padding-bottom:clamp(40px,6cqw,90px)">
+  <div class="blob b1"></div><div class="blob b2"></div>
+  
+  <div class="wrap hero-pad g2">
+    <div>
+      <span class="eyebrow dk rise">Order</span>
+      <h1 class="h1 s rise d1" style="margin:20px 0 24px">Get <span class="accent">Nusuh Books.</span></h1>
+      <p class="lead dk rise d2" style="margin-bottom:30px;max-width:560px">Choose your modules, review what you pay once and what you pay each year, then pay by bank transfer. All prices are in Saudi riyals and exclude VAT.</p>
+    </div>
+    <div class="zoom"><div class="glass cta-form"><b style="font:700 20px 'Plus Jakarta Sans',sans-serif">How ordering works</b><div class="glance"><div><span>Step 1</span><p>Your plan and modules</p></div><div><span>Step 2</span><p>Add the optional accounts clean-up</p></div><div><span>Step 3</span><p>Pay by bank transfer</p></div></div></div></div>
+  </div>
+</section>
+<section class="sec" id="order"><div class="wrap"><div class="ct" data-cart>
+<div class="ct-main">
+
+<div id="cart-step1">
+<div class="ct-card">
+  <h2 class="ct-h"><span class="ct-n">1</span>Your plan</h2>
+  <p class="ct-sub">Every company starts with the implementation and the annual fee. Both are already in your order.</p>
+  <div class="ct-core"><div><b>Implementation</b><small>Paid once. Six core modules included.</small></div><div class="p">{{money.implementation}} <em>once</em></div></div>
+  <div class="ct-core" style="margin-top:12px"><div><b>Annual fee</b><small>Paid every year. Covers the core.</small></div><div class="p">{{money.annualCore}} <em>/ year</em></div></div>
+  <div class="ct-tags"><span>Sales and invoicing</span><span>Purchases and expenses</span><span>Banking and reconciliation</span><span>Reports and VAT</span><span>Review and sign-off</span><span>Users, roles and audit</span></div>
+</div>
+
+<div class="ct-card" style="margin-top:clamp(16px,2cqw,24px)">
+  <h2 class="ct-h"><span class="ct-n">2</span>Add modules</h2>
+  <p class="ct-sub">Tick only what your company needs. Each extra module is {{money.perModule}} per year as a maintenance fee. You can add or remove modules later.</p>
+  <div class="ct-mods">
+<!--@cart-modules-->
+  </div>
+</div>
+
+<div class="ct-card" style="margin-top:clamp(16px,2cqw,24px)">
+  <h2 class="ct-h"><span class="ct-n">3</span>Accounts clean-up and setup</h2>
+  <p class="ct-sub">Optional. For companies whose books need fixing before they start.</p>
+  <button type="button" class="ct-mod" data-cleanup aria-pressed="false" style="max-width:none"><span class="ct-box" aria-hidden="true"></span><span><b>Fix my accounts and set up my books</b><span class="d">Fixing your existing accounts and setting up your books in Nusuh Books.</span><span class="pr">+ {{money.cleanup}} once</span></span></button>
+</div>
+</div>
+
+<form id="cart-step2" class="js-form" data-form="order" action="/api/submit.php" method="post" novalidate hidden>
+<input type="hidden" name="type" value="order"><input type="hidden" name="modules" value=""><input type="hidden" name="cleanup" value="0">
+<div class="nb-hp" aria-hidden="true"><label>Website<input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+<div class="ct-card">
+  <h2 class="ct-h"><span class="ct-n">4</span>Your details</h2>
+  <p class="ct-sub">We use these to prepare your invoice.</p>
+  <div class="ct-f">
+    <label>Company name<input type="text" name="company" placeholder="Your company name" autocomplete="organization" required maxlength="120"></label>
+    <label>Email for your invoice<input type="email" name="email" placeholder="name@company.com" autocomplete="email" required maxlength="160"></label>
+  </div>
+</div>
+<div class="ct-card" style="margin-top:clamp(16px,2cqw,24px)">
+  <h2 class="ct-h"><span class="ct-n">5</span>Payment</h2>
+  <p class="ct-sub">Choose how you want to pay.</p>
+  <div class="ct-pay"><span class="ct-radio" style="border-color:#0f766e"><span style="width:10px;height:10px;border-radius:50%;background:#0f766e;display:block"></span></span><div><b>Bank transfer in Saudi riyals</b><p>We send your invoice, with the amount, VAT and our bank details, to the email above. You transfer from your company account and use the invoice number as the reference.</p></div></div>
+  <ol class="ct-steps"><li>Press Place order. Your email app opens with the order ready to send.</li><li>We reply with your invoice and bank details.</li><li>You pay by bank transfer, then send us the receipt on the payment confirmation page.</li></ol>
+  <p class="form-msg" role="alert" data-error hidden></p>
+  <div class="ct-acts"><button type="submit" class="btn btn-ink">Place order<span class="arr">→</span></button><button type="button" class="btn btn-line" data-back>Back to cart</button></div>
+</div>
+<div class="ct-card" style="margin-top:clamp(16px,2cqw,24px)">
+  <h2 class="ct-h" style="font-size:19px">Already paid, or need help?</h2>
+  <div class="ct-acts" style="margin-top:12px"><a class="btn btn-line" href="/confirm-payment/">I have paid</a><a class="btn btn-line" href="/how-to-pay/">How to pay</a><a class="btn btn-line" href="/contact/">Contact us</a></div>
+</div>
+</form>
+
+<div id="cart-done" class="ct-card" role="status" tabindex="-1" hidden>
+  <h2 class="ct-h">{{forms.orderDoneTitle}}</h2>
+  <p class="ct-sub">{{forms.orderDoneText}}</p>
+<!--@bank-details-->
+  <div class="ct-acts" style="margin-top:12px"><a class="btn btn-ink" href="/confirm-payment/">I have paid<span class="arr">→</span></a><a class="btn btn-line" href="/how-to-pay/">How to pay</a></div>
+</div>
+
+</div>
+
+<aside class="ct-sum" aria-label="Order summary">
+  <h3>Order summary</h3>
+  <div class="ct-line" style="border:0;padding-bottom:4px"><span style="font-weight:700;color:#fff">One-time</span><b></b></div>
+  <div class="ct-line"><span>Implementation</span><b>{{money.implementation}}</b></div>
+  <div class="ct-line" data-sum-cleanup hidden><span>Accounts clean-up and setup</span><b>{{money.cleanup}}</b></div>
+  <div class="ct-total"><span>One-time total</span><b data-one-time>{{money.implementation}}</b></div>
+  <div class="ct-line" style="border:0;padding:20px 0 4px"><span style="font-weight:700;color:#fff">Every year</span><b></b></div>
+  <div class="ct-line"><span>Annual fee</span><b>{{money.annualCore}}</b></div>
+  <div data-sum-lines></div>
+  <div class="ct-total"><span>Yearly total</span><b data-yearly>{{money.annualCore}} / year</b></div>
+  <p class="ct-note">Prices exclude VAT, which is added to your invoice.</p>
+  <div data-sum-actions><button type="button" class="btn btn-mint" data-pay>Proceed to payment<span class="arr">→</span></button><a class="t" href="{{url.app}}">Or start the {{trial.days}}-day free trial first</a></div>
+</aside>
+</div></div></section>
+
+<!--@footer-->

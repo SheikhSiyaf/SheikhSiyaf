@@ -1,0 +1,56 @@
+@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;src:url(/fonts/inter-latin-400-normal.woff2) format('woff2')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url(/fonts/inter-latin-500-normal.woff2) format('woff2')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url(/fonts/inter-latin-600-normal.woff2) format('woff2')}
+@font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:500;font-display:swap;src:url(/fonts/plus-jakarta-sans-latin-500-normal.woff2) format('woff2')}
+@font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:600;font-display:swap;src:url(/fonts/plus-jakarta-sans-latin-600-normal.woff2) format('woff2')}
+@font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:700;font-display:swap;src:url(/fonts/plus-jakarta-sans-latin-700-normal.woff2) format('woff2')}
+@font-face{font-family:'Plus Jakarta Sans';font-style:normal;font-weight:800;font-display:swap;src:url(/fonts/plus-jakarta-sans-latin-800-normal.woff2) format('woff2')}
+
+/* ---- site additions (not in the design canvas): layout wrapper, accessibility, forms, cookie notice ---- */
+.site{container-type:inline-size;width:100%}
+picture{display:contents}
+[hidden]{display:none!important}
+.skip{position:absolute;inset-inline-start:12px;top:-60px;z-index:100;padding:12px 18px;border-radius:10px;background:#fff;color:#06222B;font-weight:600}
+.skip:focus{top:12px}
+:focus-visible{outline:3px solid #0F766E;outline-offset:3px;border-radius:6px}
+.nav :focus-visible,.on-dark :focus-visible,.dark-band :focus-visible,.hero :focus-visible,.menu .panel :focus-visible{outline-color:#5EEAD4}
+.ct-sum :focus-visible{outline-color:#5EEAD4}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+
+/* forms */
+.nb-hp{position:absolute;inset-inline-start:-10000px;width:1px;height:1px;overflow:hidden}
+.ct-f textarea{border-radius:14px;border:1px solid rgba(6,34,43,.2);padding:12px 14px;font:inherit;font-size:16px;background:#fff;color:var(--ink);resize:vertical;min-height:128px}
+.ct-f input[type=file]{height:auto;padding:10px 12px}
+.ct-f input[aria-invalid=true],.ct-f textarea[aria-invalid=true]{border-color:#B42318;box-shadow:0 0 0 3px rgba(180,35,24,.15)}
+.ct-acts{display:flex;flex-wrap:wrap;gap:12px;margin-top:16px}
+.form-msg{margin:14px 0 0;padding:12px 16px;border-radius:12px;font-size:15px;font-weight:600;line-height:1.5;background:#FEF3F2;color:#8A1C12;border:1px solid #FDA29B}
+.form-msg.ok{background:var(--mint-soft);color:#064E4A;border-color:#8FCBC4}
+.ct-card .ct-f{margin-top:14px}
+.glass-l .ct-f{margin-top:4px}
+.glass-l form .ct-acts .btn{width:100%}
+button.btn[disabled]{opacity:.6;cursor:progress;transform:none}
+
+/* order page */
+.ct-mod{border:1px solid rgba(6,34,43,.14)}
+.ct-mod[aria-pressed=true]{border:2px solid #0f766e;box-shadow:0 8px 24px rgba(15,118,110,.18)}
+.ct-mod[aria-pressed=true] .ct-box{background:var(--teal);border-color:var(--teal)}
+.ct-mod[aria-pressed=true] .ct-box::after{content:"\2713"}
+.ct-sum .ct-line[hidden],.ct-sum [data-sum-lines] .ct-line{display:flex}
+.ct-sum .ct-line[hidden]{display:none}
+.ct-sum [data-sum-actions][hidden]{display:none}
+
+/* bank details */
+.bank{display:grid;gap:10px;margin:14px 0 0}
+.bank div{display:grid;gap:2px;padding:12px 14px;border-radius:12px;background:var(--mint-soft)}
+.bank dt{font:600 12.5px Inter,sans-serif;letter-spacing:.04em;text-transform:uppercase;color:#0B5F58}
+.bank dd{margin:0;font:600 16px 'Plus Jakarta Sans',sans-serif;color:var(--ink);word-break:break-all}
+
+/* cookie notice */
+.cookie{position:fixed;inset-inline:16px;bottom:16px;z-index:80;max-width:720px;margin-inline:auto;display:flex;flex-wrap:wrap;gap:12px 20px;align-items:center;justify-content:space-between;padding:16px 20px;border-radius:18px;background:#06222B;color:rgba(255,255,255,.9);box-shadow:0 24px 60px rgba(6,34,43,.45);border:1px solid rgba(255,255,255,.14);font-size:14.5px;line-height:1.5}
+.cookie[hidden]{display:none}
+.cookie a{color:var(--mint);text-decoration:underline}
+.cookie p{flex:1 1 280px;margin:0}
+.cookie-acts{display:flex;gap:10px}
+.cookie .btn{height:44px;padding:0 20px;font-size:14.5px}
+.cookie .btn-line{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.4)}
+.cookie .btn-ink{background:var(--mint);color:#032B2A}

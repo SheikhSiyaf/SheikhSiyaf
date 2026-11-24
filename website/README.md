@@ -108,6 +108,13 @@ The page shell reads `language.lang` and `language.dir` from `config/site.json` 
 | Real testimonials, if you want the strip | `config/admin-data.json` > `testimonials` | optional |
 | Decisions in the list below | chat | wording only |
 
+## 10. Checked results (2026-11-24)
+
+* **Looks like the design:** every page was rendered next to the original canvas at 1360, 820 and 390 pixels wide and compared pixel by pixel. 40 of the 41 pages that have no added form are pixel-identical at 1360 (the exception, Modules, differs by one removed sentence), and the sampled pages at 820 and 390 are identical too. A word-by-word comparison of all 45 pages finds 40 with identical wording and 5 with the changes listed in section 9 (Modules, Contact, Book a demo, Confirm payment, Order).
+* **Lighthouse** on a plain local server (no compression, no caching): Home mobile 96 / 100 / 100 / 100, Pricing, Order and Sales module 100 / 100 / 100 / 100 on mobile and desktop (performance / accessibility / best practices / SEO). All 45 pages score 100 for accessibility, best practices and SEO. Hostinger's compression and caching only help.
+* **Tests:** `npm test` runs 27 checks: page set and links, headings, titles, images, claims rules, config use, form handler (against a fake Resend), and five real-browser flows (order, contact, demo, payment confirmation, cookie notice, phone menu).
+* **Not tested here:** real delivery through Resend (it needs the website key on your hosting), the Hostinger server itself, Safari and Firefox, and Arabic.
+
 ## 9. Decisions and flags for you
 
 See the report in chat; the short list is kept here so it travels with the code.

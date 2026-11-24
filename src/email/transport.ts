@@ -10,9 +10,10 @@ export type Fetch = (url: string, init: { method: string; headers: Record<string
 
 export interface EmailConfig { provider: string; from: string; key?: string }
 export const emailConfig = (env = process.env): EmailConfig => ({
-  provider: (env.EMAIL_PROVIDER ?? 'none').toLowerCase(),
-  from: env.EMAIL_FROM ?? 'Nusuh Books <no-reply@nusuhbooks.example>',
-  key: env.RESEND_API_KEY ?? env.SENDGRID_API_KEY ?? env.POSTMARK_TOKEN,
+  // A value pasted into a host's settings page often keeps a hidden line break or space at the end: it is trimmed.
+  provider: (env.EMAIL_PROVIDER ?? 'none').trim().toLowerCase(),
+  from: (env.EMAIL_FROM ?? 'Nusuh Books <no-reply@nusuhbooks.example>').trim(),
+  key: (env.RESEND_API_KEY ?? env.SENDGRID_API_KEY ?? env.POSTMARK_TOKEN)?.trim() || undefined,
 });
 
 const addr = (from: string) => { const m = /^(.*)<([^>]+)>\s*$/.exec(from); return m ? { name: m[1]!.trim().replace(/^"|"$/g, ''), email: m[2]!.trim() } : { name: '', email: from.trim() }; };

@@ -4,7 +4,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { app, as, owner, seed, type Fixture } from './helpers.js';
 import * as S from '../src/books/documentsService.js';
 import * as E from '../src/books/emailService.js';
-import { sendEmail, type Fetch } from '../src/email/transport.js';
+import { emailConfig, sendEmail, type Fetch } from '../src/email/transport.js';
 import { sendQueued } from '../src/email/mailer.js';
 import { documentMail } from '../src/email/templates.js';
 import { newInvite } from '../src/api/admin.js';
@@ -125,5 +125,16 @@ describe('People emails', () => {
     expect(to).toContain(partnerEmail);
     const staffEmail = (await owner.query('SELECT email FROM users WHERE id = $1', [f.staff])).rows[0].email;
     expect(to).not.toContain(staffEmail);
+  });
+});
+
+describe('email settings pasted into a host\'s settings page', () => {
+  it('ignore a hidden line break or space at the end of the provider, the key and the sender', async () => {
+    const cfg = emailConfig({ EMAIL_PROVIDER: 'resend\n', RESEND_API_KEY: ' re_test_key\n', EMAIL_FROM: 'Nusuh Books <no-reply@send.example.com>\n' });
+    expect(cfg).toEqual({ provider: 'resend', key: 're_test_key', from: 'Nusuh Books <no-reply@send.example.com>' });
+    const before = calls.length;
+    const r = await sendEmail({ to: 'a@example.com', subject: 's', text: 't' }, cfg, fake());
+    expect(r.ok).toBe(true);
+    expect(calls[before]!.headers.authorization).toBe('Bearer re_test_key');
   });
 });

@@ -599,3 +599,20 @@ describe('Owner Settings', () => {
     expect(await p.locator('#oset-test-list').innerText()).toContain('Waiting');
   });
 });
+
+describe('My account (client email)', () => {
+  it('a client sees their sign-in email and can ask to change it, with no backup email and no test email', async () => {
+    const { page: p } = await newPage(1280);
+    await signIn(p, accountant);
+    await p.goto(`${BASE}/security`, { waitUntil: 'networkidle' });
+    await p.locator('#my-email-address').waitFor({ timeout: 15000 });
+    expect((await p.locator('#my-email-address').innerText()).toLowerCase()).toBe(accountant.toLowerCase());
+    const text = await p.locator('main').innerText();
+    for (const want of ['My account', 'Your email', 'Two-factor sign-in']) expect(text, want).toContain(want);
+    for (const never of ['Backup email', 'Test email', 'Email service']) expect(text, never).not.toContain(never);
+    await p.locator('#my-email-change').click();
+    await p.locator('#my-email-password').waitFor({ timeout: 5000 });
+    expect(await p.locator('#my-email-send').isDisabled()).toBe(true);
+    await screenshotTo(p, 'my-account-email');
+  });
+});

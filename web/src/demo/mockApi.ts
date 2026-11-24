@@ -4648,6 +4648,7 @@ routes.push(
   ['GET', /^\/api\/owner\/settings$/, () => { const u = owner(); return { email: u.email, backupEmail: null, backupVerified: false, twoFactor: false, pending: [],
     service: { provider: 'resend', from: 'Nusuh Books <no-reply@send.example.com>', keySet: true }, tests: [] }; }],
   ['POST', /^\/api\/owner\/settings\/test-email$/, () => { owner(); return { ok: true }; }],
+  ['GET', /^\/api\/me\/email-settings$/, () => { const u = me(); return { email: u.email, backupEmail: null, backupVerified: false, kind: u.kind, twoFactor: false, pending: [] }; }],
   ['POST', /^\/api\/me\/email-change$/, () => fail(400, 'This is a demo preview with sample data: emails are not changed here.', 'err.demo')],
   ['GET', /^\/api\/owner\/plans$/, () => { owner(); return bdb.plans.map(planRow).sort((a, b) => Number(b.active) - Number(a.active) || Number(toMinor(a.monthlyPrice) - toMinor(b.monthlyPrice))); }],
   ['POST', /^\/api\/owner\/plans$/, (_m, b) => savePlanM(null, b)],

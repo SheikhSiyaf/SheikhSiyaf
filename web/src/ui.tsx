@@ -39,7 +39,7 @@ export function TopControls({ children }: { children?: ReactNode }) {
 
 /** Left sidebar: brand at the top, navigation, and the signed-in person with Sign out at the bottom. */
 export function Sidebar({ subtitle, user, roleLabel, onSignOut, children }: {
-  subtitle: string; user: { name: string; email: string; twoFactor?: boolean }; roleLabel?: string; onSignOut: () => void; children: ReactNode;
+  subtitle: string; user: { name: string; email: string; twoFactor?: boolean; kind?: string }; roleLabel?: string; onSignOut: () => void; children: ReactNode;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -63,7 +63,7 @@ export function Sidebar({ subtitle, user, roleLabel, onSignOut, children }: {
           <div className="side-menu" role="menu">
             <span className="ltr small mut">{user.email}</span>
             <button className="link small security-link" role="menuitem" onClick={() => { setOpen(false); navigate('/security'); }}>
-              {t('security.title')}: {user.twoFactor ? t('security.on') : t('security.off')}
+              {user.kind === 'owner' ? <>{t('security.title')}: {user.twoFactor ? t('security.on') : t('security.off')}</> : t('account.link')}
             </button>
           </div>
         )}

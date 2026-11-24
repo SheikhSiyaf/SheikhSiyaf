@@ -5,6 +5,7 @@ import { api, type Me } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
 import { DEMO } from '../router.ts';
 import { ErrorNote, Sidebar, TopControls } from '../ui.tsx';
+import { MyEmail } from './MyEmail.tsx';
 
 export function Security({ me, onSignOut, onChanged, onBack }: { me: Me; onSignOut: () => void; onChanged: () => void; onBack: () => void }) {
   const { t } = useI18n();
@@ -39,8 +40,10 @@ export function Security({ me, onSignOut, onChanged, onBack }: { me: Me; onSignO
         <button onClick={onBack}>{t('security.back')}</button>
       </Sidebar>
       <main>
-        <div className="top"><h1>{t('security.title')}</h1><TopControls /></div>
+        <div className="top"><h1>{me.user.kind === 'owner' ? t('security.title') : t('account.title')}</h1><TopControls /></div>
+        {me.user.kind !== 'owner' && !DEMO && <MyEmail />}
         <div className="card" style={{ maxWidth: 620 }}>
+          {me.user.kind !== 'owner' && <h2>{t('security.title')}</h2>}
           {error !== undefined && <ErrorNote error={error} />}
           {done && <div className="notice">{t('security.done')}</div>}
           {me.user.twoFactor ? <p>{t('security.isOn')}</p> : DEMO ? <p className="mut">{t('security.demo')}</p> : !setup ? (

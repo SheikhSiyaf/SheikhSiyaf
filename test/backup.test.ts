@@ -105,6 +105,48 @@ describe('backup.sh', () => {
   });
 });
 
+describe('a backup of a Supabase-style database', () => {
+  // Supabase adds its own schemas (vault, auth, graphql ...) and gives its standard logins rights on our tables. A copy
+  // of the whole database cannot be restored anywhere else; only our own section (public) is backed up, and the
+  // standard logins are created empty on restore so the rights in the copy have somewhere to land.
+  it('keeps only our data, and restores into a server that has none of those logins or schemas', async () => {
+    const src = 'nusuh_backup_sb', dst = 'nusuh_backup_sb_copy', d3 = mkdtempSync(join(tmpdir(), 'backup-sb-'));
+    for (const db of [src, dst]) await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${src}`);
+    await migrate(at(src), APP_PASSWORD);
+    const c = new pg.Client({ connectionString: at(src) });
+    await c.connect();
+    try {
+      await c.query(`CREATE SCHEMA vault`);
+      await c.query(`CREATE TABLE vault.secrets (id int)`);   // stands for a platform-owned schema that must not be in the copy
+      await c.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF; END $$`);
+      await c.query(`GRANT SELECT ON schema_migrations TO anon`);
+    } finally { await c.end(); }
+    try {
+      const b = run('bash', ['scripts/backup.sh'], { BACKUP_DATABASE_URL: at(src), BACKUP_PASSPHRASE: PASS, BACKUP_DIR: d3 });
+      expect(b.status, b.stderr).toBe(0);
+      const made = join(d3, readdirSync(d3).find((f) => f.endsWith('.dump.gpg'))!);
+      // the login the copy gives rights to is gone where it is restored
+      const c2 = new pg.Client({ connectionString: at(src) });
+      await c2.connect();
+      try { await c2.query(`REVOKE ALL ON schema_migrations FROM anon`); } finally { await c2.end(); }
+      await admin.query(`DROP ROLE IF EXISTS anon`);
+      await admin.query(`CREATE DATABASE ${dst}`);
+      const r = run('bash', ['scripts/restore.sh', made, at(dst)], { BACKUP_PASSPHRASE: PASS });
+      expect(r.status, r.stderr).toBe(0);
+      const t = new pg.Client({ connectionString: at(dst) });
+      await t.connect();
+      try {
+        expect((await t.query(`SELECT count(*)::int n FROM pg_namespace WHERE nspname = 'vault'`)).rows[0].n).toBe(0);
+        expect((await t.query(`SELECT count(*)::int n FROM schema_migrations`)).rows[0].n).toBeGreaterThan(0);
+      } finally { await t.end(); }
+    } finally {
+      for (const db of [src, dst]) await admin.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+      rmSync(d3, { recursive: true, force: true });
+    }
+  }, 120_000);
+});
+
 describe('restore.sh', () => {
   it('a wrong passphrase restores nothing', async () => {
     await admin.query(`CREATE DATABASE ${COPY}`);

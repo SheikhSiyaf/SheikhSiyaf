@@ -23,7 +23,8 @@ const at = (db: string, user?: string, pw?: string) => {
   return u.toString();
 };
 const run = (cmd: string, args: string[], env: Record<string, string>) =>
-  spawnSync(cmd, args, { env: { ...process.env, ...env }, encoding: 'utf8' });
+  // The standard Supabase logins are server-wide and another test file creates and removes them, so these tests only touch their own.
+  spawnSync(cmd, args, { env: { ...process.env, RESTORE_PLATFORM_ROLES: 'nusuh_test_platform_role', ...env }, encoding: 'utf8' });
 
 let admin: pg.Client;
 let dir: string;
@@ -119,8 +120,8 @@ describe('a backup of a Supabase-style database', () => {
     try {
       await c.query(`CREATE SCHEMA vault`);
       await c.query(`CREATE TABLE vault.secrets (id int)`);   // stands for a platform-owned schema that must not be in the copy
-      await c.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF; END $$`);
-      await c.query(`GRANT SELECT ON schema_migrations TO anon`);
+      await c.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nusuh_test_platform_role') THEN CREATE ROLE nusuh_test_platform_role NOLOGIN; END IF; END $$`);
+      await c.query(`GRANT SELECT ON schema_migrations TO nusuh_test_platform_role`);
     } finally { await c.end(); }
     try {
       const b = run('bash', ['scripts/backup.sh'], { BACKUP_DATABASE_URL: at(src), BACKUP_PASSPHRASE: PASS, BACKUP_DIR: d3 });
@@ -129,8 +130,8 @@ describe('a backup of a Supabase-style database', () => {
       // the login the copy gives rights to is gone where it is restored
       const c2 = new pg.Client({ connectionString: at(src) });
       await c2.connect();
-      try { await c2.query(`REVOKE ALL ON schema_migrations FROM anon`); } finally { await c2.end(); }
-      await admin.query(`DROP ROLE IF EXISTS anon`);
+      try { await c2.query(`REVOKE ALL ON schema_migrations FROM nusuh_test_platform_role`); } finally { await c2.end(); }
+      await admin.query(`DROP ROLE IF EXISTS nusuh_test_platform_role`);
       await admin.query(`CREATE DATABASE ${dst}`);
       const r = run('bash', ['scripts/restore.sh', made, at(dst)], { BACKUP_PASSPHRASE: PASS });
       expect(r.status, r.stderr).toBe(0);

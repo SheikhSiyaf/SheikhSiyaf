@@ -22,6 +22,8 @@ export function listOf<T>(v: unknown, what = 'list'): T[] {
 
 const RAISED: [RegExp, string][] = [
   [/period is locked/, 'err.periodLocked'],
+  [/You can save at most \d+ testimonials/, 'err.tmFull'],
+  [/You have \d+ testimonials saved/, 'err.tmLimitLow'],
   [/This month is signed off. Withdraw the sign-off/, 'err.signedOffLocked'],
   [/does not balance/, 'err.notBalanced'],
   [/at least two lines/, 'err.twoLines'],

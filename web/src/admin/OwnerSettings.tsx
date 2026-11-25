@@ -6,6 +6,7 @@ import { api, useApi } from '../api.ts';
 import { useI18n, type Key } from '../i18n.tsx';
 import { ChangeEmailForm } from '../pages/ChangeEmailForm.tsx';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
+import { PaymentSettings } from './PaymentSettings.tsx';
 
 interface Test { id: string; createdAt: string; to: string; status: 'queued' | 'sending' | 'sent' | 'failed'; attempts: number; lastError: string | null; sentAt: string | null }
 interface Settings {
@@ -38,6 +39,8 @@ export function OwnerSettings() {
   return (
     <>
       {msg && <div className="notice" id="oset-msg">{msg}</div>}
+
+      <PaymentSettings />
 
       <div className="card" id="oset-service">
         <h2>{t('oset.service.title')}</h2>

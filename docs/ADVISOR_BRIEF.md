@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-25 (free-trial lifecycle, phase 1 of 5: data, dates, lock; earlier: public marketing website built, now in its own repository SheikhSiyaf/nusuh-website; earlier: owner Settings and verified email change; readiness check over every API route).
+Last updated: 2026-11-25 (website connection, software side; free-trial lifecycle, phase 1 of 5: data, dates, lock; earlier: public marketing website built, now in its own repository SheikhSiyaf/nusuh-website; earlier: owner Settings and verified email change; readiness check over every API route).
 
 ---
 
@@ -182,6 +182,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 - **Product direction (owner, 2026-11-22).** (1) Add ownership: owners/partners/shareholders, shares and percentages, capital contributions, drawings, dividends and partner profit split, for sole proprietor, partnership and LLC. (2) Sell direct to businesses, like Zoho Books: one company runs its own finances; firm features are hidden, not deleted. Order: Phase A ownership, then Phase B single-company front door. Nothing built yet.
 
 ## 7. Where things stand and what is next
+
+**Website connection, software side (2026-11-25, migration 0071).** Owner console > Settings > Payment settings: the plan the website sells has editable English and Arabic names and prices for its four lines (implementation, accounts clean-up, annual fee, extra module). They are the plan's own prices, so the website and the invoices cannot disagree; each change shows a confirm step with the number of paying customers who pay the new price from their next bill, needs a reason, and is kept in an unchangeable history (invoices already issued never change). New owner tab Website: testimonials with name, job title, company, quote, optional Arabic, the customer's permission (required), show or hide and order; the most you can save is a limit of 5 to 10 (default 8). A public read-only address, /api/public/site-data, gives the website the prices, names and shown testimonials. Not live until deployed: the website side (live prices, order totals, the testimonials strip) is built in the website repository.
 
 **Free trial lifecycle, phase 1 of 5 (2026-11-25, migration 0070).** Rules for a 15-day free trial that ends at 23:59 Riyadh time on day 15, then 30 days locked (the customer's data is kept so buying restores everything), then closed: 60 more days when only the customer's own users can export their data, deletion no earlier than 90 days after closing (the deletion itself is not built yet). The lock follows the clock on every request, not the hourly job; the platform owner is never locked; a customer without a trial is untouched. The owner can extend, convert (after payment) and close a trial, each with a reason, recorded in a new immutable event table and the audit log. The billing run no longer turns a trial into a paying customer by itself. All numbers are in src/books/trialRules.ts. No screens yet. Still to build: reminder e-mails (phase 2), the trial-ended screen, header count and data export (3), the order, owner console view and counters (4), and public sign-up, switched off until you say (5).
 

@@ -4691,7 +4691,65 @@ routes.push(
     return { subscription: sub ? subRowB(sub) : null, usage: usageB(firmId), next,
       invoices: bdb.invoices.filter((x) => x.firmId === firmId).sort((a, b) => b.issuedOn.localeCompare(a.issuedOn)).map(invRowB), seller: bdb.settings };
   }],
+  // ---- the website connection (owner): Payment settings and testimonials
+  ['GET', /^\/api\/owner\/payment-settings$/, () => { owner(); return { planId: 'demo-plan', planName: wsite.planName, planNameAr: wsite.planNameAr, currency: 'SAR', vatRate: '15.00', customers: 2, lines: wsite.lines, history: wsite.history }; }],
+  ['POST', /^\/api\/owner\/payment-settings$/, (_m, b) => {
+    owner();
+    const x = (b ?? {}) as { planName?: string; planNameAr?: string; lines?: { key: string; name: string; nameAr: string; amount: string }[]; reason?: string };
+    const lines = x.lines ?? [];
+    for (const l of lines) if (!/^\d{1,7}(\.\d{1,2})?$/.test(String(l.amount ?? '').trim()) || Number(l.amount) > 1_000_000) fail(400, 'Enter each price as a number from 0 to 1,000,000, with up to 2 decimals.', 'err.priceFormat');
+    const next = lines.map((l) => ({ key: l.key, name: l.name.trim(), nameAr: (l.nameAr ?? '').trim(), amount: Number(l.amount).toFixed(2) }));
+    const changed = (x.planName ?? wsite.planName) !== wsite.planName || next.some((l, i) => l.name !== wsite.lines[i]!.name || l.nameAr !== wsite.lines[i]!.nameAr || l.amount !== wsite.lines[i]!.amount);
+    if (!changed) return { changed: false, customersAffected: 0 };
+    if (!String(x.reason ?? '').trim()) fail(400, 'Say why the prices or names are changed.', 'err.priceReason');
+    const before: Record<string, string> = {}, after: Record<string, string> = {};
+    next.forEach((l, i) => { const o = wsite.lines[i]!; if (l.amount !== o.amount) { before[`${l.key}.amount`] = o.amount; after[`${l.key}.amount`] = l.amount; } if (l.name !== o.name) { before[`${l.key}.name`] = o.name; after[`${l.key}.name`] = l.name; } });
+    wsite.history.unshift({ at: new Date().toISOString().slice(0, 19) + 'Z', by: me().name, reason: String(x.reason).trim(), before, after, customersAffected: 2 });
+    wsite.lines = next as typeof wsite.lines; wsite.planName = x.planName ?? wsite.planName; wsite.planNameAr = x.planNameAr ?? wsite.planNameAr;
+    return { changed: true, customersAffected: 2 };
+  }],
+  ['GET', /^\/api\/owner\/website$/, () => { owner(); return { limit: wsite.limit, minLimit: 5, maxLimit: 10, loopAbove: 4, items: wsite.items }; }],
+  ['POST', /^\/api\/owner\/website\/settings$/, (_m, b) => {
+    owner(); const n = Number((b as { limit?: unknown } | undefined)?.limit);
+    if (!Number.isInteger(n) || n < 5 || n > 10) fail(400, 'The limit is a whole number from 5 to 10.', 'err.tmLimit');
+    if (n < wsite.items.length) fail(400, `You have ${wsite.items.length} testimonials saved. Delete ${wsite.items.length - n} first to set the limit to ${n}.`, 'err.tmLimitLow');
+    wsite.limit = n; return { ok: true };
+  }],
+  ['POST', /^\/api\/owner\/website\/testimonials\/order$/, (_m, b) => {
+    owner(); const ids = ((b as { ids?: string[] } | undefined)?.ids ?? []).map(String);
+    if (ids.length !== wsite.items.length || ids.some((i) => !wsite.items.find((x) => x.id === i))) fail(400, 'The order must list every saved testimonial once.', 'err.format');
+    wsite.items = ids.map((i) => wsite.items.find((x) => x.id === i)!); return { ok: true };
+  }],
+  ['POST', /^\/api\/owner\/website\/testimonials$/, (_m, b) => {
+    owner(); const t = tmClean(b);
+    if (wsite.items.length >= wsite.limit) fail(400, `You can save at most ${wsite.limit} testimonials. Delete one first, or raise the limit (up to 10).`, 'err.tmFull');
+    const id = uid(); wsite.items.push({ id, ...t }); return { id };
+  }],
+  ['POST', /^\/api\/owner\/website\/testimonials\/([\w-]+)\/delete$/, (m) => {
+    owner(); const i = wsite.items.findIndex((x) => x.id === m[1]); if (i < 0) fail(404, 'Not found.', 'err.notFound'); wsite.items.splice(i, 1); return { ok: true };
+  }],
+  ['POST', /^\/api\/owner\/website\/testimonials\/([\w-]+)$/, (m, b) => {
+    owner(); const i = wsite.items.findIndex((x) => x.id === m[1]); if (i < 0) fail(404, 'Not found.', 'err.notFound'); wsite.items[i] = { id: m[1]!, ...tmClean(b) }; return { ok: true };
+  }],
 );
+/** Sample website connection: the one plan the website sells and no testimonials yet. */
+const wsite = {
+  planName: 'Nusuh Books', planNameAr: 'نصوح بوكس', limit: 8,
+  lines: [
+    { key: 'implementation', name: 'Implementation', nameAr: 'التنفيذ', amount: '9000.00' }, { key: 'cleanup', name: 'Accounts clean-up and setup', nameAr: 'تنظيف الحسابات وإعدادها', amount: '5000.00' },
+    { key: 'annualCore', name: 'Annual fee', nameAr: 'الرسوم السنوية', amount: '1500.00' }, { key: 'perModule', name: 'Extra module', nameAr: 'وحدة إضافية', amount: '500.00' },
+  ] as { key: string; name: string; nameAr: string; amount: string }[],
+  history: [] as { at: string; by: string | null; reason: string; before: Record<string, string>; after: Record<string, string>; customersAffected: number }[],
+  items: [] as { id: string; name: string; nameAr: string; role: string; roleAr: string; company: string; companyAr: string; quote: string; quoteAr: string; consent: boolean; consentNote: string; visible: boolean }[],
+};
+function tmClean(b: unknown) {
+  const x = (b ?? {}) as Record<string, unknown>; const s = (k: string) => String(x[k] ?? '').trim();
+  if (x.consent !== true) fail(400, 'Tick that the customer allowed us to publish this.', 'err.tmConsent');
+  if (!s('name')) fail(400, 'Enter the customer name.', 'err.tmName');
+  if (!s('quote')) fail(400, 'Enter the quote.', 'err.tmQuote');
+  if (s('quote').length > 300 || s('name').length > 80) fail(400, 'Something is too long.', 'err.tmLong');
+  return { name: s('name'), nameAr: s('nameAr'), role: s('role'), roleAr: s('roleAr'), company: s('company'), companyAr: s('companyAr'), quote: s('quote'), quoteAr: s('quoteAr'), consent: true, consentNote: s('consentNote'), visible: x.visible !== false };
+}
 /** Sample billing: the four plans, the demo firm on Firm (monthly, paid up), the company on Business with an unpaid invoice. */
 function seedBilling() {
   const P = (code: string, name: string, nameAr: string, forKind: MPlan['forKind'], m: string, y: string, ic: number, iu: number, ec: string, eu: string): MPlan =>

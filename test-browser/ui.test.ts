@@ -616,3 +616,76 @@ describe('My account (client email)', () => {
     await screenshotTo(p, 'my-account-email');
   });
 });
+
+describe('The platform owner\'s Payment settings and Website tab', () => {
+  it('changes a price with a reason after a confirm step, adds a testimonial, and both appear in what the website reads', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: p } = await newPage();
+    await signIn(p, platform);
+    const site = async () => p.evaluate(async () => (await (await fetch('/api/public/site-data', { cache: 'no-store' })).json()) as { lines: { key: string; amount: number | string }[]; testimonials: { items: { name: string; quote: string }[] } });
+    await p.goto(`${BASE}/owner/settings`, { waitUntil: 'networkidle' });
+    await p.locator('#pay-settings').waitFor({ timeout: 15000 });
+    const before = Number((await site()).lines.find((l) => l.key === 'implementation')!.amount);
+    // No change: nothing to review. Then a new price: review, confirm needs a reason, then it is live.
+    expect(await p.locator('#pay-review').isVisible()).toBe(true);
+    await p.locator('#pay-amount-implementation').fill(String(before + 100));
+    await p.locator('#pay-review').click();
+    await p.locator('#pay-confirm').waitFor();
+    expect(await p.locator('#pay-affect').innerText()).toContain('Invoices already issued never change');
+    expect(await p.locator('#pay-confirm-go').count()).toBe(1);
+    await p.locator('#pay-reason').fill('Browser check price change');
+    await p.locator('#pay-confirm-go').click();
+    await p.locator('#pay-msg').waitFor({ timeout: 15000 });
+    expect(Number((await site()).lines.find((l) => l.key === 'implementation')!.amount)).toBe(before + 100);
+    expect(await p.locator('#pay-history').innerText()).toContain('Browser check price change');
+    // put it back so other checks see the original price
+    await p.locator('#pay-amount-implementation').fill(String(before));
+    await p.locator('#pay-review').click();
+    await p.locator('#pay-reason').fill('Browser check: restore');
+    await p.locator('#pay-confirm-go').click();
+    await p.locator('#pay-msg').waitFor({ timeout: 15000 });
+    expect(Number((await site()).lines.find((l) => l.key === 'implementation')!.amount)).toBe(before);
+
+    // Testimonials
+    await p.goto(`${BASE}/owner/website`, { waitUntil: 'networkidle' });
+    await p.locator('#web-testimonials').waitFor({ timeout: 15000 });
+    await p.locator('#web-add').click();
+    await p.locator('#tm-name').fill('Browser Tester');
+    await p.locator('#tm-quote').fill('A real quote written in a browser check.');
+    expect(await p.locator('#tm-save').isVisible()).toBe(true);
+    await p.locator('#tm-consent').click();
+    await p.locator('#tm-save').click();
+    await p.locator('#web-msg').waitFor({ timeout: 15000 });
+    expect((await site()).testimonials.items.map((x) => x.name)).toContain('Browser Tester');
+    expect(await p.locator('#web-count').innerText()).toMatch(/1 of 8/);
+    // Hide it: it leaves the public answer but stays saved.
+    await p.getByRole('button', { name: 'Hide', exact: true }).first().click();
+    await p.waitForTimeout(1500);
+    expect((await site()).testimonials.items.map((x) => x.name)).not.toContain('Browser Tester');
+    expect(await p.locator('#web-list').innerText()).toContain('Browser Tester');
+    await db.query('DELETE FROM website_testimonials');   // leave the database as it was
+  });
+});
+
+describe('Payment settings and the Website tab: Arabic and a phone', () => {
+  it('read right to left in Arabic, show Arabic text, and fit a phone with no sideways scrolling', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: p, errors } = await newPage(390);
+    await signIn(p, platform);
+    for (const path of ['/owner/settings', '/owner/website']) {
+      await p.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });
+      await p.waitForTimeout(1200);
+      const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow, `${path} scrolls sideways by ${overflow}px on a phone`).toBeLessThanOrEqual(2);
+    }
+    await p.getByRole('button', { name: 'EN | AR' }).click();
+    await p.waitForTimeout(900);
+    expect(await p.evaluate(() => document.documentElement.dir)).toBe('rtl');
+    expect(await p.locator('#web-testimonials').innerText()).toContain('آراء العملاء');
+    await p.goto(`${BASE}/owner/settings`, { waitUntil: 'networkidle' });
+    await p.waitForTimeout(900);
+    expect(await p.locator('#pay-settings').innerText()).toContain('إعدادات الدفع');
+    expect(errors.filter((e) => !/favicon|Failed to load resource/i.test(e))).toEqual([]);
+  });
+});
+

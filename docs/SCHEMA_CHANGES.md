@@ -599,3 +599,15 @@ Every change below is covered by a test in `test/`.
 | New functions `trial_begin()`, `trial_extend()`, `trial_convert()`, `trial_cancel()` (owner, or the server for `trial_begin`), and `lifecycle_advance()` (the hourly job; the owner or the server) | Starting, extending, converting and closing a trial, and moving unpaid trials on. The schedule numbers (15, 30, 60, 90 days) are not in the database: they live once in `src/books/trialRules.ts` and arrive as parameters. |
 | `billing_run()` replaced: it skips `trial` and `trial_ended` subscriptions and no longer turns a trial into `active` by itself; a cancellation at the end of a period records `cancelled_at` | An unpaid trial must lock, not become a paying customer. Before this, a trial that ended was billed and set to active automatically. |
 | Nothing about row-level security on existing tables changed | Locking is decided in the API (from the clock) before a request reaches the data, so every existing rule still applies unchanged. |
+
+## 0071_website_connection.sql
+| Change | Why |
+|---|---|
+| New table `website_settings` (one row): which plan the website sells, the English and Arabic names of its four price lines, the testimonial limit (5 to 10, default 8). A database check refuses a lower limit than the number of testimonials saved | Payment settings and the testimonial limit in the owner console. |
+| The website's prices are the plan's own prices in `plans`: implementation = `setup_price`, accounts clean-up = `implementation_price`, annual fee = `yearly_price`, extra module = `extra_module_price` | One source: the website and the billing run cannot disagree. |
+| `plans` gets a check that no price is above 1,000,000 | The owner types prices by hand. |
+| New table `website_testimonials` (name, job title, company, quote up to 300 letters, optional Arabic versions, the customer's permission (required), a note on where it is kept, shown or hidden, order). A database trigger refuses one more than the limit (the settings row is locked first, so two adds at once cannot both slip in) | Testimonials the owner writes; real quotes only, each with permission. |
+| New table `plan_price_changes` (plan, who, why, what changed before and after, how many paying customers were affected, when). Never changed or deleted | Every price or name change needs a reason and is kept. |
+| Row-level security on the three tables: only the platform owner reads or writes; audit triggers on `website_settings` and `website_testimonials` | Same rules as the rest of the owner console. |
+| New function `public_site_data()` (security definer, read-only, executable by `nusuh_app`, not by PUBLIC): prices, names, and the visible testimonials in order | The one public answer the website asks for. It contains nothing private. |
+

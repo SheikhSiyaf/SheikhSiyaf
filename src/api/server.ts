@@ -46,6 +46,7 @@ import { registerSetupRoutes } from './setup.js';
 import { profitAndLoss } from '../books/reportsService.js';
 import { registerPermissionCheck } from './permissions.js';
 import { registerTrialRoutes } from './trial.js';
+import { registerWebsiteRoutes } from './website.js';
 
 export type { ServerOptions } from './context.js';
 const POSTING_ROLES = ['partner', 'staff_accountant', 'client_accountant'];
@@ -299,6 +300,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerEmailRoutes(app, ctx);
   registerToolRoutes(app, ctx);
   registerBillingRoutes(app, ctx);
+  registerWebsiteRoutes(app, ctx);
   registerPaymentRoutes(app, ctx);
   registerRentalRoutes(app, ctx);
   registerRoomRoutes(app, ctx);

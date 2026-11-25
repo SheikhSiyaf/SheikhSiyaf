@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useApi, type CompanyBooks } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { fmt, toMinor, fromMinor } from '../money.ts';
-import { today } from '../router.ts';
+import { today, queryDate } from '../router.ts';
 import { ErrorNote, Loading } from '../ui.tsx';
 import { Aged } from '../sales/Aged.tsx';
 import { AccountLink, PnlStatement } from './Statements.tsx';
@@ -18,9 +18,9 @@ export function Reports({ books, sub }: { books: CompanyBooks; sub: string }) {
   const { t } = useI18n();
   const local = useLocalName();
   const id = books.company.id;
-  const [asOf, setAsOf] = useState(today());
-  const [from, setFrom] = useState(`${today().slice(0, 4)}-01-01`);
-  const [to, setTo] = useState(today());
+  const [asOf, setAsOf] = useState(queryDate('asOf') ?? today());
+  const [from, setFrom] = useState(queryDate('from') ?? `${today().slice(0, 4)}-01-01`);
+  const [to, setTo] = useState(queryDate('to') ?? today());
   const tb = useApi<TB>(sub === 'trial-balance' && asOf ? `/api/companies/${id}/reports/trial-balance?asOf=${asOf}` : null);
   const pnl = useApi<PNL>(sub !== 'trial-balance' && from && to ? `/api/companies/${id}/reports/profit-and-loss?from=${from}&to=${to}` : null);
 

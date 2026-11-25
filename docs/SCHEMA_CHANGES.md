@@ -672,3 +672,11 @@ Every change below is covered by a test in `test/`.
 | New table `checklist_ticks` (what was ticked by hand: for the company, or for one person; a period for daily and month-end items). A person reads company ticks and their own only; ticks are added or removed, never edited; company ticks need a posting role, a client role or the Administrator. Audited (insert and delete) | Who ticked what, and when. |
 | New table `checklist_hidden` (items a person hid for themselves; own rows only) | Hiding is personal. |
 | New functions `checklist_admin_of(company)` (an Administrator who is a member, or one in the company's own firm) and `checklist_people(company)` (how many people are in the company, and whether the caller has two-factor sign-in). Security definer, fixed search path | An Administrator is usually not a member of the company (they never see the books), and the checklist needs the head count without opening the people tables. |
+
+## 0081_dashboard.sql
+| Change | Why |
+|---|---|
+| New table `dashboard_layouts` (a saved home-page layout as a small JSON document: a person's own, the default for a role, or the default for the company; one per person, per role and per company by unique indexes; the document is limited to 30 KB). Row-level security: a person reads and writes only their own layout; the company's and roles' defaults are read by the members they apply to and written only by the company's Administrator (through `checklist_admin_of`, so an Administrator who is not a member can still set them). Audited | Each person customises their own view; the Administrator sets defaults without seeing the books. |
+| New trigger `before_dashboard_layout()` (a layout keeps its company, kind, person and role; a role's default can only be for a role of the company's own firm) | Stops a default being pointed at another customer's role. |
+| New function `dashboard_my_role(company)` (security definer, fixed search path) | Lets a person read their role's default without opening the memberships table. |
+

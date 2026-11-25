@@ -4,7 +4,7 @@ import { useState, type ReactNode } from 'react';
 import { useApi, type CompanyBooks } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { fmt, toMinor, fromMinor } from '../money.ts';
-import { today } from '../router.ts';
+import { today, queryDate } from '../router.ts';
 import { ErrorNote, Loading } from '../ui.tsx';
 import { useGo } from '../sales/common.tsx';
 
@@ -250,8 +250,8 @@ interface VatReturn { from: string; to: string; country: string; sales: Record<s
 export function VatReturnSheet({ books }: { books: CompanyBooks }) {
   const { t } = useI18n();
   const q = (() => { const d = new Date(); const m = d.getUTCMonth() - (d.getUTCMonth() % 3) - 3; return new Date(Date.UTC(d.getUTCFullYear(), m, 1)).toISOString().slice(0, 10); })();
-  const [from, setFrom] = useState(q);
-  const [to, setTo] = useState(monthEnd(new Date(Date.UTC(+q.slice(0, 4), +q.slice(5, 7) + 1, 1)).toISOString().slice(0, 10)));
+  const [from, setFrom] = useState(queryDate('from') ?? q);
+  const [to, setTo] = useState(queryDate('to') ?? monthEnd(new Date(Date.UTC(+q.slice(0, 4), +q.slice(5, 7) + 1, 1)).toISOString().slice(0, 10)));
   const r = useApi<VatReturn>(`/api/companies/${books.company.id}/reports/vat-return?from=${from}&to=${to}`);
   if (r.error) return <ErrorNote error={r.error} onRetry={r.reload} />;
   const d = r.data;

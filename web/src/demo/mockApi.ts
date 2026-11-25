@@ -27,6 +27,8 @@ import { fmtPercent, fmtUnits, ownershipKind, parsePercent, parseUnits, percents
 import { cleanBarcode, internalEan, validBarcode } from '../../../src/books/barcode.ts';
 import * as AtR from '../../../src/books/attendanceRules.ts';
 import * as CkRules from '../../../src/books/checklistRules.ts';
+import * as DashRules from '../../../src/books/dashboardRules.ts';
+import { sampleResult as dashSample } from '../dash/samples.ts';
 import * as Fx from '../../../src/books/fx.ts';
 import { documentMail } from '../../../src/email/templates.ts';
 import type { EInvoiceData, EParty } from '../../../src/einvoice/invoiceData.ts';
@@ -3081,6 +3083,27 @@ function ckListM(companyId: string) {
   return { items, progress: CkRules.progress(items), isAdmin: u.kind === 'admin', today, month: prev.period };
 }
 
+// ------------------------------------------------------------------ home page dashboard (demo: sample figures, kept in the browser only)
+interface DashStore { mine: Map<string, DashRules.LayoutDoc>; defaults: Map<string, DashRules.LayoutDoc> }
+const dashStores = new Map<string, DashStore>();
+const dashStore = (companyId: string): DashStore => { let s = dashStores.get(companyId); if (!s) { s = { mine: new Map(), defaults: new Map() }; dashStores.set(companyId, s); } return s; };
+function dashVisible(companyId: string) { const co = db.companies.find((c) => c.id === companyId)!; const r = clientRoleIn(companyId); return DashRules.visibleWidgets(r ? { permissions: r.permissions } : null, co.modules); }
+const sampleDash = (id: string, type: string, today: string) => dashSample(id, type, today);
+function dashM(companyId: string) {
+  const u = me(); const co = db.companies.find((c) => c.id === companyId)!; const vis = dashVisible(companyId); const st = dashStore(companyId);
+  const roleKey = (() => { const r = clientRoleIn(companyId); return r ? `role:${(r as { id?: string }).id ?? r.name}` : ''; })();
+  const chosen = DashRules.chooseLayout({ mine: st.mine.get(u.id), role: roleKey ? st.defaults.get(roleKey) : null, company: st.defaults.get('company') });
+  const doc = chosen.doc ?? DashRules.builtInLayout(vis);
+  const entry = (d: DashRules.WidgetDef) => ({ key: d.key, sizes: d.sizes, defaultSize: d.defaultSize, charts: d.charts, defaultChart: d.defaultChart, usesPeriod: d.usesPeriod, client: !!d.client });
+  return { layout: DashRules.filterLayout(doc, vis), source: chosen.source, catalog: vis.map(entry), today: new Date().toISOString().slice(0, 10), currency: co.currency };
+}
+function dashDefaults(companyId: string) {
+  const st = dashStore(companyId); const entry = (d: DashRules.WidgetDef) => ({ key: d.key, sizes: d.sizes, defaultSize: d.defaultSize, charts: d.charts, defaultChart: d.defaultChart, usesPeriod: d.usesPeriod, client: !!d.client });
+  const firm = currentFirm();
+  return { company: st.defaults.get('company') ?? null, roles: rolesDb.filter((r) => r.firmId === firm).map((r) => ({ id: (r as { id?: string }).id ?? r.name, name: r.name, nameAr: (r as { nameAr?: string | null }).nameAr ?? null, layout: st.defaults.get(`role:${(r as { id?: string }).id ?? r.name}`) ?? null })),
+    catalog: DashRules.WIDGETS.map(entry), builtIn: DashRules.builtInLayout(DashRules.WIDGETS) };
+}
+
 function notificationsM(companyId: string) {
   const out: { key: string; kind: string; count: number; params: Record<string, string | number>; module: string; sub?: string; at: string | null; read?: boolean }[] = [];
   const add = (kind: string, n: number, module: string, sub: string, extra: Record<string, string | number> = {}) => { if (n) out.push({ key: `${kind}:${today()}:${n}`, kind, count: n, params: { n, ...extra }, module, sub, at: null }); };
@@ -4551,6 +4574,33 @@ routes.push(
       .map(({ d, c }) => ({ id: d.id, type: d.type, number: d.number, status: d.status, date: d.issueDate, total: s(docTotals(d).gross), contact: c?.name ?? d.payee ?? null }));
     const items = can('Inventory') || can('Restaurant') ? odb.items.filter((x) => x.companyId === id && (has(x.sku) || has(x.name) || has(x.nameAr))).slice(0, 6).map((x) => ({ id: x.id, sku: x.sku, name: x.name, nameAr: x.nameAr })) : [];
     return { contacts, documents, items };
+  }],
+  // the home page dashboard (demo: sample figures from the same file the gallery uses; layouts are kept in the browser only)
+  ['GET', /^\/api\/companies\/([\w-]+)\/dashboard$/, (m) => dashM(inCo(m[1]!))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/dashboard$/, (m, b) => {
+    const id = inCo(m[1]!); const vis = dashVisible(id); const c = DashRules.cleanLayout(b, new Set(vis.map((v) => v.key)));
+    if (!c.ok) fail(400, 'That change to the home page is not allowed.', 'err.dashInput');
+    dashStore(id).mine.set(me().id, (c as { ok: true; value: DashRules.LayoutDoc }).value); return dashM(id);
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/dashboard\/reset$/, (m) => { const id = inCo(m[1]!); dashStore(id).mine.delete(me().id); return dashM(id); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/dashboard\/data$/, (m, b) => {
+    const id = inCo(m[1]!); const vis = dashVisible(id); const today = new Date().toISOString().slice(0, 10);
+    const ws = (b?.widgets as { id: string; type: string }[]) ?? [];
+    if (!Array.isArray(ws) || ws.length > 24) fail(400, 'That change to the home page is not allowed.', 'err.dashInput');
+    return { today, results: ws.map((x) => {
+      const def = DashRules.defOf(String(x.type)); if (!def) fail(400, 'That change to the home page is not allowed.', 'err.dashInput');
+      if (!vis.some((v) => v.key === def!.key)) return { id: x.id, type: def!.key, state: 'forbidden' };
+      const r = sampleDash(String(x.id), def!.key, today);
+      return { ...r, drill: { module: def!.drill.module, sub: def!.drill.sub, ...(def!.drill.item ? { item: def!.drill.item } : {}), ...(def!.drill.extra ? { extra: def!.drill.extra } : {}), query: {} } };
+    }) };
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/dashboard\/defaults$/, (m) => { const id = ckAdmin(m[1]!); return dashDefaults(id); }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/dashboard\/defaults$/, (m, b) => {
+    const id = ckAdmin(m[1]!); const st = dashStore(id); const key = b?.scope === 'role' ? `role:${String(b.roleId)}` : b?.scope === 'company' ? 'company' : '';
+    if (!key) fail(400, 'That change to the home page is not allowed.', 'err.dashInput');
+    if (b?.layout === null) st.defaults.delete(key);
+    else { const c = DashRules.cleanLayout(b?.layout); if (!c.ok) fail(400, 'That change to the home page is not allowed.', 'err.dashInput'); st.defaults.set(key, (c as { ok: true; value: DashRules.LayoutDoc }).value); }
+    return dashDefaults(id);
   }],
   // the checklist beside the bell (kept in the browser only; the real rules from src/books/checklistRules.ts)
   ['GET', /^\/api\/companies\/([\w-]+)\/checklist$/, (m) => ckListM(inCo(m[1]!))],

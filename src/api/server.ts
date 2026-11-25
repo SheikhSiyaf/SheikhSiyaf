@@ -29,6 +29,7 @@ import { registerPortalRoutes } from './portal.js';
 import { registerEInvoiceRoutes } from './einvoice.js';
 import { registerApprovalRoutes, registerImportRoutes, registerSearchRoutes } from './approvals.js';
 import { registerChecklistRoutes } from './checklist.js';
+import { registerDashboardRoutes } from './dashboard.js';
 import { registerFxRoutes, registerYearEndRoutes } from './fx.js';
 import { registerEmailRoutes } from './email.js';
 import { registerToolRoutes } from './tools.js';
@@ -314,6 +315,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerSupportRoutes(app, ctx);
   registerSearchRoutes(app, ctx);
   registerChecklistRoutes(app, ctx);
+  registerDashboardRoutes(app, ctx);
   registerSetupRoutes(app, ctx);
 
   app.all('/api/*', async () => { throw new HttpError(404, 'Not found.', 'err.notFound'); });

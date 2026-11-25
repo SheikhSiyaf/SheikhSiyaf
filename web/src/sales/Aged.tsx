@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { useApi, type CompanyBooks } from '../api.ts';
 import { useI18n, useLocalName, type Key } from '../i18n.tsx';
 import { fmt, toMinor, fromMinor } from '../money.ts';
-import { today } from '../router.ts';
+import { today, queryDate } from '../router.ts';
 import { ErrorNote, Loading } from '../ui.tsx';
 import { moduleOfSide, useGo, type Side } from './common.tsx';
 
@@ -14,7 +14,7 @@ export function Aged({ books, side }: { books: CompanyBooks; side: Side }) {
   const { t } = useI18n();
   const local = useLocalName();
   const go = useGo(books.company.id);
-  const [asOf, setAsOf] = useState(today());
+  const [asOf, setAsOf] = useState(queryDate('asOf') ?? today());
   const r = useApi<{ asOf: string; rows: Row[] }>(`/api/companies/${books.company.id}/reports/aged?side=${side}&asOf=${asOf}`);
   const sum = (k: (typeof BUCKETS)[number] | 'total') => fmt(fromMinor((r.data?.rows ?? []).reduce((s, x) => s + toMinor(x[k]), 0n)));
   return (

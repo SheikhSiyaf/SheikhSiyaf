@@ -1289,3 +1289,167 @@ describe('The checklist beside the bell', () => {
     expect(await a.locator('#checklist-editor').innerText()).not.toMatch(/\b\d+\/\d+\b/);
   });
 });
+
+const textOf = (p: Page, sel: string) => p.locator(sel).innerText();
+const overflowOf = (p: Page) => p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) as Promise<number>;
+
+describe('The home page dashboard', () => {
+  const clean = async () => {
+    await db.query(`DELETE FROM dashboard_layouts WHERE company_id = $1`, [company]);
+  };
+  afterEach(clean);
+  const home = async (p: Page) => {
+    await p.goto(`${BASE}/c/${company}`, { waitUntil: 'networkidle' });
+    await p.locator('#dashboard').waitFor({ timeout: 20000 });
+    await p.waitForTimeout(1200);
+  };
+  const order = (p: Page) => p.evaluate(() => [...document.querySelectorAll('#dash-grid .dw')].map((e) => (e as HTMLElement).dataset.type)) as Promise<string[]>;
+
+  it('shows widgets from the company\'s own books for this role, each with a way to its report, and no longer the old figure cards', async () => {
+    const { page: p, errors: errs } = await newPage();
+    await signIn(p, accountant);
+    await home(p);
+    const types = await order(p);
+    expect(types.length).toBeGreaterThan(3);
+    expect(types).toContain('receivables');
+    // the owner-report widgets follow the role's own right to the owner reports (other checks in this suite change the role, so read it)
+    const perms = (await db.query(`SELECT r.permissions FROM memberships m JOIN users u ON u.id = m.user_id LEFT JOIN client_roles r ON r.id = m.client_role_id WHERE u.email = $1 AND m.company_id = $2`, [accountant, company])).rows[0]?.permissions as Record<string, string> | null | undefined;
+    const ownerReports = !perms || (perms.OwnerReports !== undefined && perms.OwnerReports !== 'none');
+    expect(types.includes('net_profit'), JSON.stringify(perms)).toBe(ownerReports);
+    expect(await p.locator('#home-setup').count()).toBe(0);
+    expect(await p.locator('.dw-report').count()).toBeGreaterThan(2);
+    expect(await p.locator('.dw-sample').count()).toBe(0);    // no sample figures on the real home page
+    expect(errs.filter((e) => !/40[0-9]|favicon/.test(e))).toEqual([]);
+  });
+
+  it('the money-owed widget shows the aged receivables total exactly, and "View report" opens that report for the same date', async () => {
+    const { page: p } = await newPage();
+    await signIn(p, accountant);
+    await home(p);
+    const shown = (await textOf(p, '.dw[data-type="receivables"] .dw-big b')).replace(/,/g, '');
+    const asOf = await p.evaluate(() => (document.querySelector('.dw[data-type="receivables"] .dw-dates') as HTMLElement).textContent ?? '');
+    expect(asOf).toMatch(/\d{4}/);
+    const today = new Date().toISOString().slice(0, 10);
+    const aged = await call(p, `/api/companies/${company}/reports/aged?side=sales&asOf=${today}`) as { json?: { rows: { total: string }[] } };
+    const total = (aged.json?.rows ?? []).reduce((s, r) => s + Math.round(Number(r.total) * 100), 0) / 100;
+    expect(Number(shown)).toBe(total);
+    await p.locator('.dw[data-type="receivables"] .dw-report').click();
+    await p.waitForTimeout(1500);
+    expect(p.url()).toContain('/Reports/aged-receivables?asOf=');
+    expect(await p.locator('input[type="date"]').first().inputValue()).toBe(new URL(p.url()).searchParams.get('asOf'));
+  });
+
+  it('editing: add from the gallery (sample previews), rename, resize, move, Save keeps it after a reload, Reset brings the default back', async () => {
+    const { page: p } = await newPage();
+    await signIn(p, accountant);
+    await home(p);
+    const before = await order(p);
+    await p.locator('#dash-edit').click();
+    await p.locator('#dash-hint').waitFor({ timeout: 10000 });
+    // the gallery previews use sample figures and say so
+    await p.locator('#dash-add').click();
+    await p.locator('#dash-gallery').waitFor({ timeout: 10000 });
+    expect(await p.locator('#dash-gallery .dw-sample').count()).toBeGreaterThan(3);
+    await p.locator('#dash-gallery [data-type="books_status"] .b').first().click();
+    await p.waitForTimeout(600);
+    expect((await order(p)).length).toBe(before.length + 1);
+    // rename the first widget and make it wide; move the last one to the front with the arrows
+    const first = p.locator('#dash-grid .dw').first();
+    await first.locator('input').first().fill('My cash position');
+    await p.locator('#dash-grid .dw').last().locator('button[title="Move earlier"]').click();
+    await p.waitForTimeout(300);
+    await p.locator('#dash-save').click();
+    await p.locator('#dash-msg').waitFor({ timeout: 10000 });
+    const saved = await order(p);
+    const row = (await db.query(`SELECT layout, scope FROM dashboard_layouts WHERE company_id = $1`, [company])).rows;
+    expect(row).toHaveLength(1);
+    expect(row[0].scope).toBe('user');
+    expect(row[0].layout.widgets.length).toBe(before.length + 1);
+    await p.reload({ waitUntil: 'networkidle' });
+    await p.locator('#dashboard').waitFor({ timeout: 20000 }); await p.waitForTimeout(1000);
+    expect(await order(p)).toEqual(saved);
+    expect(await textOf(p, '#dash-grid')).toContain('My cash position');
+    // Reset brings the default back
+    await p.locator('#dash-edit').click();
+    await p.evaluate(() => { window.confirm = () => true; });
+    await p.locator('#dash-reset').click();
+    await p.locator('#dash-msg').waitFor({ timeout: 10000 });
+    expect(await order(p)).toEqual(before);
+    expect((await db.query(`SELECT count(*)::int AS n FROM dashboard_layouts WHERE company_id = $1`, [company])).rows[0].n).toBe(0);
+  });
+
+  it('Cancel leaves everything as it was and stores nothing', async () => {
+    const { page: p } = await newPage();
+    await signIn(p, accountant);
+    await home(p);
+    const before = await order(p);
+    await p.locator('#dash-edit').click();
+    await p.locator('#dash-grid .dw').first().locator('.dw-remove').click();
+    expect((await order(p)).length).toBe(before.length - 1);
+    await p.locator('#dash-cancel').click();
+    await p.waitForTimeout(500);
+    expect(await order(p)).toEqual(before);
+    expect((await db.query(`SELECT count(*)::int AS n FROM dashboard_layouts WHERE company_id = $1`, [company])).rows[0].n).toBe(0);
+  });
+
+  it('a widget\'s own period and the shared period change what is shown, and the report link carries the dates', async () => {
+    const { page: p } = await newPage();
+    await signIn(p, accountant);
+    await home(p);
+    await p.locator('#dash-period').selectOption('last_month');
+    await p.waitForTimeout(1500);
+    const vat = await p.evaluate(() => (document.querySelector('.dw[data-type="vat_due"] .dw-dates') as HTMLElement | null)?.textContent ?? '');
+    expect(vat).toMatch(/\d{4}/);
+    await p.locator('.dw[data-type="vat_due"] .dw-report').click();
+    await p.waitForTimeout(1500);
+    expect(p.url()).toMatch(/\/Reports\/vat-return\?from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}/);
+  });
+
+  it('mirrors in Arabic (the first widget is on the right) and stacks on a phone with no sideways scrolling', async () => {
+    const { page: ar } = await newPage();
+    await signIn(ar, accountant);
+    await home(ar);
+    const ltrLeft = await ar.evaluate(() => { const w = [...document.querySelectorAll('#dash-grid .dw')]; return [w[0]!.getBoundingClientRect().left, w[1]!.getBoundingClientRect().left]; });
+    expect(ltrLeft[0]!).toBeLessThan(ltrLeft[1]!);
+    await ar.getByRole('button', { name: 'EN | AR' }).click();
+    await ar.waitForTimeout(1200);
+    const rtlLeft = await ar.evaluate(() => { const w = [...document.querySelectorAll('#dash-grid .dw')]; return [w[0]!.getBoundingClientRect().left, w[1]!.getBoundingClientRect().left]; });
+    expect(rtlLeft[0]!).toBeGreaterThan(rtlLeft[1]!);
+    expect(await textOf(ar, '#dash-edit')).toBe('تعديل الصفحة الرئيسية');
+    const { page: ph } = await newPage(390);
+    await signIn(ph, accountant);
+    await home(ph);
+    const m = await ph.evaluate(() => ({ lefts: [...new Set([...document.querySelectorAll('#dash-grid .dw')].map((w) => Math.round(w.getBoundingClientRect().left)))], overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth }));
+    expect(m.lefts).toHaveLength(1);                          // one column
+    expect(m.overflow).toBeLessThanOrEqual(2);
+    await ph.locator('#dash-edit').click();
+    await ph.waitForTimeout(600);
+    expect(await overflowOf(ph)).toBeLessThanOrEqual(2);      // the editor fits a phone too
+  });
+
+  it('the Administrator sets the company default with sample figures only, and a person with no layout of their own gets it', async () => {
+    const adminEmail = (await db.query(`SELECT u.email FROM users u JOIN companies c ON c.firm_id = u.firm_id WHERE c.id = $1 AND u.kind = 'admin' AND u.status = 'active' LIMIT 1`, [company])).rows[0]?.email as string;
+    const { page: a } = await newPage();
+    await signIn(a, adminEmail);
+    await a.goto(`${BASE}/admin/clients/${company}`, { waitUntil: 'networkidle' });
+    await a.locator('#dash-defaults summary').waitFor({ timeout: 20000 });
+    await a.locator('#dash-defaults summary').click();
+    await a.locator('#dash-defaults .dw').first().waitFor({ timeout: 10000 });
+    expect(await a.locator('#dash-defaults .dw-sample').count()).toBeGreaterThan(3);   // every widget there is a sample, never the books
+    expect(await textOf(a, '#dash-defaults')).not.toMatch(/Al Faisal|ANT-0002/);
+    // remove the first widget and save it as the company default
+    const firstType = await a.evaluate(() => (document.querySelector('#dash-defaults .dw') as HTMLElement).dataset.type);
+    await a.locator('#dash-defaults .dw').first().locator('.dw-remove').click();
+    await a.locator('#dash-ad-save').click();
+    await a.locator('#dash-ad-msg').waitFor({ timeout: 10000 });
+    const row = (await db.query(`SELECT scope, layout FROM dashboard_layouts WHERE company_id = $1`, [company])).rows;
+    expect(row).toHaveLength(1);
+    expect(row[0].scope).toBe('company');
+    expect(row[0].layout.widgets.map((x: { type: string }) => x.type)).not.toContain(firstType);
+    const { page: p } = await newPage();
+    await signIn(p, accountant);
+    await home(p);
+    expect(await order(p)).not.toContain(firstType);
+    expect(await p.locator('#dash-source').count()).toBe(1);   // "set by your company's Administrator"
+  });
+});

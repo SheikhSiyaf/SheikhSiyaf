@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-25 (website connection, software side; free-trial lifecycle, phase 1 of 5: data, dates, lock; earlier: public marketing website built, now in its own repository SheikhSiyaf/nusuh-website; earlier: owner Settings and verified email change; readiness check over every API route).
+Last updated: 2026-11-25 (free-trial reminder e-mails, phase 2 of 5; website connection, software side; free-trial lifecycle, phase 1 of 5: data, dates, lock; earlier: public marketing website built, now in its own repository SheikhSiyaf/nusuh-website; earlier: owner Settings and verified email change; readiness check over every API route).
 
 ---
 
@@ -182,6 +182,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 - **Product direction (owner, 2026-11-22).** (1) Add ownership: owners/partners/shareholders, shares and percentages, capital contributions, drawings, dividends and partner profit split, for sole proprietor, partnership and LLC. (2) Sell direct to businesses, like Zoho Books: one company runs its own finances; firm features are hidden, not deleted. Order: Phase A ownership, then Phase B single-company front door. Nothing built yet.
 
 ## 7. Where things stand and what is next
+
+**Free trial lifecycle, phase 2 of 5: reminder e-mails (2026-11-25, migration 0072).** An hourly job (not a daily one: the lock itself follows the clock) queues the reminder that is current for each unpaid trial, once only: welcome (at once), 5 days left (from day 10), 2 days left (day 13), last notice (day 14, or 15 if missed), trial ended (from the first morning after), grace week (7 days after) and closing notice (the last 4 days of the grace period; the last two are copied to hello@). Scheduled ones go from 09:00 Riyadh time. A missed day never sends an out-of-date count. Plain English, no Arabic yet, prices and names read from Payment settings, no ZATCA wording. **They stay off until you switch them on:** the setting TRIAL_EMAILS=on in Render (and PUBLIC_URL for the button) — read the texts first (the owner's console shows what was queued and any delivery failure comes in phase 4). Real sending also needs the e-mail service switched on, as for every e-mail.
 
 **Website connection, software side (2026-11-25, migration 0071).** Owner console > Settings > Payment settings: the plan the website sells has editable English and Arabic names and prices for its four lines (implementation, accounts clean-up, annual fee, extra module). They are the plan's own prices, so the website and the invoices cannot disagree; each change shows a confirm step with the number of paying customers who pay the new price from their next bill, needs a reason, and is kept in an unchangeable history (invoices already issued never change). New owner tab Website: testimonials with name, job title, company, quote, optional Arabic, the customer's permission (required), show or hide and order; the most you can save is a limit of 5 to 10 (default 8). A public read-only address, /api/public/site-data, gives the website the prices, names and shown testimonials. Not live until deployed: the website side (live prices, order totals, the testimonials strip) is built in the website repository.
 

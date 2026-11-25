@@ -611,3 +611,11 @@ Every change below is covered by a test in `test/`.
 | Row-level security on the three tables: only the platform owner reads or writes; audit triggers on `website_settings` and `website_testimonials` | Same rules as the rest of the owner console. |
 | New function `public_site_data()` (security definer, read-only, executable by `nusuh_app`, not by PUBLIC): prices, names, and the visible testimonials in order | The one public answer the website asks for. It contains nothing private. |
 
+## 0072_trial_emails.sql
+| Change | Why |
+|---|---|
+| `email_outbox.kind` also allows `trial` | The trial reminder e-mails go through the ordinary outbox and sender. |
+| New table `trial_email_log` (customer, reminder, the address, the queued e-mail and its copy to hello@; one row per customer and reminder, enforced unique). Only the platform owner can read it; a row can never be changed (except filling in the queued e-mail ids once) or deleted | A reminder goes out once only, however often the job runs or if two jobs overlap, and the owner can see what became of each. |
+| New functions `trial_mail_targets()`, `trial_email_claim()`, `trial_email_attach()` (server only; the first also the owner) and `owner_trial_emails()` (owner only), executable by `nusuh_app`, not by PUBLIC | The daily job claims a reminder and queues it in one step: if queuing fails the claim is undone and tried again next run. |
+| Nothing about existing tables' row-level security changed | |
+

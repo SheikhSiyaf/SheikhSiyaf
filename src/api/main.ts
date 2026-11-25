@@ -10,7 +10,7 @@ import { startFxJobs } from '../books/fxJobs.js';
 import { startMailer } from '../email/mailer.js';
 import { startToolJobs } from '../books/toolsJobs.js';
 import { startBillingJob } from '../books/billingService.js';
-import { startLifecycleJob } from '../books/trialService.js';
+import { startLifecycleJob } from '../books/trialJob.js';
 import { startBankFeedJob } from '../books/bankFeedService.js';
 import { startAuthPurgeJob } from '../auth/throttle.js';
 import { startEInvoiceSender } from '../books/einvoiceSender.js';

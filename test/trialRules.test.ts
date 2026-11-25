@@ -2,7 +2,7 @@
 // A trial lasts 15 days counting the day it starts, and ends at 23:59:59.999 Riyadh time on day 15.
 import { describe, it, expect } from 'vitest';
 import {
-  LIFECYCLE, accessOf, addDays, closingDates, daysAfterToday, daysLeft, endOfRiyadhDay, extendEnd, riyadhDate, trialWindow, type SubState,
+  LIFECYCLE, accessOf, addDays, closingDates, currentNotice, daysAfterToday, daysLeft, endOfRiyadhDay, extendEnd, riyadhDate, trialWindow, type SubState,
 } from '../src/books/trialRules.js';
 
 const d = (s: string) => new Date(s);
@@ -153,5 +153,59 @@ describe('Access', () => {
     const b = accessOf({ ...trial, status: 'cancelled', cancelledAt: d('2026-03-17T05:00:00Z') }, d('2026-03-18T00:00:00Z'));
     expect(b.exportUntil?.toISOString()).toBe('2026-05-16T20:59:59.999Z');
     expect(riyadhDate(b.deleteNotBefore!)).toBe('2026-06-15');
+  });
+});
+
+describe('Which reminder is current', () => {
+  // A 15-day trial that started on 10 January (08:00 in Riyadh): last day 24 January, grace period ends 23 February.
+  const w = trialWindow(d('2026-01-10T05:00:00Z'));
+  const s: SubState = { status: 'trial', trialEndsAt: w.endsAt, graceEndsAt: w.graceEndsAt, convertedAt: null, cancelledAt: null };
+  const at = (iso: string, over: Partial<SubState> = {}) => currentNotice({ ...s, ...over }, d(iso));
+  const key = (iso: string, over: Partial<SubState> = {}) => at(iso, over)?.key ?? null;
+
+  it('the welcome goes out at once; the others from 09:00 Riyadh time', () => {
+    expect(key('2026-01-10T05:00:00Z')).toBe('welcome');   // 08:00 on day 1: not waiting for 09:00
+    expect(key('2026-01-18T06:00:00Z')).toBe('welcome');   // day 9, 09:00
+    expect(key('2026-01-19T05:59:59Z')).toBeNull();        // day 10, 08:59
+    expect(key('2026-01-19T06:00:00Z')).toBe('five_days'); // day 10, 09:00
+  });
+
+  it('five days left on day 10, two on day 13, and the last notice on days 14 and 15, with the true count in each', () => {
+    expect(at('2026-01-19T06:00:00Z')).toMatchObject({ key: 'five_days', daysAfterToday: 5 });
+    expect(key('2026-01-21T06:00:00Z')).toBe('five_days');                       // day 12: still the one to send if it was missed
+    expect(at('2026-01-22T06:00:00Z')).toMatchObject({ key: 'two_days', daysAfterToday: 2 });
+    expect(at('2026-01-23T06:00:00Z')).toMatchObject({ key: 'last_notice', daysAfterToday: 1 });   // "ends tomorrow"
+    expect(at('2026-01-24T06:00:00Z')).toMatchObject({ key: 'last_notice', daysAfterToday: 0 });   // "ends today"
+    expect(at('2026-01-24T20:59:00Z')).toMatchObject({ key: 'last_notice', daysAfterToday: 0 });   // 23:59, still open
+  });
+
+  it('a missed day never sends an out-of-date count: the one current reminder is the only candidate', () => {
+    // the job did not run on day 13 at all: on day 14 the current reminder is the last notice, not "two days left"
+    expect(key('2026-01-23T06:00:00Z')).toBe('last_notice');
+  });
+
+  it('after the trial: ended (first week), then the grace week, then the closing notice for the last 4 days', () => {
+    expect(key('2026-01-24T21:00:00Z')).toBeNull();          // midnight: not in the night
+    expect(key('2026-01-25T06:00:00Z')).toBe('trial_ended');
+    expect(key('2026-01-30T06:00:00Z')).toBe('trial_ended'); // day 6 after
+    expect(key('2026-01-31T06:00:00Z')).toBe('grace_week');  // day 7 after
+    expect(key('2026-02-19T06:00:00Z')).toBe('grace_week');
+    expect(key('2026-02-20T06:00:00Z')).toBe('closing_soon'); // 3 days before the grace period ends
+    expect(key('2026-02-23T20:59:00Z')).toBe('closing_soon'); // its last evening
+    expect(key('2026-02-23T21:00:00Z')).toBeNull();           // closed: nothing more
+  });
+
+  it('nothing for someone who bought, a closed customer, or a customer with no trial', () => {
+    expect(key('2026-01-20T06:00:00Z', { convertedAt: d('2026-01-12T00:00:00Z'), status: 'active' })).toBeNull();
+    expect(key('2026-01-20T06:00:00Z', { status: 'cancelled', cancelledAt: d('2026-01-15T00:00:00Z') })).toBeNull();
+    expect(currentNotice({ status: 'active', trialEndsAt: null, graceEndsAt: null, convertedAt: null, cancelledAt: null }, d('2026-01-20T06:00:00Z'))).toBeNull();
+    expect(currentNotice(null, d('2026-01-20T06:00:00Z'))).toBeNull();
+  });
+
+  it('a shorter trial (an older plan\'s 14 days) uses the same rules from the end', () => {
+    const w14 = trialWindow(d('2026-01-10T05:00:00Z'), 14);   // last day 23 January
+    const s14: SubState = { status: 'trial', trialEndsAt: w14.endsAt, graceEndsAt: w14.graceEndsAt, convertedAt: null, cancelledAt: null };
+    expect(currentNotice(s14, d('2026-01-18T06:00:00Z'))).toMatchObject({ key: 'five_days', daysAfterToday: 5 });
+    expect(currentNotice(s14, d('2026-01-23T06:00:00Z'))).toMatchObject({ key: 'last_notice', daysAfterToday: 0 });
   });
 });

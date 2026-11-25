@@ -4,7 +4,6 @@
 import type pg from 'pg';
 import type { Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
-import { runExclusive } from '../jobs/runJob.js';
 import { LIFECYCLE, accessOf, addDays, riyadhDate, trialWindow, type Access, type SubState } from './trialRules.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
@@ -77,24 +76,4 @@ export interface Moved { firmId: string; from: string; to: string }
 export async function advance(db: { query: Db['query'] }, now: Date = new Date(), firmId?: string): Promise<Moved[]> {
   const r = await db.query('SELECT r_firm, r_from, r_to FROM lifecycle_advance($1, $2, $3)', [now, LIFECYCLE.graceDays, firmId ?? null]);
   return r.rows.map((x: { r_firm: string; r_from: string; r_to: string }) => ({ firmId: x.r_firm, from: x.r_from, to: x.r_to }));
-}
-
-/** The daily job, nobody signed in (LIFECYCLE_JOBS=off turns it off). It runs hourly: the lock itself follows the clock, so a late run changes nothing for customers. */
-export function startLifecycleJob(pool: pg.Pool, log: (m: string) => void = console.log) {
-  if (process.env.LIFECYCLE_JOBS === 'off') return () => undefined;
-  const go = async () => {
-    await runExclusive(pool, 'lifecycle', async () => {
-      const c = await pool.connect();
-      try {
-        await c.query('BEGIN');
-        const moved = await advance(c);
-        await c.query('COMMIT');
-        if (moved.length) log(`Trials: ${moved.length} moved on`);
-      } catch (e) { await c.query('ROLLBACK').catch(() => undefined); throw e; } finally { c.release(); }
-    }).catch((e) => log(`Trial job failed: ${(e as Error).message}`));
-  };
-  const first = setTimeout(() => void go(), 45_000);
-  const every = setInterval(() => void go(), 60 * 60 * 1000);
-  first.unref(); every.unref();
-  return () => { clearTimeout(first); clearInterval(every); };
 }

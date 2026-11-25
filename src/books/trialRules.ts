@@ -125,3 +125,46 @@ export function accessOf(s: SubState | null, now: Date): Access {
   if (t > ends.getTime()) return { level: 'locked', ...none, ...dates };
   return { level: 'full', ...none, ...dates, trialing: true, daysLeft: daysLeft(ends, now) };
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Reminder e-mails. At any moment at most ONE reminder is current for an unpaid trial; the daily job sends it if it was
+// not sent yet (a log keyed by customer and reminder makes it once only). A reminder that was missed is not sent
+// late with a wrong count: when its time has passed, the next one is the current one.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** From this Riyadh hour a scheduled reminder may go out (the welcome goes at once). */
+export const NOTICE_HOUR = 9;
+
+export type NoticeKey = 'welcome' | 'five_days' | 'two_days' | 'last_notice' | 'trial_ended' | 'grace_week' | 'closing_soon';
+export interface Notice {
+  key: NoticeKey;
+  /** Whole days still to come after today while the trial is open (0 on the last day), otherwise null. */
+  daysAfterToday: number | null;
+  /** The last trial day and the last day of the grace period, as Riyadh dates. */
+  lastDay: string;
+  graceEndsOn: string;
+}
+
+const riyadhHour = (at: Date) => new Date(at.getTime() + LIFECYCLE.utcOffsetHours * HOUR).getUTCHours();
+
+/** The reminder that is current for this subscription at this moment, or null (nothing to say, or it is not time yet). */
+export function currentNotice(s: SubState | null, now: Date): Notice | null {
+  if (!s || !s.trialEndsAt || s.convertedAt || s.status === 'active' || s.status === 'past_due' || s.status === 'cancelled') return null;
+  const lastDay = riyadhDate(s.trialEndsAt);
+  const grace = s.graceEndsAt ?? endOfRiyadhDay(addDays(lastDay, LIFECYCLE.graceDays));
+  const graceEndsOn = riyadhDate(grace);
+  const today = riyadhDate(now);
+  if (today > graceEndsOn) return null;   // closed
+  const base = { lastDay, graceEndsOn };
+  if (now.getTime() <= s.trialEndsAt.getTime()) {
+    const r = daysBetween(today, lastDay);   // days after today
+    if (r >= 6) return { key: 'welcome', daysAfterToday: r, ...base };   // the welcome is for the first days, and goes at once
+    if (riyadhHour(now) < NOTICE_HOUR) return null;
+    return { key: r >= 3 ? 'five_days' : r === 2 ? 'two_days' : 'last_notice', daysAfterToday: r, ...base };
+  }
+  if (riyadhHour(now) < NOTICE_HOUR) return null;
+  const since = daysBetween(lastDay, today);          // 1 on the first day after the trial
+  const left = daysBetween(today, graceEndsOn);       // days until the last day of the grace period
+  const key: NoticeKey = left <= 3 ? 'closing_soon' : since >= 7 ? 'grace_week' : 'trial_ended';
+  return { key, daysAfterToday: null, ...base };
+}

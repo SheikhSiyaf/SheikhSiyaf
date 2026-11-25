@@ -5013,3 +5013,8 @@
 "Sign-up","setup.h.company","your address and VAT status go on every invoice","عنوانك وحالة ضريبة القيمة المضافة تظهر على كل فاتورة","Screens"
 "Sign-up","setup.go.company","Open company details","افتح بيانات الشركة","Screens"
 "Sign-up","trials.self","Signed up itself","سجّل بنفسه","Screens"
+"Sign-up","sup2.col.email","Confirmation e-mail","رسالة التأكيد","Screens"
+"Sign-up","sup2.m.queued","Waiting to be sent","بانتظار الإرسال","Screens"
+"Sign-up","sup2.m.sending","Sending","قيد الإرسال","Screens"
+"Sign-up","sup2.m.sent","Sent","أُرسلت","Screens"
+"Sign-up","sup2.m.failed","Failed","فشل الإرسال","Screens"

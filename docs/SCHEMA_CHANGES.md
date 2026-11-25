@@ -659,3 +659,9 @@ Every change below is covered by a test in `test/`.
 |---|---|
 | New function `self_company_update()` (security definer, fixed search path, executable by `nusuh_app`, not by PUBLIC): lets the person who manages a customer's users change that company's legal form, address, city, VAT status and number, registration date, phone and e-mail, only in their own customer and only for a customer that came through self-service sign-up (it has a record in `trial_fingerprints`) | A self-service company starts without its address and VAT number and could otherwise never complete them, because company details are owner-only (0023). Name, registration number and country stay locked for everybody. No policy was changed; customers the owner created are unchanged. |
 
+## 0079_signup_mail_status.sql
+| Change | Why |
+|---|---|
+| New table `signup_mail` (which outbox e-mail belongs to which sign-up request, by the keyed e-mail hash). No policy, no grant | The owner sees whether each confirmation e-mail was sent, is waiting, or failed, with the e-mail service's error. |
+| `signup_mail_log()` (server only) and `owner_signup_activity()` replaced to add the e-mail status, error and attempts (owner only) | A confirmation link that never arrives is usually an e-mail service problem; this shows it instead of guessing. |
+

@@ -326,6 +326,16 @@ describe('Signing up', () => {
     await expect(as(f.partner, (db) => db.query("SELECT self_company_update($1, 'LLC', 'x', 'y', 'unregistered', NULL, NULL, NULL, NULL)", [mine]))).rejects.toThrow(/Not allowed/);
   });
 
+  it('shows the owner what became of each confirmation e-mail: waiting, sent, or failed with the e-mail service\'s own words', async () => {
+    const b = form(); await post(b);
+    const find = async () => ((await on.inject({ method: 'GET', url: '/api/owner/signups', headers: { cookie: ownerCookie } })).json().events as { kind: string; company: string; mail: { status: string; error: string | null } | null }[]).find((e) => e.kind === 'started' && e.company === b.companyName);
+    expect((await find())!.mail).toMatchObject({ status: 'queued', error: null });
+    await owner.query(`UPDATE email_outbox SET status = 'failed', last_error = 'The domain nusuhbooks.com is not verified', attempts = 3 WHERE to_email = $1 AND kind = 'signup'`, [b.email]);
+    expect((await find())!.mail).toMatchObject({ status: 'failed', error: 'The domain nusuhbooks.com is not verified' });
+    await owner.query(`UPDATE email_outbox SET status = 'sent', last_error = NULL WHERE to_email = $1 AND kind = 'signup'`, [b.email]);
+    expect((await find())!.mail).toMatchObject({ status: 'sent' });
+  });
+
   it('the new customer is separated from every other customer', async () => {
     const a = form(), b = form();
     await post(a); await post(b);

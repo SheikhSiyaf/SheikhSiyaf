@@ -35,6 +35,6 @@ export function registerSignupRoutes(app: FastifyInstance, { pool, opts, as }: C
   app.get('/api/owner/signups', async (req) => as(req, async (db) => {
     if (!(await db.query('SELECT app_is_owner() AS o')).rows[0].o) throw new HttpError(403, 'Only the platform owner can do this.', 'err.ownerOnly');
     const rows = (await db.query('SELECT * FROM owner_signup_activity(300)')).rows;
-    return { enabled: cfg.enabled, events: rows.map((r) => ({ id: String(r.id), at: r.at.toISOString(), kind: r.kind, emailDomain: r.email_domain, company: r.company_name, country: r.country, firmId: r.firm_id, flags: r.flags, attempts: r.same_key_attempts })) };
+    return { enabled: cfg.enabled, events: rows.map((r) => ({ id: String(r.id), at: r.at.toISOString(), kind: r.kind, emailDomain: r.email_domain, company: r.company_name, country: r.country, firmId: r.firm_id, flags: r.flags, attempts: r.same_key_attempts, mail: r.mail_status ? { status: r.mail_status, error: r.mail_error, attempts: r.mail_attempts } : null })) };
   }));
 }

@@ -63,17 +63,19 @@ export async function beginSignup(pool: pg.Pool, cfg: SignupConfig, body: Record
   const base = appUrl.replace(/\/+$/, '');
   if (outcome === 'sent') {
     const link = `${base}/verify/${token}`;
-    await queue(pool, { kind: 'signup', to: v.email, toName: v.fullName, replyTo: SUPPORT.email, mail: mail(v.lang, {
+    const id1 = await queue(pool, { kind: 'signup', to: v.email, toName: v.fullName, replyTo: SUPPORT.email, mail: mail(v.lang, {
       enSubject: 'Confirm your e-mail to start your Nusuh Books free trial', arSubject: 'أكّد بريدك الإلكتروني لبدء تجربتك المجانية في نصوح بوكس',
       en: [`Hello ${v.fullName},`, `Thank you for choosing Nusuh Books. Confirm your e-mail address to create ${v.companyName} and start your 15-day free trial. The link works once and for 24 hours.`, 'If you did not ask for this, you can ignore this e-mail: nothing is created until the link is opened.'],
       ar: [`مرحبًا ${v.fullName}،`, `شكرًا لاختيارك نصوح بوكس. أكّد بريدك الإلكتروني لإنشاء ${v.companyName} وبدء تجربتك المجانية لمدة 15 يومًا. الرابط يعمل مرة واحدة ولمدة 24 ساعة.`, 'إذا لم تطلب ذلك فتجاهل هذه الرسالة: لا يُنشأ شيء قبل فتح الرابط.'],
       link, enButton: 'Confirm my e-mail', arButton: 'تأكيد بريدي الإلكتروني' }) });
+    await pool.query('SELECT signup_mail_log($1, $2)', [emailKey, id1]);
   } else {   // email_used: tell the owner of the mailbox, without saying anything on the screen
-    await queue(pool, { kind: 'signup', to: v.email, toName: v.fullName, replyTo: SUPPORT.email, mail: mail(v.lang, {
+    const id2 = await queue(pool, { kind: 'signup', to: v.email, toName: v.fullName, replyTo: SUPPORT.email, mail: mail(v.lang, {
       enSubject: 'You already have a Nusuh Books account', arSubject: 'لديك حساب في نصوح بوكس بالفعل',
       en: [`Hello,`, 'Someone (we hope you) tried to start a free trial with this e-mail address, but it already has a Nusuh Books account or has already used its free trial.', 'Sign in, or use "Forgot password" on the sign-in page if you do not remember your password. To talk about your account, write to us.'],
       ar: ['مرحبًا،', 'حاول شخص (نأمل أنك أنت) بدء تجربة مجانية بهذا البريد الإلكتروني، لكن لديه حساب في نصوح بوكس بالفعل أو استخدم تجربته المجانية سابقًا.', 'سجّل الدخول، أو استخدم «نسيت كلمة المرور» في صفحة الدخول إن لم تتذكرها. وللحديث عن حسابك راسلنا.'],
       link: `${base}/`, enButton: 'Go to sign in', arButton: 'الذهاب إلى تسجيل الدخول' }) });
+    await pool.query('SELECT signup_mail_log($1, $2)', [emailKey, id2]);
   }
   return { status: 'sent' };
 }

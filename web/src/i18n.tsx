@@ -4710,7 +4710,7 @@ const en = {
   'signup.signIn': 'Sign in',
   'signup.sentTitle': 'Check your e-mail',
   'signup.sentBody': 'If this address can start a trial, we have sent a link to {email}. Open it to create your company. It works once, for 24 hours.',
-  'signup.sentHint': 'Nothing is created until you open the link. Check your spam folder too.',
+  'signup.sentHint': 'Nothing is created until you open the link. Check your spam folder too. Nothing after 5 minutes? Wait one minute, then submit the form again with the same e-mail.',
   'signup.closedTitle': 'Sign-ups are opening soon',
   'signup.closedBody': 'We are not taking new trials on this page yet. Write to us and we will set up your free trial.',
   'verify.title': 'Confirm your e-mail',
@@ -4762,6 +4762,11 @@ const en = {
   'setup.h.company': 'your address and VAT status go on every invoice',
   'setup.go.company': 'Open company details',
   'trials.self': 'Signed up itself',
+  'sup2.col.email': 'Confirmation e-mail',
+  'sup2.m.queued': 'Waiting to be sent',
+  'sup2.m.sending': 'Sending',
+  'sup2.m.sent': 'Sent',
+  'sup2.m.failed': 'Failed',
 };
 
 export type Key = keyof typeof en;
@@ -9475,7 +9480,7 @@ const ar: Record<Key, string> = {
   'signup.signIn': 'تسجيل الدخول',
   'signup.sentTitle': 'تحقق من بريدك الإلكتروني',
   'signup.sentBody': 'إذا كان بإمكان هذا العنوان بدء تجربة، فقد أرسلنا رابطًا إلى {email}. افتحه لإنشاء شركتك. يعمل مرة واحدة ولمدة 24 ساعة.',
-  'signup.sentHint': 'لا يُنشأ شيء قبل فتح الرابط. تحقق أيضًا من مجلد الرسائل غير المرغوب فيها.',
+  'signup.sentHint': 'لا يُنشأ شيء قبل فتح الرابط. تحقق أيضًا من مجلد الرسائل غير المرغوب فيها. لم يصل شيء بعد 5 دقائق؟ انتظر دقيقة ثم أرسل النموذج مرة أخرى بنفس البريد.',
   'signup.closedTitle': 'التسجيل سيُفتح قريبًا',
   'signup.closedBody': 'لا نستقبل تجارب جديدة عبر هذه الصفحة بعد. راسلنا وسنجهّز تجربتك المجانية.',
   'verify.title': 'أكّد بريدك الإلكتروني',
@@ -9527,6 +9532,11 @@ const ar: Record<Key, string> = {
   'setup.h.company': 'عنوانك وحالة ضريبة القيمة المضافة تظهر على كل فاتورة',
   'setup.go.company': 'افتح بيانات الشركة',
   'trials.self': 'سجّل بنفسه',
+  'sup2.col.email': 'رسالة التأكيد',
+  'sup2.m.queued': 'بانتظار الإرسال',
+  'sup2.m.sending': 'قيد الإرسال',
+  'sup2.m.sent': 'أُرسلت',
+  'sup2.m.failed': 'فشل الإرسال',
 };
 
 export type Lang = 'en' | 'ar';

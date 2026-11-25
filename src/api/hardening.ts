@@ -20,6 +20,7 @@ export const CSP = [
 
 /** Requests per minute per address for routes that work without signing in. */
 export const LIMITS: [RegExp, number][] = [
+  [/^\/api\/signup/, 20],   // sign-up and its confirmation: the database also limits requests per address and per e-mail
   [/^\/api\/login/, 60],   // the database throttle (0040) is the main guard: 5 per account, 30 per address
   [/^\/api\/invite\//, 20],
   [/^\/api\/email-change\//, 20],

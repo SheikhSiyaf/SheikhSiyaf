@@ -874,3 +874,10 @@ a.b.big { font-size: 17px; padding: 13px 30px; border-radius: 12px; box-shadow: 
 @media (max-width: 700px) { .wiz { padding: 14px; } .wiz-accounts { columns: 1; } }
 .wiz-tools { margin-inline-start: auto; }
 .wiz-tools .top, .wiz-tools > * { margin: 0; }
+
+/* Sign-up */
+.signup { max-width: 460px; }
+.signup .google { width: 100%; justify-content: center; gap: 10px; display: inline-flex; align-items: center; padding: 11px; opacity: .65; }
+.signup .or { display: flex; align-items: center; gap: 10px; margin: 14px 0; color: var(--mut, #5b6b7b); font-size: 13px; }
+.signup .or::before, .signup .or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.hp { position: absolute; inset-inline-start: -9999px; width: 1px; height: 1px; overflow: hidden; }

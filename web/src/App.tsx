@@ -18,6 +18,7 @@ import { Security } from './pages/Security.tsx';
 import { ConfirmEmail } from './pages/ConfirmEmail.tsx';
 import { ErrorNote, Loading } from './ui.tsx';
 import { PrintHost } from './print/Print.tsx';
+import { SignUp, VerifySignUp } from './pages/SignUp.tsx';
 import { BuyPage, ClosedAccount, TrialBar, TrialEnded, type TrialInfo } from './trial/TrialScreens.tsx';
 
 export function App() {
@@ -74,6 +75,8 @@ function Screens() {
   if (shared) return <PublicDocument key={path} token={shared[1]!} paid={shared[2] ?? new URLSearchParams(window.location.search).get('paid')} />;
   const sandboxPay = /^\/pay\/sandbox\/([\w-]+)$/.exec(path);
   if (sandboxPay) return <SandboxPay refId={sandboxPay[1]!} />;
+  const verifySignup = /^\/verify\/([\w-]+)$/.exec(path);
+  if (verifySignup) return <VerifySignUp token={verifySignup[1]!} onDone={me.reload} />;
   const confirmEmail = /^\/confirm-email\/([\w-]+)$/.exec(path);
   if (confirmEmail) return <ConfirmEmail token={confirmEmail[1]!} onDone={me.reload} />;
   const invite = /^\/invite\/([\w-]+)$/.exec(path);
@@ -85,6 +88,7 @@ function Screens() {
     if (me.error.key === 'err.accountClosed') return <ClosedAccount onSignOut={me.reload} />;   // after the export window nothing is left to open
     if (me.error.status !== 401) return <main><ErrorNote error={me.error} onRetry={me.reload} /></main>;
     if (demoSite) return <DemoPicker />;   // the demo site has no passwords: its picker is the front door
+    if (path === '/signup') return <SignUp />;
     return <Login onSignedIn={() => { navigate('/'); me.reload(); }} />;
   }
   if (!me.data) return null;

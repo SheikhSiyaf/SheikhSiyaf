@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { ApiError, api, useApi } from '../api.ts';
 import { useI18n } from '../i18n.tsx';
+import { navigate } from '../router.ts';
 import { ErrorNote, PasswordInput } from '../ui.tsx';
 import { toggleTheme } from '../theme.ts';
 import { NusuhMark } from '../brand.tsx';
@@ -124,6 +125,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
               </form>
             )}
             {forgot !== undefined && !ticket && <ForgotPassword initial={forgot} />}
+            {!ticket && <p className="small auth-foot" style={{ marginTop: 14 }}>{t('login.newHere')} <button className="link" id="login-signup" onClick={() => navigate('/signup')}>{t('login.startTrial')}</button></p>}
           </div>
           {!ticket && demo.data && cfg.data?.demoPassword && (
             <div className="card demo">

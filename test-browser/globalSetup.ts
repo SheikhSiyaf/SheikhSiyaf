@@ -40,6 +40,7 @@ export default async function setup(): Promise<() => Promise<void>> {
     // server has to read it with the same one. Passing a different key here made issuing an invoice fail with
     // "encrypted with a different ENCRYPTION_KEY", which is the right error and the wrong setup.
     production: false,
+    signup: { enabled: true, pepper: 'browser-checks-signup-pepper-0123456789abcdef' },
     publicUrl: `http://127.0.0.1:${PORT}`,
     cookieSecure: false,
     demoLogins: true,

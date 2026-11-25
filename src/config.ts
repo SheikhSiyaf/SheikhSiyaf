@@ -99,6 +99,8 @@ export function validateConfig(e: Record<string, string | undefined>): string[] 
     if (!/^https:\/\/[^\s/]+/i.test(e.DEMO_SITE_URL)) out.push('DEMO_SITE_URL does not start with https://.');
     if (demoSecret.length < 32) out.push('DEMO_SITE_URL is set but DEMO_LINK_SECRET is missing or shorter than 32 characters.');
   }
+  if (e.SIGNUP === 'on' && (e.SIGNUP_PEPPER ?? '').length < 32) out.push('SIGNUP is on but SIGNUP_PEPPER is missing or shorter than 32 characters: it keeps the record of who already had a trial from being guessable.');
+  if (e.SIGNUP === 'on' && !e.PUBLIC_URL) out.push('SIGNUP is on but PUBLIC_URL is not set: the confirmation e-mail needs the address to link to.');
   if (e.DEMO_LOGINS === 'true') out.push('DEMO_LOGINS is true: demo sign-in buttons must never be on with real data.');
   // Behind a host's proxy every visitor would otherwise share the proxy's address, so one person's wrong passwords would
   // lock everyone out of signing in. The setting must be a decision: the number of proxies in front, or false for none.

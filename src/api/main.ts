@@ -1,4 +1,5 @@
 // Starts the API, and serves the built web app from web/dist when it exists.
+import { signupConfig } from '../books/signupService.js';
 import { reportError } from '../log/errorReport.js';
 import { releaseJobs } from '../jobs/runJob.js';
 import { loggerOptions } from '../log/redact.js';
@@ -46,6 +47,7 @@ const app = buildServer({
   pool,
   sessionSecret: config.sessionSecret,
   encryptionKey: config.encryptionKey,   // never SESSION_SECRET (src/config.ts)
+  signup: signupConfig(process.env, config.sessionSecret),
   production: config.production,
   publicUrl: config.publicUrl,
   redirectOldAddress: config.redirectOldAddress,

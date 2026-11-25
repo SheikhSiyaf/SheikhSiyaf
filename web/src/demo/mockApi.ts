@@ -4694,6 +4694,8 @@ routes.push(
   // ---- the free trial: the demo has none, so nothing is locked and no bar shows
   ['GET', /^\/api\/trial$/, () => ({ level: 'full', trialing: false, daysLeft: null, trialEndsAt: null, graceEndsAt: null, exportUntil: null, deleteNotBefore: null })],
   // ---- the website connection (owner): Payment settings and testimonials
+  ['GET', /^\/api\/signup\/config$/, () => ({ enabled: false, google: false })],
+  ['GET', /^\/api\/owner\/signups$/, () => { owner(); return { enabled: false, events: [] }; }],
   ['GET', /^\/api\/setup$/, () => ({ setup: null, extractEnabled: false })],
   ['POST', /^\/api\/setup$/, () => ({ setup: null })],
   ['POST', /^\/api\/setup\/tour$/, () => ({ ok: true })],

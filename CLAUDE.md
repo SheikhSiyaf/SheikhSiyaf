@@ -4,7 +4,7 @@ Accounting platform for accounting firms and their clients in Saudi Arabia and t
 Stack: PostgreSQL 16, TypeScript (Node, Fastify) API, React (Vite) web, Vitest. One codebase; per-client settings.
 
 ## STANDING RULES (the owner's; they override everything else)
-1. Demo data and throwaway accounts only. Never real company, customer, bank or employee data.
+1. (Lifted by the owner on 2026-11-25) Real customers may sign up and use the live software with their own data. Demo data and throwaway accounts are used only for tests and the separate demo mode, which runs in the browser and never writes to the database. Real customer data is never copied into tests, logs, chat or documents.
 2. ZATCA: sandbox only, never simulation or production, unless the owner writes 'Stage 2 approved'. Name the exact
    URL paths before any ZATCA call. No real emails are sent.
 3. Report in chat. Create no new report or document files except required logs (docs/SCHEMA_CHANGES.md), a few

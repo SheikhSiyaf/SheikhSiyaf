@@ -645,3 +645,12 @@ Every change below is covered by a test in `test/`.
 |---|---|
 | `trial_order_place()` takes a short per-customer lock before replacing the waiting order | Two simultaneous clicks made the second one fail with a confusing error (found by the load test). No table changed. |
 
+## 0077_signup.sql
+| Change | Why |
+|---|---|
+| `email_outbox.kind` also allows `signup` | The confirmation e-mail goes through the ordinary outbox. |
+| New table `signup_requests` (a request waiting for its e-mail link: name, company, country, city, registration number, the password already hashed, the link's hash, keyed hashes of the e-mail and number and address, 24-hour expiry). Row-level security with no policy and no grant: only the functions below can touch it | Nothing is created until the link is opened, so nobody can start a trial with somebody else's address. |
+| New table `trial_fingerprints` (keyed hash of the e-mail in its "same mailbox" form, keyed hash of the registration number, the customer it became; no foreign key on purpose). No policy, no grant | One trial per person and per company, remembered even if the customer is later deleted. |
+| New table `signup_events` (every sign-up try, allowed or refused, with the e-mail domain only; immutable; only the platform owner can read it) | The owner's record of who tried and what stopped them. |
+| New functions `signup_platform_owner`, `signup_begin`, `signup_take`, `signup_done`, `signup_log_event`, `signup_cleanup` (the server only: they refuse when anybody is signed in, `signup_take` and `signup_done` also allow the owner) and `owner_signup_activity` (owner only). Security definer, fixed search path, executable by `nusuh_app`, not by PUBLIC. Locks are taken per address and per company number so simultaneous requests take turns | Creating the customer, its company, its only user and its 15-day trial happens in one transaction with the same functions the owner uses. Nothing about any existing table's row-level security changed. |
+

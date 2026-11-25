@@ -1049,3 +1049,125 @@ describe('The free trial on screen', () => {
     expect(await page.locator('#trialui-exports').count()).toBe(0);
   });
 });
+
+describe('Signing up from the website\'s "Start free trial" link', () => {
+  const stamp = Date.now().toString(36);
+  const text = (p: Page, sel: string) => p.locator(sel).innerText();
+  const cr = () => String(Math.floor(1e9 + Math.random() * 9e9));
+  const fill = async (p: Page, o: { email: string; company: string; crNumber: string }) => {
+    await p.locator('#su-name').fill('Browser Founder');
+    await p.locator('#su-email').fill(o.email);
+    await p.locator('#su-password').fill('Correct-Horse-9');
+    await p.locator('#su-company').fill(o.company);
+    await p.locator('#su-city').fill('Riyadh');
+    await p.locator('#su-cr').fill(o.crNumber);
+  };
+  const tokenFor = async (email: string) => /\/verify\/([A-Za-z0-9_-]{43})/.exec(String((await db.query(`SELECT body_text FROM email_outbox WHERE to_email = $1 AND kind = 'signup' ORDER BY created_at DESC LIMIT 1`, [email])).rows[0]?.body_text ?? ''))?.[1];
+
+  it('a new visitor creates an account with e-mail and password, confirms the link once, and lands in the setup wizard of a 15-day trial', async () => {
+    const email = `visitor.${stamp}@browser-signup.example.com`, company = `Browser Signup Co ${stamp}`, crNumber = cr();
+    const { page: p, errors: errs } = await newPage(1280);
+    await p.goto(`${BASE}/signup`, { waitUntil: 'networkidle' });
+    await p.locator('#signup').waitFor({ timeout: 15000 });
+    expect(await p.locator('#signup-google').isDisabled()).toBe(true);   // Google comes later; the e-mail way works now
+    expect(await p.locator('#signup-google').count()).toBe(1);
+    expect(await p.locator('#su-submit').isDisabled()).toBe(true);        // nothing to send yet
+    await screenshotTo(p, 'signup-form');
+    await fill(p, { email, company, crNumber });
+    expect(await p.locator('#su-submit').isDisabled()).toBe(true);        // the terms box is not ticked
+    await p.locator('#su-terms').check();
+    await p.locator('#su-submit').click();
+    await p.locator('#signup-sent').waitFor({ timeout: 15000 });
+    expect(await text(p, '#signup-sent')).toContain(email);
+    expect((await db.query('SELECT count(*)::int AS n FROM firms WHERE name = $1', [company])).rows[0].n).toBe(0);   // nothing exists before the link
+    const token = await tokenFor(email);
+    expect(token).toBeTruthy();
+    await p.goto(`${BASE}/verify/${token}`, { waitUntil: 'networkidle' });
+    await p.locator('#verify-go').waitFor({ timeout: 15000 });
+    expect((await db.query('SELECT count(*)::int AS n FROM firms WHERE name = $1', [company])).rows[0].n).toBe(0);   // opening the page alone creates nothing
+    await p.locator('#verify-go').click();
+    await p.locator('#wiz').waitFor({ timeout: 30000 });                  // signed in, and the guided setup opens
+    expect((await db.query('SELECT count(*)::int AS n FROM firms WHERE name = $1', [company])).rows[0].n).toBe(1);
+    const sub = (await db.query(`SELECT s.status FROM subscriptions s JOIN firms f ON f.id = s.firm_id WHERE f.name = $1`, [company])).rows[0];
+    expect(sub.status).toBe('trial');
+    await p.locator('#trial-bar').waitFor({ timeout: 15000 });
+    expect(await text(p, '#trial-days')).toMatch(/^1[56] days left/);
+    await screenshotTo(p, 'signup-first-screen');
+    // the same link does nothing a second time
+    const { page: again } = await newPage(1280);
+    await again.goto(`${BASE}/verify/${token}`, { waitUntil: 'networkidle' });
+    await again.locator('#verify-go').click();
+    await again.locator('#verify-again').waitFor({ timeout: 15000 });
+    expect((await db.query('SELECT count(*)::int AS n FROM firms WHERE name = $1', [company])).rows[0].n).toBe(1);
+    // and the person can sign in with the password they chose
+    const { page: login } = await newPage(1280);
+    await login.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await login.locator('input[type=email]').fill(email);
+    await login.locator('input[type=password]').fill('Correct-Horse-9');
+    await login.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await login.locator('#trial-bar').waitFor({ timeout: 30000 });
+    expect(errs.filter((e) => !/favicon|Failed to load resource/i.test(e))).toEqual([]);
+  });
+
+  it('asking again with the same address, or the same company number, says the same thing and creates nothing more', async () => {
+    const email = `dupe.${stamp}@browser-signup.example.com`, crNumber = cr();
+    const first = await newPage(1280);
+    await first.page.goto(`${BASE}/signup`, { waitUntil: 'networkidle' });
+    await fill(first.page, { email, company: `Dupe Co ${stamp}`, crNumber });
+    await first.page.locator('#su-terms').check(); await first.page.locator('#su-submit').click();
+    await first.page.locator('#signup-sent').waitFor({ timeout: 15000 });
+    await first.page.goto(`${BASE}/verify/${await tokenFor(email)}`, { waitUntil: 'networkidle' });
+    await first.page.locator('#verify-go').click();
+    await first.page.locator('#wiz').waitFor({ timeout: 30000 });
+    const second = await newPage(1280);
+    await second.page.goto(`${BASE}/signup`, { waitUntil: 'networkidle' });
+    await fill(second.page, { email: email.replace('dupe.', 'DUPE.'), company: 'Another Co', crNumber: cr() });
+    await second.page.locator('#su-terms').check(); await second.page.locator('#su-submit').click();
+    await second.page.locator('#signup-sent').waitFor({ timeout: 15000 });   // same screen as for a new address
+    expect((await db.query(`SELECT count(*)::int AS n FROM signup_requests WHERE email = $1 AND status = 'pending'`, [email])).rows[0].n).toBe(0);
+    const third = await newPage(1280);
+    await third.page.goto(`${BASE}/signup`, { waitUntil: 'networkidle' });
+    await fill(third.page, { email: `other.${stamp}@browser-signup.example.com`, company: 'Same Number Co', crNumber });
+    await third.page.locator('#su-terms').check(); await third.page.locator('#su-submit').click();
+    await third.page.locator('[role=alert]').first().waitFor({ timeout: 15000 });
+    expect(await third.page.locator('[role=alert]').first().innerText()).toContain('already has an account');
+  });
+
+  it('refuses a weak password and a throwaway address in plain words, and reads right to left in Arabic on a phone without sideways scroll', async () => {
+    const { page: p } = await newPage(390);
+    await p.goto(`${BASE}/signup`, { waitUntil: 'networkidle' });
+    await fill(p, { email: `weak.${stamp}@browser-signup.example.com`, company: 'Weak Co', crNumber: cr() });
+    await p.locator('#su-password').fill('password123');
+    await p.locator('#su-terms').check(); await p.locator('#su-submit').click();
+    await p.locator('[role=alert]').first().waitFor({ timeout: 15000 });
+    expect(await p.locator('[role=alert]').first().innerText()).toContain('stronger password');
+    await p.locator('#su-password').fill('Correct-Horse-9');
+    await p.locator('#su-email').fill('x@mailinator.com');
+    await p.locator('#su-submit').click();
+    await p.waitForFunction(() => /work e-mail/i.test(document.body.innerText), null, { timeout: 15000 });
+    expect(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+    await p.getByRole('button', { name: 'EN | AR' }).click();
+    await p.waitForTimeout(800);
+    expect(await p.evaluate(() => document.documentElement.dir)).toBe('rtl');
+    expect(await text(p, '#signup h1')).toBe('ابدأ تجربتك المجانية لمدة 15 يومًا');
+    expect(await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+    await screenshotTo(p, 'signup-arabic-phone');
+  });
+
+  it('the sign-in page links to sign-up, and the owner sees the attempts in Trials', async () => {
+    const { page: p } = await newPage(1280);
+    await p.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await p.locator('#login-signup').click();
+    await p.locator('#signup').waitFor({ timeout: 15000 });
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: o } = await newPage(1280);
+    await signIn(o, platform);
+    await o.goto(`${BASE}/owner/trials`, { waitUntil: 'networkidle' });
+    await o.locator('#owner-signups').waitFor({ timeout: 15000 });
+    const table = await text(o, '#sup2-table');
+    expect(table).toContain('Confirmed: trial started');
+    expect(table).toContain('Refused');
+    expect(table).not.toContain('Correct-Horse');
+    expect(table).not.toContain(`visitor.${stamp}@`);
+  });
+});

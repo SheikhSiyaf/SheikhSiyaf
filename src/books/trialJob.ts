@@ -18,6 +18,7 @@ export function startLifecycleJob(pool: pg.Pool, log: (m: string) => void = cons
         const moved = await advance(c, now);
         for (const m of moved) if (m.to === 'trial_ended') await ownerAlert(c, 'trial_ended_unpaid', { firmId: m.firmId });
         const mails = await sendTrialEmails(c, now, { enabled: process.env.TRIAL_EMAILS === 'on', appUrl: (process.env.PUBLIC_URL ?? '').replace(/\/+$/, '') || 'https://app.nusuhbooks.com', copyTo: SUPPORT.email });
+        await c.query('SELECT signup_cleanup()');   // old, never-confirmed sign-up requests
         await c.query('COMMIT');
         if (moved.length) log(`Trials: ${moved.length} moved on`);
         if (mails.sent.length) log(`Trials: ${mails.sent.length} reminder e-mail(s) queued`);

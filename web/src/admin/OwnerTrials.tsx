@@ -21,6 +21,34 @@ const FILTERS: Filter[] = ['all', 'open', 'ending_soon', 'in_grace', 'closed', '
 const when = (iso: string | null) => (iso ? iso.replace('T', ' ').slice(0, 16) : '');
 const matches = (r: Row, f: Filter) => f === 'all' || (f === 'open' ? r.label === 'trialing' || r.label === 'ending_soon' : f === 'orders' ? r.orderId !== null && r.label !== 'paid' : r.label === f);
 
+interface Ev { id: string; at: string; kind: string; emailDomain: string | null; company: string | null; country: string | null; flags: string[]; attempts: number }
+/** Every sign-up try, allowed or refused, newest first (the owner's record of who tried to start a trial, and what stopped them). */
+function SignupActivity() {
+  const { t, has } = useI18n();
+  const d = useApi<{ enabled: boolean; events: Ev[] }>('/api/owner/signups');
+  if (d.error) return <ErrorNote error={d.error} onRetry={d.reload} />;
+  if (!d.data) return <Loading />;
+  return (
+    <div className="card" id="owner-signups" style={{ marginTop: 12 }}>
+      <h2>{t('sup2.title')}</h2>
+      <p className="small mut">{t('sup2.hint')}</p>
+      <p className={`notice${d.data.enabled ? '' : ' warn'}`} id="sup2-state">{t(d.data.enabled ? 'sup2.on' : 'sup2.off')}</p>
+      {d.data.events.length === 0 ? <p className="small mut" id="sup2-none">{t('sup2.none')}</p> : (
+        <div className="wrap"><table id="sup2-table">
+          <thead><tr><th>{t('sup2.col.when')}</th><th>{t('sup2.col.what')}</th><th>{t('sup2.col.company')}</th><th>{t('sup2.col.mail')}</th><th>{t('sup2.col.flags')}</th></tr></thead>
+          <tbody>{d.data.events.slice(0, 100).map((e) => (
+            <tr key={e.id}>
+              <td className="ltr small">{when(e.at)}</td>
+              <td><span className={`badge ${e.kind === 'verified' ? 'good' : e.kind === 'started' ? '' : 'bad'}`}>{has(`sup2.k.${e.kind}`) ? t(`sup2.k.${e.kind}` as Key) : e.kind}</span></td>
+              <td>{e.company}{e.country ? <span className="mut small"> · {e.country}</span> : null}</td>
+              <td className="ltr small">{e.emailDomain}{e.attempts > 2 && <div className="mut">{t('sup2.attempts', { n: e.attempts })}</div>}</td>
+              <td className="small">{e.flags.map((f) => <div key={f}>⚠ {has(`sup2.flag.${f}`) ? t(`sup2.flag.${f}` as Key) : f}</div>)}</td>
+            </tr>))}</tbody>
+        </table></div>)}
+    </div>
+  );
+}
+
 export function OwnerTrials() {
   const { t, has } = useI18n();
   const d = useApi<Data>('/api/owner/trials');
@@ -76,6 +104,7 @@ export function OwnerTrials() {
             );
           })}</tbody>
         </table></div>)}
+      <SignupActivity />
     </div>
   );
 }

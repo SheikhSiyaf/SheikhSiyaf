@@ -10,6 +10,7 @@ import { OPTIONAL } from '../trial/BuyPanel.tsx';
 type Label = 'trialing' | 'ending_soon' | 'ended' | 'in_grace' | 'closed' | 'paid';
 interface Setup { step: string; businessType: string | null; goals: string[]; dataChoice: string | null; skipped: boolean; completed: boolean; tourPages: number; extractUsed: number; companies: number; contacts: number; documents: number; people: number }
 interface Row {
+  source?: 'self' | 'owner'; flags?: string[];
   setup: Setup | null;
   firmId: string; firmName: string; label: Label; endsAt: string | null; daysLeft: number | null; companies: string[];
   adminName: string | null; adminEmail: string | null; lastLoginAt: string | null; emailsSent: number; emailsFailed: number; orderId: string | null; orderConfirmed: boolean;
@@ -83,7 +84,7 @@ export function OwnerTrials() {
             const o = orderOf(r);
             return (
               <Fragment key={r.firmId}><tr id={`tr-row-${r.firmId}`}>
-                <td><b>{r.firmName}</b><div className="small mut">{r.companies.join(', ')}</div></td>
+                <td><b>{r.firmName}</b>{r.source === 'self' && <span className="badge" style={{ marginInlineStart: 6 }}>{t('trials.self')}</span>}<div className="small mut">{r.companies.join(', ')}</div>{(r.flags ?? []).map((f) => <div key={f} className="small">⚠ {has(`sup2.flag.${f}`) ? t(`sup2.flag.${f}` as Key) : f}</div>)}</td>
                 <td><span className={`badge ${r.label === 'paid' ? 'good' : r.label === 'ending_soon' ? 'warn' : r.label === 'trialing' ? '' : 'bad'}`}>{t(`trials.s.${r.label === 'ended' ? 'in_grace' : r.label}` as Key)}</span>{r.daysLeft !== null && <div className="small mut">{t('trials.daysLeft', { n: r.daysLeft })}</div>}</td>
                 <td className="ltr">{when(r.endsAt)}</td>
                 <td>{r.adminName}<div className="small mut ltr">{r.adminEmail}</div></td>

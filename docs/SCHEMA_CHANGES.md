@@ -654,3 +654,8 @@ Every change below is covered by a test in `test/`.
 | New table `signup_events` (every sign-up try, allowed or refused, with the e-mail domain only; immutable; only the platform owner can read it) | The owner's record of who tried and what stopped them. |
 | New functions `signup_platform_owner`, `signup_begin`, `signup_take`, `signup_done`, `signup_log_event`, `signup_cleanup` (the server only: they refuse when anybody is signed in, `signup_take` and `signup_done` also allow the owner) and `owner_signup_activity` (owner only). Security definer, fixed search path, executable by `nusuh_app`, not by PUBLIC. Locks are taken per address and per company number so simultaneous requests take turns | Creating the customer, its company, its only user and its 15-day trial happens in one transaction with the same functions the owner uses. Nothing about any existing table's row-level security changed. |
 
+## 0078_self_company_details.sql
+| Change | Why |
+|---|---|
+| New function `self_company_update()` (security definer, fixed search path, executable by `nusuh_app`, not by PUBLIC): lets the person who manages a customer's users change that company's legal form, address, city, VAT status and number, registration date, phone and e-mail, only in their own customer and only for a customer that came through self-service sign-up (it has a record in `trial_fingerprints`) | A self-service company starts without its address and VAT number and could otherwise never complete them, because company details are owner-only (0023). Name, registration number and country stay locked for everybody. No policy was changed; customers the owner created are unchanged. |
+

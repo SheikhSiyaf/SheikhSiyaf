@@ -5009,3 +5009,7 @@
 "Sign-up","sup2.flag.same_company_name","Same company name as another customer","نفس اسم شركة عميل آخر","Screens"
 "Sign-up","sup2.flag.same_address_often","Several trials from one address this week","عدة تجارب من عنوان واحد هذا الأسبوع","Screens"
 "Sign-up","sup2.attempts","{n} tries with this e-mail","{n} محاولات بهذا البريد","Screens"
+"Sign-up","setup.s.company","Complete your company details","أكمل بيانات شركتك","Screens"
+"Sign-up","setup.h.company","your address and VAT status go on every invoice","عنوانك وحالة ضريبة القيمة المضافة تظهر على كل فاتورة","Screens"
+"Sign-up","setup.go.company","Open company details","افتح بيانات الشركة","Screens"
+"Sign-up","trials.self","Signed up itself","سجّل بنفسه","Screens"

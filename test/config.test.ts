@@ -76,6 +76,13 @@ describe('validateConfig', () => {
     expect(problems({ TRUST_PROXY: 'false' })).toEqual([]);
   });
 
+  it('SIGNUP=on needs a long SIGNUP_PEPPER; off needs nothing', () => {
+    expect(has(problems({ SIGNUP: 'on' }), /SIGNUP_PEPPER/)).toBe(true);
+    expect(has(problems({ SIGNUP: 'on', SIGNUP_PEPPER: 'short' }), /SIGNUP_PEPPER/)).toBe(true);
+    expect(has(problems({ SIGNUP: 'on', SIGNUP_PEPPER: 'k'.repeat(40) }), /SIGNUP_PEPPER/)).toBe(false);
+    expect(has(problems({}), /SIGNUP/)).toBe(false);
+  });
+
   it('COOKIE_SECURE=true, PUBLIC_URL on https, DEMO_LOGINS off', () => {
     expect(has(problems({ COOKIE_SECURE: undefined }), /COOKIE_SECURE/)).toBe(true);
     expect(has(problems({ PUBLIC_URL: undefined }), /PUBLIC_URL/)).toBe(true);

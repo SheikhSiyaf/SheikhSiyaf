@@ -269,10 +269,61 @@ describe('Signing up', () => {
     const mine = j.events.find((e: { kind: string; company: string }) => e.kind === 'verified' && e.company === b.companyName);
     expect(mine).toMatchObject({ country: 'SA', emailDomain: 'throwaway-test.example.com' });
     expect(mine.firmId).toBeTruthy();
+    const trials = (await on.inject({ method: 'GET', url: '/api/owner/trials', headers: { cookie: ownerCookie } })).json().trials as { firmName: string; source: string; setup: unknown }[];
+    expect(trials.find((t) => t.firmName === b.companyName)).toMatchObject({ source: 'self' });
     const login = await on.inject({ method: 'POST', url: '/api/login', payload: { email: b.email, password: b.password }, headers: { 'x-forwarded-for': nextIp() } });
     const customerCookie = String(login.headers['set-cookie']).split(';')[0]!;
     expect((await on.inject({ method: 'GET', url: '/api/owner/signups', headers: { cookie: customerCookie } })).statusCode).toBe(403);
     expect((await on.inject({ method: 'GET', url: '/api/owner/signups' })).statusCode).toBe(401);
+  });
+
+  it('a new company starts without its address and VAT details, is asked for them first, and can fill them in itself', async () => {
+    const b = form(); await post(b);
+    const v = await verify(await tokenOf(b.email));
+    const cookie = String(v.headers['set-cookie']).split(';')[0]!;
+    const company = (await on.inject({ method: 'GET', url: '/api/me', headers: { cookie } })).json().companies[0].id as string;
+    const status = async () => (await on.inject({ method: 'GET', url: `/api/companies/${company}/setup-status`, headers: { cookie } })).json() as { steps: { key: string; done: boolean }[] };
+    expect((await status()).steps[0]).toMatchObject({ key: 'company', done: false });
+    const edit = await on.inject({ method: 'POST', url: `/api/admin/companies/${company}`, headers: { cookie }, payload: { company: { name: b.companyName, crNumber: b.crNumber, legalForm: 'LLC', vatStatus: 'registered', vatNumber: `3${String(Math.floor(1e12 + Math.random() * 9e12)).slice(0, 13)}3`.slice(0, 15), address: 'King Fahd Road 1', city: 'Riyadh', industry: 'other' } } });
+    expect(edit.statusCode, edit.body).toBe(200);
+    expect((await status()).steps.some((x) => x.key === 'company')).toBe(false);
+  });
+
+  it('a self-service company can change only its address and VAT details: name, registration number and country stay locked, and other customers are out of reach', async () => {
+    const a = form(), c = form(); await post(a); await post(c);
+    const ca = String((await verify(await tokenOf(a.email))).headers['set-cookie']).split(';')[0]!;
+    const cc = String((await verify(await tokenOf(c.email))).headers['set-cookie']).split(';')[0]!;
+    const mine = (await on.inject({ method: 'GET', url: '/api/me', headers: { cookie: ca } })).json().companies[0].id as string;
+    const theirs = (await on.inject({ method: 'GET', url: '/api/me', headers: { cookie: cc } })).json().companies[0].id as string;
+    const save = (cookie: string, id: string, company: Record<string, unknown>) => on.inject({ method: 'POST', url: `/api/admin/companies/${id}`, headers: { cookie }, payload: { company } as never });
+    const base = { legalForm: 'LLC', vatStatus: 'unregistered', address: 'Street 5', city: 'Jeddah', industry: 'other' };
+    const r = await save(ca, mine, { ...base, name: 'RENAMED', crNumber: '9999999999', country: 'AE' });
+    expect(r.statusCode, r.body).toBe(200);
+    const row = (await owner.query('SELECT name, cr_number, country, address, city, vat_status, vat_rate::text AS vat_rate, vat_number FROM companies WHERE id = $1', [mine])).rows[0];
+    expect(row).toMatchObject({ name: a.companyName, cr_number: a.crNumber, country: 'SA', address: 'Street 5', city: 'Jeddah', vat_status: 'unregistered', vat_rate: '0.00', vat_number: null });
+    const reg = await save(ca, mine, { ...base, vatStatus: 'registered', vatNumber: '300012345600003' });
+    expect(reg.statusCode, reg.body).toBe(200);
+    expect((await owner.query('SELECT vat_status, vat_number, vat_rate::text AS r FROM companies WHERE id = $1', [mine])).rows[0]).toEqual({ vat_status: 'registered', vat_number: '300012345600003', r: '15.00' });
+    // wrong things are explained, never a crash
+    for (const bad of [{ ...base, vatStatus: 'registered', vatNumber: '12345' }, { ...base, vatStatus: 'registered' }, { ...base, address: '' }]) {
+      const x = await save(ca, mine, bad); expect(x.statusCode, JSON.stringify(bad)).toBe(400);
+    }
+    // another customer's company, and a customer the owner made by hand, are refused
+    expect((await save(ca, theirs, base)).statusCode).toBeGreaterThanOrEqual(403);
+    expect((await owner.query('SELECT address FROM companies WHERE id = $1', [theirs])).rows[0].address).toBe('To be completed in company settings');
+    const made = await on.inject({ method: 'POST', url: '/api/owner/customers/company', headers: { cookie: ownerCookie }, payload: {
+      company: { name: `Hand ${uniq()}`, country: 'SA', industry: 'trading', legalForm: 'LLC', crNumber: cr(), vatStatus: 'unregistered', address: 'Original road', city: 'Riyadh', modules: [] },
+      users: [{ name: 'Admin', email: `a.${uniq()}@hand.example.com`, jobTitle: 'Administrator' }, { name: 'Owner', email: `o.${uniq()}@hand.example.com`, jobTitle: 'Owner' }] } });
+    const handFirm = made.json().id as string;
+    const adminEmail = (await owner.query(`SELECT email FROM users WHERE firm_id = $1 AND kind = 'admin'`, [handFirm])).rows[0].email;
+    await owner.query('UPDATE users SET password_hash = $1, password_set_at = now() WHERE firm_id = $2', [await hashPassword('pw-123456'), handFirm]);
+    const hc = String((await on.inject({ method: 'POST', url: '/api/login', payload: { email: adminEmail, password: 'pw-123456' }, headers: { 'x-forwarded-for': nextIp() } })).headers['set-cookie']).split(';')[0]!;
+    const handCompany = (await owner.query('SELECT id FROM companies WHERE firm_id = $1', [handFirm])).rows[0].id as string;
+    const refused = await save(hc, handCompany, { ...base, address: 'Changed' });
+    expect(refused.statusCode).toBe(403);
+    expect((await owner.query('SELECT address FROM companies WHERE id = $1', [handCompany])).rows[0].address).toBe('Original road');
+    // the database function itself refuses everybody it should
+    await expect(as(f.partner, (db) => db.query("SELECT self_company_update($1, 'LLC', 'x', 'y', 'unregistered', NULL, NULL, NULL, NULL)", [mine]))).rejects.toThrow(/Not allowed/);
   });
 
   it('the new customer is separated from every other customer', async () => {

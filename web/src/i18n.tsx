@@ -4758,6 +4758,10 @@ const en = {
   'sup2.flag.same_company_name': 'Same company name as another customer',
   'sup2.flag.same_address_often': 'Several trials from one address this week',
   'sup2.attempts': '{n} tries with this e-mail',
+  'setup.s.company': 'Complete your company details',
+  'setup.h.company': 'your address and VAT status go on every invoice',
+  'setup.go.company': 'Open company details',
+  'trials.self': 'Signed up itself',
 };
 
 export type Key = keyof typeof en;
@@ -9519,6 +9523,10 @@ const ar: Record<Key, string> = {
   'sup2.flag.same_company_name': 'نفس اسم شركة عميل آخر',
   'sup2.flag.same_address_often': 'عدة تجارب من عنوان واحد هذا الأسبوع',
   'sup2.attempts': '{n} محاولات بهذا البريد',
+  'setup.s.company': 'أكمل بيانات شركتك',
+  'setup.h.company': 'عنوانك وحالة ضريبة القيمة المضافة تظهر على كل فاتورة',
+  'setup.go.company': 'افتح بيانات الشركة',
+  'trials.self': 'سجّل بنفسه',
 };
 
 export type Lang = 'en' | 'ar';

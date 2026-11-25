@@ -2,6 +2,7 @@ import { ReviewedBadge } from '../review/Review.tsx';
 import { useDates, useDeadlineText, type CalItem } from '../calendar/Calendar.tsx';
 import { today } from '../router.ts';
 import { useApi, type CompanyBooks } from '../api.ts';
+import { navigate } from '../router.ts';
 import { useI18n, type Key } from '../i18n.tsx';
 import { useState } from 'react';
 import { useGo } from '../sales/common.tsx';
@@ -169,7 +170,7 @@ function GettingStarted({ books }: { books: CompanyBooks }) {
         <li key={x.key} className={x.done ? 'done' : ''}>
           <span className="tick" aria-hidden="true">{x.done ? '✓' : ''}</span>
           <span><b>{t(`setup.s.${x.key}` as Key)}</b><span className="small mut"> {t(`setup.h.${x.key}` as Key)}</span></span>
-          {!x.done && <button className="b small" onClick={() => goTo(x.go[0], x.go[1], x.go[2])}>{t(`setup.go.${x.key}` as Key)}</button>}
+          {!x.done && <button className="b small" onClick={() => (x.key === 'company' ? navigate(`/admin/clients/${books.company.id}`) : goTo(x.go[0], x.go[1], x.go[2]))}>{t(`setup.go.${x.key}` as Key)}</button>}
         </li>
       ))}</ol>
     </div>

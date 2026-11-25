@@ -176,8 +176,20 @@ export function registerAdminRoutes(app: FastifyInstance, { as, opts }: Ctx) {
       const { rowCount } = await db.query(
         `UPDATE companies SET ${cols.map((k, i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1`,
         [id, ...Object.values(v)]);
-      // A company that runs its own books has its details changed by Nusuh Books only (0023_tenants.sql).
-      if (!rowCount) throw new HttpError(403, 'Ask Nusuh Books to change the company details.', 'err.ownerDetails');
+      // A company that runs its own books has its details changed by Nusuh Books only (0023_tenants.sql), except a company that signed up
+      // by itself: it may complete its address, legal form, VAT status and contact details (0078). Name, registration number and country stay locked.
+      if (!rowCount) {
+        const x = v as Record<string, unknown>;
+        try {
+          await db.query('SAVEPOINT self_details');
+          await db.query('SELECT self_company_update($1, $2, $3, $4, $5, $6, $7, $8, $9)', [id, x.legal_form, x.address, x.city, x.vat_status, x.vat_number, x.vat_registration_date || null, x.phone, x.email]);
+        } catch (e) {
+          await db.query('ROLLBACK TO SAVEPOINT self_details');
+          const m = (e as Error).message;
+          if (/Not allowed/.test(m)) throw new HttpError(403, 'Ask Nusuh Books to change the company details.', 'err.ownerDetails');
+          throw new HttpError(400, m, 'err.format');
+        }
+      }
       return { ok: true };
     });
   });

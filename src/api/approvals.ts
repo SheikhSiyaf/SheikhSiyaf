@@ -111,7 +111,7 @@ export function registerSetupStatusRoutes(app: FastifyInstance, { as }: Ctx) {
     return as(req, async (db) => {
       await member(db, c);
       const r = (await db.query(
-        `SELECT co.country, co.vat_status::text AS vat, co.modules,
+        `SELECT co.country, co.vat_status::text AS vat, co.modules, co.address = 'To be completed in company settings' AS "addressMissing", app_is_admin() AS "canEditCompany",
           EXISTS (SELECT 1 FROM bank_accounts WHERE company_id = $1 AND kind = 'bank') AS bank,
           EXISTS (SELECT 1 FROM contacts WHERE company_id = $1 AND is_customer) AS customers,
           EXISTS (SELECT 1 FROM contacts WHERE company_id = $1 AND is_supplier) AS suppliers,
@@ -122,6 +122,8 @@ export function registerSetupStatusRoutes(app: FastifyInstance, { as }: Ctx) {
           EXISTS (SELECT 1 FROM approval_rules WHERE company_id = $1 AND active) AS approvals
          FROM companies co WHERE co.id = $1`, [c])).rows[0];
       const steps: { key: string; done: boolean; go: [string, string?, string?] }[] = [
+        // a company made by self-service sign-up starts without its address and VAT details: the person who manages the company is asked for them first
+        ...(r.addressMissing && r.canEditCompany ? [{ key: 'company', done: false, go: ['Admin', 'company'] as [string, string] }] : []),
         { key: 'bank', done: r.bank, go: ['Bank', 'accounts', 'new'] },
         { key: 'customers', done: r.customers, go: ['Sales', 'customers', 'import'] },
         { key: 'suppliers', done: r.suppliers, go: ['Purchases', 'suppliers', 'import'] },

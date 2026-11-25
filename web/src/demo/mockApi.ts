@@ -4691,6 +4691,8 @@ routes.push(
     return { subscription: sub ? subRowB(sub) : null, usage: usageB(firmId), next,
       invoices: bdb.invoices.filter((x) => x.firmId === firmId).sort((a, b) => b.issuedOn.localeCompare(a.issuedOn)).map(invRowB), seller: bdb.settings };
   }],
+  // ---- the free trial: the demo has none, so nothing is locked and no bar shows
+  ['GET', /^\/api\/trial$/, () => ({ level: 'full', trialing: false, daysLeft: null, trialEndsAt: null, graceEndsAt: null, exportUntil: null, deleteNotBefore: null })],
   // ---- the website connection (owner): Payment settings and testimonials
   ['GET', /^\/api\/owner\/payment-settings$/, () => { owner(); return { planId: 'demo-plan', planName: wsite.planName, planNameAr: wsite.planNameAr, currency: 'SAR', vatRate: '15.00', customers: 2, lines: wsite.lines, history: wsite.history }; }],
   ['POST', /^\/api\/owner\/payment-settings$/, (_m, b) => {

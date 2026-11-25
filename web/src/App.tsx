@@ -18,11 +18,13 @@ import { Security } from './pages/Security.tsx';
 import { ConfirmEmail } from './pages/ConfirmEmail.tsx';
 import { ErrorNote, Loading } from './ui.tsx';
 import { PrintHost } from './print/Print.tsx';
+import { ClosedAccount, TrialBar, TrialEnded, type TrialInfo } from './trial/TrialScreens.tsx';
 
 export function App() {
   return (
     <>
       {DEMO && <DemoBanner />}
+      <TrialBar />
       <Screens />
       <PrintHost />
     </>
@@ -38,6 +40,8 @@ function Screens() {
   const me = useApi<Me>('/api/me');
   const path = usePath();
   const demoSite = useDemoSite();
+  // Where the customer's free trial stands (not for the platform owner). Once it has ended, only the trial-ended screen opens.
+  const trial = useApi<TrialInfo>(me.data && me.data.user.kind !== 'owner' ? '/api/trial' : null);
 
   const signOut = async () => {
     await api('/api/logout', { method: 'POST', body: {} }).catch(() => undefined);
@@ -77,6 +81,7 @@ function Screens() {
   // Keep the sign-in form mounted while the session is re-checked, so typed text is not lost.
   if (me.loading && !me.data && !me.error) return <main><Loading /></main>;
   if (me.error?.status === 401 || (!me.data && me.error)) {
+    if (me.error.key === 'err.accountClosed') return <ClosedAccount onSignOut={me.reload} />;   // after the export window nothing is left to open
     if (me.error.status !== 401) return <main><ErrorNote error={me.error} onRetry={me.reload} /></main>;
     if (demoSite) return <DemoPicker />;   // the demo site has no passwords: its picker is the front door
     return <Login onSignedIn={() => { navigate('/'); me.reload(); }} />;
@@ -85,6 +90,10 @@ function Screens() {
 
   if (path === '/security') {
     return <Security me={me.data} onSignOut={signOut} onChanged={me.reload} onBack={() => window.history.length > 1 && !DEMO ? window.history.back() : navigate('/')} />;
+  }
+  if (me.data.user.kind !== 'owner') {
+    if (trial.loading && !trial.data && !trial.error) return <main><Loading /></main>;
+    if (trial.data && (trial.data.level === 'locked' || trial.data.level === 'export_only')) return <TrialEnded me={me.data} trial={trial.data} onSignOut={signOut} />;
   }
   if (me.data.user.kind === 'owner') {
     // The owner works inside one customer's Administrator console at a time, or on the customer list.

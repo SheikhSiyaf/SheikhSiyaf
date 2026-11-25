@@ -619,3 +619,8 @@ Every change below is covered by a test in `test/`.
 | New functions `trial_mail_targets()`, `trial_email_claim()`, `trial_email_attach()` (server only; the first also the owner) and `owner_trial_emails()` (owner only), executable by `nusuh_app`, not by PUBLIC | The daily job claims a reminder and queues it in one step: if queuing fails the claim is undone and tried again next run. |
 | Nothing about existing tables' row-level security changed | |
 
+## 0073_trial_screens.sql
+| Change | Why |
+|---|---|
+| New function `my_trial_modules()` (security definer, read-only, executable by `nusuh_app`, not by PUBLIC): the optional modules switched on in the signed-in person's own customer; nothing for the platform owner or when nobody is signed in | The "your trial has ended" screen says plainly which optional modules stay on only if bought. It reveals module names only, nothing about anyone's books. |
+

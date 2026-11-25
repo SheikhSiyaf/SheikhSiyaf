@@ -281,6 +281,20 @@ describe('The lock in the API', () => {
     expect((await server.inject({ method: 'POST', url: '/api/logout', headers: as$('client') })).statusCode).toBeLessThan(400);
   });
 
+  it('the trial screen gets what it shows: the optional modules switched on, the prices as set in Payment settings, and how to reach us', async () => {
+    const on = (await owner.query(`SELECT array_agg(DISTINCT m ORDER BY m) AS a FROM companies c, unnest(c.modules) m WHERE c.firm_id = $1 AND m IN ('Inventory','Restaurant','Rooms','Assets','Rentals','Projects','HRM','CRM')`, [f.firmId])).rows[0].a as string[];
+    const t = (await get('partner', '/api/trial')).json();
+    expect([...t.modules].sort()).toEqual(on);
+    expect(t.prices.currency).toBe('SAR');
+    expect(t.prices.lines.map((l: { key: string }) => l.key)).toEqual(['implementation', 'cleanup', 'annualCore', 'perModule']);
+    expect(t.support).toMatchObject({ email: 'hello@nusuhbooks.com', phone: '+966 546958273' });
+    expect(t.buyUrl).toBe('https://nusuhbooks.com/order/');
+    // a customer with no trial gets only the plain summary, and a customer cannot see another's modules
+    const other$ = (await get('otherPartner', '/api/trial')).json();
+    expect(other$).toMatchObject({ level: 'full', trialing: false });
+    expect(other$.modules).toBeUndefined();
+  });
+
   it('it also follows a correct route even when the address is written in capitals or encoded', async () => {
     const r = await get('partner', `/api/companies/${f.a.id.toUpperCase()}/summary`);
     expect(r.json()).toMatchObject({ key: 'err.trialEnded' });

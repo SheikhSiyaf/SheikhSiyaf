@@ -10,6 +10,7 @@ import { routePath, uuidParam, type Ctx } from './context.js';
 import * as T from '../books/trialService.js';
 import type { Access, Level, SubState } from '../books/trialRules.js';
 import { accessOf } from '../books/trialRules.js';
+import { SUPPORT } from '../books/trialEmails.js';
 
 type Allow = [method: string, path: RegExp];
 const UUID = '[0-9a-f-]{36}';
@@ -60,10 +61,19 @@ export function registerTrialRoutes(app: FastifyInstance, { as, opts }: Ctx) {
     trialEndsAt: iso(a.trialEndsAt), graceEndsAt: iso(a.graceEndsAt), exportUntil: iso(a.exportUntil), deleteNotBefore: iso(a.deleteNotBefore),
   });
 
-  /** Anyone signed in: where their customer stands (the app header's "X days left" and the trial-ended screen read this). */
+  /** Anyone signed in: where their customer stands (the app header's "X days left" and the trial-ended screen read this). While the
+   *  trial is not open, it also carries what that screen shows: the optional modules switched on, the prices as set in Payment
+   *  settings, and how to reach us. */
   app.get('/api/trial', async (req) => {
     if (!req.userId) throw new HttpError(401, 'Please sign in.', 'err.signIn');
-    return summary(accessOf(await stateFor(req), now()));
+    const a = accessOf(await stateFor(req), now());
+    if (a.level === 'full' && !a.trialing) return summary(a);   // a paying customer, or none with a trial: nothing more to say
+    const more = await as(req, async (db) => ({
+      modules: (await db.query('SELECT my_trial_modules() AS m')).rows[0].m as string[],
+      prices: (await db.query('SELECT public_site_data() AS d')).rows[0].d as { currency: string; lines: { key: string; name: string; nameAr: string; amount: number | string }[] },
+    }));
+    return { ...summary(a), modules: more.modules, prices: { currency: more.prices.currency, lines: more.prices.lines }, support: SUPPORT,
+      buyUrl: `${SUPPORT.website}/order/` };
   });
 
   // The platform owner: every action needs a reason and is recorded (subscription_events and the audit log).

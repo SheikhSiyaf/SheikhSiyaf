@@ -3,7 +3,7 @@
 Upload this file to a Claude Project as project knowledge. It brings the advisor up to date. The developer
 (Claude Code, working in the repository) keeps it current: the "Where things stand" section changes after each feature.
 
-Last updated: 2026-11-25 (free-trial reminder e-mails, phase 2 of 5; website connection, software side; free-trial lifecycle, phase 1 of 5: data, dates, lock; earlier: public marketing website built, now in its own repository SheikhSiyaf/nusuh-website; earlier: owner Settings and verified email change; readiness check over every API route).
+Last updated: 2026-11-25 (free-trial screens, phase 3 of 5; free-trial reminder e-mails, phase 2 of 5; website connection, software side; free-trial lifecycle, phase 1 of 5: data, dates, lock; earlier: public marketing website built, now in its own repository SheikhSiyaf/nusuh-website; earlier: owner Settings and verified email change; readiness check over every API route).
 
 ---
 
@@ -182,6 +182,8 @@ codebase for all customers; per-customer settings, never copies. Code is in GitH
 - **Product direction (owner, 2026-11-22).** (1) Add ownership: owners/partners/shareholders, shares and percentages, capital contributions, drawings, dividends and partner profit split, for sole proprietor, partnership and LLC. (2) Sell direct to businesses, like Zoho Books: one company runs its own finances; firm features are hidden, not deleted. Order: Phase A ownership, then Phase B single-company front door. Nothing built yet.
 
 ## 7. Where things stand and what is next
+
+**Free trial lifecycle, phase 3 of 5: the screens (2026-11-25, migration 0073).** While a free trial is open, everyone in that customer sees a slim bar at the top: "N days left in your free trial", the end date, and "Buy and continue" (amber in the last three days). After the trial ends, the whole software is replaced by one screen: it says nothing was deleted and until when the data is kept, has "Buy and continue" (it opens the website's Order page until buying exists inside the software, phase 4), a data export per company (a zip, for people who already have access; Administrators are told they never see the books), which optional modules switch off unless bought (with the price from Payment settings), and our contact details; English and Arabic. After the grace period the same screen says the account is closed and offers only the export until the date; after that, a closed-account page. Nothing about the trial shows for the platform owner or for customers without a trial. Posting is refused by the server (phase 1), not just hidden.
 
 **Free trial lifecycle, phase 2 of 5: reminder e-mails (2026-11-25, migration 0072).** An hourly job (not a daily one: the lock itself follows the clock) queues the reminder that is current for each unpaid trial, once only: welcome (at once), 5 days left (from day 10), 2 days left (day 13), last notice (day 14, or 15 if missed), trial ended (from the first morning after), grace week (7 days after) and closing notice (the last 4 days of the grace period; the last two are copied to hello@). Scheduled ones go from 09:00 Riyadh time. A missed day never sends an out-of-date count. Plain English, no Arabic yet, prices and names read from Payment settings, no ZATCA wording. **They stay off until you switch them on:** the setting TRIAL_EMAILS=on in Render (and PUBLIC_URL for the button) — read the texts first (the owner's console shows what was queued and any delivery failure comes in phase 4). Real sending also needs the e-mail service switched on, as for every e-mail.
 

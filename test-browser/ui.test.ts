@@ -689,3 +689,118 @@ describe('Payment settings and the Website tab: Arabic and a phone', () => {
   });
 });
 
+
+describe('The free trial on screen', () => {
+  let firm: string, planId: string;
+  let original: Record<string, unknown> | undefined;
+  const dayEnd = (n: number) => `((((now() AT TIME ZONE 'Asia/Riyadh')::date + ${n})::timestamp + interval '23 hours 59 minutes 59.999 seconds') AT TIME ZONE 'Asia/Riyadh')`;
+  const setState = (status: string, ends: string, grace: string, cancelled = 'NULL') => db.query(
+    `UPDATE subscriptions SET status = $2, trial_ends = COALESCE(trial_ends, current_date + 7), trial_started_at = now() - interval '20 days', trial_ends_at = ${ends}, grace_ends_at = ${grace}, cancelled_at = ${cancelled}, converted_at = NULL WHERE firm_id = $1`, [firm, status]);
+  const text = (p: Page, sel: string) => p.locator(sel).innerText();
+
+  beforeAll(async () => {
+    firm = (await db.query('SELECT firm_id FROM companies WHERE id = $1', [company])).rows[0].firm_id;
+    planId = (await db.query(`SELECT id FROM plans WHERE code = 'nusuh'`)).rows[0].id;
+    original = (await db.query('SELECT status, trial_ends, trial_started_at, trial_ends_at, grace_ends_at, converted_at, cancelled_at FROM subscriptions WHERE firm_id = $1', [firm])).rows[0];
+    if (!original) await db.query(`INSERT INTO subscriptions (firm_id, plan_id, cycle, status, started_on, trial_ends, next_bill_on, trial_started_at, trial_ends_at, grace_ends_at)
+      VALUES ($1, $2, 'yearly', 'trial', current_date, current_date + 7, current_date + 7, now(), now() + interval '7 days', now() + interval '37 days')`, [firm, planId]);
+  });
+  afterAll(async () => {   // a subscription row can never be deleted: put it back as it was, or as an ordinary paying customer
+    const o = original;
+    await db.query(`UPDATE subscriptions SET status = $2, trial_ends = $8, trial_started_at = $3, trial_ends_at = $4, grace_ends_at = $5, converted_at = $6, cancelled_at = $7 WHERE firm_id = $1`,
+      [firm, o?.status ?? 'active', o?.trial_started_at ?? null, o?.trial_ends_at ?? null, o?.grace_ends_at ?? null, o?.converted_at ?? null, o?.cancelled_at ?? null, o?.trial_ends ?? null]);
+  });
+
+  it('while the trial is open: the days left show at the top, the last days stand out, and the software works as always', async () => {
+    await setState('trial', dayEnd(6), dayEnd(36));
+    const { page: p, errors: errs } = await newPage();
+    await signIn(p, accountant);
+    await p.locator('#trial-bar').waitFor({ timeout: 15000 });
+    expect(await text(p, '#trial-days')).toBe('7 days left in your free trial');
+    expect(await p.evaluate(() => document.querySelector('#trial-buy')?.getAttribute('href'))).toBe('https://nusuhbooks.com/order/');
+    expect(await p.evaluate(() => document.querySelector('#trial-bar')?.classList.contains('urgent'))).toBe(false);
+    expect(await p.locator('nav.side').count()).toBe(1);   // the normal workspace
+    await setState('trial', dayEnd(2), dayEnd(32));
+    await p.reload({ waitUntil: 'networkidle' });
+    await p.locator('#trial-bar').waitFor({ timeout: 15000 });
+    expect(await text(p, '#trial-days')).toBe('3 days left in your free trial');
+    await screenshotTo(p, 'trial-bar-urgent');
+    expect(await p.evaluate(() => document.querySelector('#trial-bar')?.classList.contains('urgent'))).toBe(true);
+    await setState('trial', dayEnd(0), dayEnd(30));
+    await p.reload({ waitUntil: 'networkidle' });
+    await p.locator('#trial-bar').waitFor({ timeout: 15000 });
+    expect(await text(p, '#trial-days')).toBe('Last day of your free trial');
+    expect(errs.filter((e) => !/favicon|Failed to load resource/i.test(e))).toEqual([]);
+  });
+
+  it('once it has ended: only the trial-ended screen, with buying, contact, the export and which modules switch off; nothing can be posted', async () => {
+    await setState('trial', `now() - interval '2 days'`, dayEnd(28));
+    // the shared page is still signed in as the accountant from the start of this file
+    await page.goto(`${BASE}/c/${company}/Home`, { waitUntil: 'networkidle' });
+    await page.locator('#trial-ended').waitFor({ timeout: 15000 });
+    expect(await page.evaluate(() => document.querySelector('#trial-ended')?.getAttribute('data-level'))).toBe('locked');
+    expect(await text(page, '#trialui-title')).toBe('Your free trial has ended');
+    expect(await text(page, '#trialui-body')).toContain('Nothing has been deleted. Your data is kept until');
+    expect(await page.evaluate(() => document.querySelector('#trialui-buy')?.getAttribute('href'))).toBe('https://nusuhbooks.com/order/');
+    expect(await text(page, '#trialui-modules')).toContain('The core modules stay on');
+    expect(await text(page, '#trialui-contact')).toContain('hello@nusuhbooks.com');
+    await screenshotTo(page, 'trial-ended-screen');
+    expect(await page.locator('nav.side').count()).toBe(0);   // no software behind it
+    // the export link gives a zip; posting is refused
+    const exp = await page.evaluate(async (id) => {
+      const href = document.querySelector('#trialui-exports a')?.getAttribute('href') ?? '';
+      const r = await fetch(href); return { href, status: r.status, type: r.headers.get('content-type'), bytes: (await r.arrayBuffer()).byteLength };
+    }, company);
+    expect(exp.href).toBe(`/api/companies/${company}/export`);
+    expect([exp.status, exp.type]).toEqual([200, 'application/zip']);
+    expect(exp.bytes).toBeGreaterThan(100);
+    const post = await page.evaluate(async (id) => { const r = await fetch(`/api/companies/${id}/contacts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'X', isCustomer: true }) }); return { s: r.status, k: (await r.json()).key }; }, company);
+    expect(post).toEqual({ s: 403, k: 'err.trialEnded' });
+    // Arabic, right to left
+    await page.getByRole('button', { name: 'EN | AR' }).click();
+    await page.waitForTimeout(800);
+    expect(await page.evaluate(() => document.documentElement.dir)).toBe('rtl');
+    expect(await text(page, '#trialui-title')).toBe('انتهت تجربتك المجانية');
+    await page.getByRole('button', { name: 'EN | AR' }).click();
+    await page.waitForTimeout(500);
+  });
+
+  it('on a phone the trial-ended screen does not scroll sideways', async () => {
+    const { page: ph } = await newPage(390);
+    await ph.goto(`${BASE}/`, { waitUntil: 'networkidle' });   // signing in works while ended; the sidebar is just not there afterwards
+    await ph.locator('input[type=email]').fill(accountant);
+    await ph.locator('input[type=password]').fill('demo1234');
+    await ph.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await ph.locator('#trial-ended').waitFor({ timeout: 30000 });
+    expect(await ph.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+  });
+
+  it('the Administrator sees the same screen, told that the books are exported by company users', async () => {
+    const adminEmail = (await db.query(`SELECT email FROM users WHERE firm_id = $1 AND kind = 'admin' AND status = 'active' LIMIT 1`, [firm])).rows[0]?.email as string | undefined;
+    if (!adminEmail) return;   // the demo seed always has one; nothing to check otherwise
+    await setState('trial', dayEnd(3), dayEnd(33));
+    const { page: a } = await newPage();
+    await signIn(a, adminEmail);
+    await setState('trial', `now() - interval '2 days'`, dayEnd(28));
+    await a.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await a.locator('#trial-ended').waitFor({ timeout: 15000 });
+    expect(await a.locator('#trialui-export-admin').count()).toBe(1);
+    expect(await a.locator('#trialui-exports').count()).toBe(0);
+  });
+
+  it('after the grace period it is a closed account: export only until the date, and then a closed page', async () => {
+    await setState('cancelled', `now() - interval '40 days'`, `now() - interval '10 days'`, `now() - interval '10 days'`);
+    await page.goto(`${BASE}/c/${company}/Home`, { waitUntil: 'networkidle' });
+    await page.locator('#trial-ended').waitFor({ timeout: 15000 });
+    expect(await page.evaluate(() => document.querySelector('#trial-ended')?.getAttribute('data-level'))).toBe('export_only');
+    expect(await text(page, '#trialui-title')).toBe('This account is closed');
+    expect(await text(page, '#trialui-body')).toContain('You can still export your data until');
+    expect(await page.locator('#trialui-modules').count()).toBe(0);
+    // past the export window: nothing is left to open
+    await setState('cancelled', `now() - interval '200 days'`, `now() - interval '170 days'`, `now() - interval '170 days'`);
+    await page.goto(`${BASE}/c/${company}/Home`, { waitUntil: 'networkidle' });
+    await page.locator('#trial-closed').waitFor({ timeout: 15000 });
+    expect(await text(page, '#trial-closed')).toContain('The time to export your data has passed');
+    expect(await page.locator('#trialui-exports').count()).toBe(0);
+  });
+});

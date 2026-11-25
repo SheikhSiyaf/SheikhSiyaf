@@ -44,6 +44,7 @@ export default async function setup(): Promise<() => Promise<void>> {
     cookieSecure: false,
     demoLogins: true,
     staticDir: WEB_DIST,
+    lockCacheMs: 0,   // the trial checks change a customer's dates in the database and look at once
   });
   await server.listen({ port: PORT, host: '127.0.0.1' });
 

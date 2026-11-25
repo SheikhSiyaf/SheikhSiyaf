@@ -634,3 +634,14 @@ Every change below is covered by a test in `test/`.
 | New table `trial_order_proofs` (the proof of payment: PDF, PNG, JPG or WebP up to 5 MB). Row-level security: only the platform owner reads; kept apart from the order so the file never goes into the audit log | The customer may attach the transfer receipt. |
 | New functions `trial_order_quote`, `trial_order_place`, `my_trial_order`, `trial_order_confirm` (the customer's side), `owner_trial_orders`, `owner_order_proof`, `owner_order_paid`, `owner_reminder_resent`, `owner_trials_overview`, `firm_name_of` (the owner's side). All security definer with a fixed search path, executable by `nusuh_app`, not by PUBLIC. `owner_order_paid` converts the SAME customer through the existing `trial_convert`, switches off the optional modules not bought, and marks the order paid; the first invoice is then made and settled in the same transaction by the existing billing functions | The amounts are never taken from the browser. Nothing about posted entries or any existing table's row-level security changed. |
 
+## 0075_trial_setup.sql
+| Change | Why |
+|---|---|
+| New table `trial_setup` (one row per customer: step reached, business type, goals, import-or-fresh choice, skipped, page guides opened, how many times the PDF/picture reader was used, started/completed). Row-level security: only the platform owner can read it; nobody writes except through the functions below. Audited | The guided first-run setup, and the owner's record of how far each trial customer got. |
+| New functions `my_setup()`, `setup_save()`, `setup_apply_modules()`, `setup_tour_seen()`, `setup_extract_used()` (the customer's side) and `owner_setup_overview()` (owner only; counts of companies, contacts, documents and people, never the books' contents). All security definer with a fixed search path, executable by `nusuh_app`, not by PUBLIC. `setup_apply_modules` only switches optional modules ON, only in the caller's own company, and only while the customer is in an unpaid trial | The goals the customer picks switch on what it needs; after buying, modules are billed and stay the owner's to change. Nothing about any existing table's row-level security changed. |
+
+## 0076_order_place_lock.sql
+| Change | Why |
+|---|---|
+| `trial_order_place()` takes a short per-customer lock before replacing the waiting order | Two simultaneous clicks made the second one fail with a confusing error (found by the load test). No table changed. |
+

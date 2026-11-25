@@ -42,6 +42,13 @@ describe('Placing an order', () => {
     expect((await owner.query(`SELECT status FROM trial_orders WHERE firm_id = $1 ORDER BY placed_at`, [f.firmId])).rows.map((r) => r.status).sort()).toEqual(['cancelled', 'waiting']);
   });
 
+  it('many clicks at the same moment all succeed and leave exactly one waiting order', async () => {
+    const f = await trial();
+    const results = await Promise.allSettled(Array.from({ length: 20 }, (_, i) => as(f.admin, (db) => O.placeOrder(db, { modules: i % 2 ? ['CRM'] : [] }))));
+    expect(results.filter((r) => r.status === 'rejected').map((r) => String((r as PromiseRejectedResult).reason))).toEqual([]);
+    expect((await owner.query(`SELECT count(*)::int AS n FROM trial_orders WHERE firm_id = $1 AND status = 'waiting'`, [f.firmId])).rows[0].n).toBe(1);
+  });
+
   it('refuses a module that is not on the list, the platform owner, and a customer that has no trial', async () => {
     const f = await trial();
     await expect(as(f.admin, (db) => O.placeOrder(db, { modules: ['Warehouse'] }))).rejects.toThrow(/optional modules/);

@@ -22,6 +22,7 @@ export const openSetup = () => window.dispatchEvent(new Event('nb:open-setup'));
 /** Shows the wizard by itself while it is due, or when asked (the "run the setup again" link in the guide). */
 export function SetupGate({ books, onChanged }: { books: CompanyBooks; onChanged: () => void }) {
   const info = useApi<SetupReply>('/api/setup');
+  const trial = useApi<{ softDay?: boolean }>('/api/trial');   // on the last (soft) day the page asks to buy; the wizard would only get in the way
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   // Once the wizard is on screen it stays until closed: saving a step re-reads the setup, and that must not close it or reset its step.
@@ -29,7 +30,7 @@ export function SetupGate({ books, onChanged }: { books: CompanyBooks; onChanged
   const first = useRef<SetupState | null>(null);
   useEffect(() => { const on = () => { setDismissed(false); setOpen(true); }; window.addEventListener('nb:open-setup', on); return () => window.removeEventListener('nb:open-setup', on); }, []);
   const s = info.data?.setup;
-  const due = Boolean(s?.show && books.canPost && !dismissed);
+  const due = Boolean(s?.show && books.canPost && !dismissed && trial.data && !trial.data.softDay);
   useEffect(() => { if ((due || open) && s && !first.current) { first.current = s; setActive(true); } }, [due, open, s]);
   if (!active || !first.current) return null;
   return <Wizard books={books} setup={first.current} extractEnabled={Boolean(info.data?.extractEnabled)} onChanged={() => { info.reload(); onChanged(); }}

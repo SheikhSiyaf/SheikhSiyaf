@@ -216,6 +216,33 @@ describe('The saved steps', () => {
     expect((await call(a.cookie, 'GET', '/api/owner/trials')).statusCode).toBe(403);
   });
 
+  it('refuses values of the wrong type, not just wrong values (a list where a word belongs)', async () => {
+    const c = await customer();
+    for (const [url, body] of [['/api/setup', { step: ['about'] }], ['/api/setup', { step: { a: 1 } }], ['/api/setup/tour', { page: ['Home'] }], [`/api/companies/${c.companyId}/setup/chart`, { businessType: ['trading'] }]] as const)
+      expect((await call(c.cookie, 'POST', url, body)).statusCode, JSON.stringify(body)).toBe(400);
+  });
+
+  it('the PDF reader checks the company is the caller\'s before sending anything anywhere', async () => {
+    process.env.DOC_EXTRACT = 'on'; process.env.ANTHROPIC_API_KEY = 'test-key';
+    let sent = 0;
+    const s2 = buildServer({ pool: appPool, sessionSecret: 'setup-secret-2', lockCacheMs: 0, extractFetch: async () => { sent++; return { ok: true, status: 200, json: async () => ({ content: [{ type: 'tool_use', name: 'submit_rows', input: { rows: [['Name'], ['A']] } }] }) }; } });
+    try {
+      const a = await customer(), b = await customer();
+      const login = async (email: string) => String((await s2.inject({ method: 'POST', url: '/api/login', payload: { email, password: PW } })).headers['set-cookie']).split(';')[0]!;
+      const email = (await owner.query(`SELECT email FROM users WHERE firm_id = $1 AND email LIKE 'f.%'`, [a.firm])).rows[0].email;
+      const ck = await login(email);
+      const body = { kind: 'customers', fileBase64: PDF, fileType: P, consent: true };
+      const other = await s2.inject({ method: 'POST', url: `/api/companies/${b.companyId}/import/extract`, headers: { cookie: ck }, payload: body });
+      expect([403, 404]).toContain(other.statusCode);
+      expect(sent).toBe(0);
+      const mine = await s2.inject({ method: 'POST', url: `/api/companies/${a.companyId}/import/extract`, headers: { cookie: ck }, payload: body });
+      expect(mine.statusCode, mine.body).toBe(200);
+      expect(mine.json().rows).toEqual([['Name'], ['A']]);
+      expect(sent).toBe(1);
+      expect((await owner.query('SELECT extract_used FROM trial_setup WHERE firm_id = $1', [a.firm])).rows[0].extract_used).toBe(1);
+    } finally { delete process.env.DOC_EXTRACT; delete process.env.ANTHROPIC_API_KEY; await s2.close(); }
+  });
+
   it('records which page guides were opened, without duplicates, and refuses unknown pages', async () => {
     const c = await customer();
     for (const page of ['Home', 'Sales', 'Sales', 'Reports']) expect((await call(c.cookie, 'POST', '/api/setup/tour', { page })).statusCode).toBe(200);

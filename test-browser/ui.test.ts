@@ -920,6 +920,9 @@ describe('The free trial on screen', () => {
   it('the guided setup: business and goals, accounts for the business, bringing a Word table, the first invoice, and the page guide', async () => {
     await setState('trial', dayEnd(8), dayEnd(38));
     await db.query('DELETE FROM trial_setup WHERE firm_id = $1', [firm]).catch(() => undefined);
+    // earlier checks may have given this person a limited job title: the setup is for someone who can enter accounts and customers
+    const role = (await db.query('SELECT m.client_role_id FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.company_id = $1 AND u.email = $2', [company, accountant])).rows[0]?.client_role_id ?? null;
+    await db.query('UPDATE memberships m SET client_role_id = NULL FROM users u WHERE u.id = m.user_id AND m.company_id = $1 AND u.email = $2', [company, accountant]);
     const stamp = Date.now().toString(36);
     const cell = (x: string) => `<w:tc><w:p><w:r><w:t>${x}</w:t></w:r></w:p></w:tc>`;
     const row = (...c: string[]) => `<w:tr>${c.map(cell).join('')}</w:tr>`;
@@ -937,7 +940,7 @@ describe('The free trial on screen', () => {
     await p.locator('#wiz-chart').waitFor({ timeout: 15000 });
     expect(await p.locator('.wiz-accounts li').count()).toBe(4);
     await p.locator('#wiz-add').click();
-    await p.locator('#wiz-added').waitFor({ timeout: 15000 });
+    await p.locator('#wiz-added').waitFor({ timeout: 15000 }).catch(async (e) => { throw new Error(`${e.message} | error: ${await p.locator('#wiz-error').innerText().catch(() => 'none')} | norights: ${await p.locator('#wiz-norights').count()} | busy add disabled: ${await p.locator('#wiz-add').isDisabled().catch(() => 'gone')}`); });
     await p.locator('#wiz-next').click();
     await p.locator('#wiz-data').waitFor();
     await p.locator('#wiz-import').click();
@@ -963,7 +966,9 @@ describe('The free trial on screen', () => {
     await p.locator('#guide-btn').click();
     await p.locator('#guide-panel').waitFor();
     expect(await text(p, '#guide-title')).toContain('Home');
-    expect((await db.query('SELECT tour_seen FROM trial_setup WHERE firm_id = $1', [firm])).rows[0].tour_seen).toContain('Home');
+    let seen: string[] = [];
+    for (let i = 0; i < 20 && !seen.includes('Home'); i++) { seen = (await db.query('SELECT tour_seen FROM trial_setup WHERE firm_id = $1', [firm])).rows[0]?.tour_seen ?? []; if (!seen.includes('Home')) await p.waitForTimeout(250); }   // the "seen" note is sent just after the panel opens
+    expect(seen).toContain('Home');
     await screenshotTo(p, 'setup-guide');
     // run it again, in Arabic
     await p.locator('#guide-setup').click();
@@ -973,6 +978,7 @@ describe('The free trial on screen', () => {
     expect(await p.evaluate(() => document.documentElement.dir)).toBe('rtl');
     expect(await text(p, '#wiz-title')).toBe('لنُعدّ شركتك');
     await screenshotTo(p, 'setup-wizard-arabic');
+    await db.query('UPDATE memberships m SET client_role_id = $3 FROM users u WHERE u.id = m.user_id AND m.company_id = $1 AND u.email = $2', [company, accountant, role]);
     expect(errs.filter((e) => !/favicon|Failed to load resource/i.test(e))).toEqual([]);
   });
 
@@ -996,6 +1002,7 @@ describe('The free trial on screen', () => {
   });
 
   it('on a phone the trial-ended screen does not scroll sideways', async () => {
+    await setState('trial', `now() - interval '2 days'`, dayEnd(28));
     const { page: ph } = await newPage(390);
     await ph.goto(`${BASE}/`, { waitUntil: 'networkidle' });   // signing in works while ended; the sidebar is just not there afterwards
     await ph.locator('input[type=email]').fill(accountant);

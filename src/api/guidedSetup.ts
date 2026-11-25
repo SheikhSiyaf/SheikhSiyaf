@@ -20,9 +20,10 @@ export function registerGuidedSetupRoutes(app: FastifyInstance, { as, opts }: Ct
   // A PDF or picture read into draft rows. Needs the customer's tick, is limited per person and in total, and keeps nothing.
   app.post<{ Params: { id: string }; Body: { kind?: unknown; fileBase64?: unknown; fileType?: unknown; consent?: unknown } }>(
     '/api/companies/:id/import/extract', { bodyLimit: 8 * 1024 * 1024 }, async (req) => {
-      uuidParam(req.params.id);
+      const companyId = uuidParam(req.params.id);
       const cfg = extractConfig();
       if (!cfg.enabled) throw new HttpError(400, 'Reading a PDF or picture is not switched on yet. Use an Excel or CSV file.', 'err.extractOff');
+      await as(req, (db) => S.requireCompany(db, companyId));   // before the file goes anywhere
       if (!perHour.take(req.userId ?? 'x') || !perDay.take(req.userId ?? 'x')) throw new HttpError(429, 'Too many files read just now. Try again later, or use an Excel or CSV file.', 'err.rateLimited');
       if (running >= 3) throw new HttpError(429, 'The reader is busy. Try again in a minute.', 'err.rateLimited');
       running++;

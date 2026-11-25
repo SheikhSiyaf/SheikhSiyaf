@@ -1,8 +1,0 @@
-{
-  "_about": "All prices in one place. Change a number here, rebuild, and every page, the Order total and the order e-mail follow. Amounts are whole riyals and EXCLUDE VAT.",
-  "currency": "SAR",
-  "implementation": 9000,
-  "cleanup": 5000,
-  "annualCore": 1500,
-  "perModule": 500
-}

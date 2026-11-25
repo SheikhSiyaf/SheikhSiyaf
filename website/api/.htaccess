@@ -1,8 +1,0 @@
-# Only submit.php is meant to be reachable from the internet.
-<FilesMatch "\.(json|example|md)$|^config\.local\.php$">
-  Require all denied
-</FilesMatch>
-<Files "submit.php">
-  Require all granted
-</Files>
-Options -Indexes

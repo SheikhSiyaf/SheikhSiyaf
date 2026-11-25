@@ -105,10 +105,20 @@ describe('Access', () => {
     expect(accessOf(trial, d('2026-02-14T20:59:59.999Z')).trialing).toBe(true);
   });
 
-  it('locks at once after the last millisecond, even if the daily job has not run (the lock follows the clock)', () => {
-    expect(at('2026-02-14T21:00:00.000Z')).toBe('locked');
-    expect(accessOf(trial, d('2026-02-14T21:00:00Z')).trialing).toBe(false);
+  it('day 16 is a soft last day: everything still works, flagged, until 23:59 Riyadh time; then it locks, even if the daily job has not run', () => {
+    const soft = accessOf(trial, d('2026-02-14T21:00:00Z'));
+    expect([soft.level, soft.softDay, soft.trialing, soft.daysLeft]).toEqual(['full', true, true, 0]);
+    expect(soft.softEndsAt!.toISOString()).toBe('2026-02-15T20:59:59.999Z');
+    expect(at('2026-02-15T20:59:59.999Z')).toBe('full');
+    expect(at('2026-02-15T21:00:00.000Z')).toBe('locked');
+    expect(accessOf(trial, d('2026-02-15T21:00:00Z')).softDay).toBe(false);
+    expect(accessOf(trial, d('2026-02-14T20:59:59.999Z')).softDay).toBe(false);   // the last trial day is not the soft day
     expect(at('2026-03-16T20:59:59.999Z')).toBe('locked');
+  });
+
+  it('a customer that bought or was closed on day 16 gets no soft day', () => {
+    expect(accessOf({ ...trial, status: 'cancelled', cancelledAt: d('2026-02-14T22:00:00Z') }, d('2026-02-14T23:00:00Z')).softDay).toBe(false);
+    expect(accessOf({ ...trial, convertedAt: d('2026-02-15T05:00:00Z'), status: 'active' }, d('2026-02-15T06:00:00Z')).softDay).toBe(false);
   });
 
   it('after the grace period only the export of the data is left, for 60 days, then nothing', () => {

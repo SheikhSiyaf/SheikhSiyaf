@@ -101,8 +101,9 @@ describe('When each reminder goes out', () => {
     expect(closing.sent.map((s) => [s.template, s.copied])).toEqual([['closing_soon', true]]);
     const all = await mails(f);
     const [ended, grace, graceCopy, close, closeCopy] = all;
-    expect(ended!.subject).toBe('Your Nusuh Books trial has ended');
-    expect(ended!.body_text).toContain('your data is kept until Friday, 14 November 2025');
+    expect(ended!.subject).toBe('Last day: buy today to keep working in Nusuh Books');   // 16 October is the soft last day
+    expect(ended!.body_text).toContain('it locks');
+    expect(ended!.body_text).toContain('Your data is kept until Friday, 14 November 2025');
     expect(grace!.subject).toBe('Your Nusuh Books data is kept until Friday, 14 November 2025');
     // the last two are copied to hello@, marked as copies
     expect([graceCopy!.to_email, closeCopy!.to_email]).toEqual([SUPPORT.email, SUPPORT.email]);

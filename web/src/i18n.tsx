@@ -4537,6 +4537,11 @@ const en = {
   'bankd.account': 'Account name',
   'bankd.iban': 'IBAN',
   'trials.done.differs': 'Careful: the customer was told to pay {told}, but the invoice total is different. Check this customer\'s plan and discount in Billing.',
+  'trialui.bar.soft': 'Last day: your free trial has ended. The software locks at 23:59 tonight. Buy to keep working.',
+  'trialui.soft.title': 'Today is your last day',
+  'trialui.soft.body': 'Your free trial has ended, but we kept everything open for one more day. At 23:59 tonight the software locks. Nothing is deleted: your data is kept and comes back exactly as you left it when you buy.',
+  'trialui.soft.buy': 'Buy now',
+  'trialui.soft.later': 'Keep working for now',
 };
 
 export type Key = keyof typeof en;
@@ -9077,6 +9082,11 @@ const ar: Record<Key, string> = {
   'bankd.account': 'اسم الحساب',
   'bankd.iban': 'رقم الآيبان',
   'trials.done.differs': 'انتبه: طُلب من العميل دفع {told} لكن إجمالي الفاتورة مختلف. راجع خطة هذا العميل وخصمه في الفوترة.',
+  'trialui.bar.soft': 'اليوم الأخير: انتهت تجربتك المجانية. يُقفل البرنامج الساعة 23:59 الليلة. اشترِ لتواصل العمل.',
+  'trialui.soft.title': 'اليوم هو آخر يوم لك',
+  'trialui.soft.body': 'انتهت تجربتك المجانية، لكننا أبقينا كل شيء مفتوحًا يومًا إضافيًا. الساعة 23:59 الليلة يُقفل البرنامج. لا يُحذف شيء: بياناتك محفوظة وتعود كما تركتها عند الشراء.',
+  'trialui.soft.buy': 'اشترِ الآن',
+  'trialui.soft.later': 'تابع العمل الآن',
 };
 
 export type Lang = 'en' | 'ar';

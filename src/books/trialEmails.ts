@@ -69,6 +69,9 @@ export function buildNotice(n: Notice, c: Ctx): Mail {
         `This is the last reminder before access stops. Your free trial for ${c.firm} ends at 23:59 Saudi time ${days === 0 ? 'today' : 'tomorrow'}, ${last}.`,
         modulesSentence(c), `${keep} ${locks}`, buy(c)], c.appUrl, 'Open Nusuh Books');
     case 'trial_ended':
+      if (n.softDay) return plainMail('Last day: buy today to keep working in Nusuh Books', [hello,
+        `Your free trial for ${c.firm} ended yesterday, but we have kept the software open for one more day. Today is your last day: at 23:59 Saudi time tonight it locks.`,
+        `Nothing is deleted. Your data is kept until ${graceEnd}. If you buy by then, your company opens again exactly as you left it, and you can export your data at any time.`, buy(c)], c.appUrl, 'Open Nusuh Books');
       return plainMail('Your Nusuh Books trial has ended', [hello,
         `Your free trial for ${c.firm} ended on ${last}, so the software is locked. Nothing has been deleted: your data is kept until ${graceEnd}.`,
         `You can still sign in to export your data. If you buy by 23:59 Saudi time on ${graceEnd}, your company opens again exactly as you left it.`, buy(c)], c.appUrl, 'Open Nusuh Books');

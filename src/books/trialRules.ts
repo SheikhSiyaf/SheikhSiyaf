@@ -102,9 +102,12 @@ export interface Access {
   graceEndsAt: Date | null;
   exportUntil: Date | null;
   deleteNotBefore: Date | null;
+  /** Day 16: the trial is over but the software still works until the end of this day (23:59 Riyadh); the screen asks to buy. */
+  softDay: boolean;
+  softEndsAt: Date | null;
 }
 
-const none = { trialing: false, daysLeft: null, trialEndsAt: null, graceEndsAt: null, exportUntil: null, deleteNotBefore: null };
+const none = { softDay: false, softEndsAt: null, trialing: false, daysLeft: null, trialEndsAt: null, graceEndsAt: null, exportUntil: null, deleteNotBefore: null };
 
 export function accessOf(s: SubState | null, now: Date): Access {
   // No subscription, or one that never had a trial (billed the usual way): nothing here changes what it could do before.
@@ -122,6 +125,10 @@ export function accessOf(s: SubState | null, now: Date): Access {
     const c = closingDates(closedAt);
     return { level: t <= c.exportUntil.getTime() ? 'export_only' : 'closed', ...none, ...dates, ...c };
   }
+  // Day 16 is a soft last day: everything still works, the software only asks, loudly, to buy before the lock at the end of the day.
+  const softEnd = endOfRiyadhDay(addDays(riyadhDate(ends), 1));
+  if (t > ends.getTime() && t <= softEnd.getTime() && softEnd.getTime() < grace.getTime() && s.status !== 'cancelled')
+    return { level: 'full', ...none, ...dates, trialing: true, daysLeft: 0, softDay: true, softEndsAt: softEnd };
   if (t > ends.getTime()) return { level: 'locked', ...none, ...dates };
   return { level: 'full', ...none, ...dates, trialing: true, daysLeft: daysLeft(ends, now) };
 }
@@ -140,6 +147,8 @@ export interface Notice {
   key: NoticeKey;
   /** Whole days still to come after today while the trial is open (0 on the last day), otherwise null. */
   daysAfterToday: number | null;
+  /** The first day after the trial: the software still works until 23:59 (the soft last day). */
+  softDay?: boolean;
   /** The last trial day and the last day of the grace period, as Riyadh dates. */
   lastDay: string;
   graceEndsOn: string;
@@ -166,5 +175,5 @@ export function currentNotice(s: SubState | null, now: Date): Notice | null {
   const since = daysBetween(lastDay, today);          // 1 on the first day after the trial
   const left = daysBetween(today, graceEndsOn);       // days until the last day of the grace period
   const key: NoticeKey = left <= 3 ? 'closing_soon' : since >= 7 ? 'grace_week' : 'trial_ended';
-  return { key, daysAfterToday: null, ...base };
+  return { key, daysAfterToday: null, softDay: since === 1 && key === 'trial_ended', ...base };
 }

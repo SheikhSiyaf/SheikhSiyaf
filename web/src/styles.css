@@ -845,3 +845,5 @@ a.b.big { font-size: 17px; padding: 13px 30px; border-radius: 12px; box-shadow: 
 .buy input:not([type=checkbox]) { max-width: 100%; box-sizing: border-box; }
 .buy input[type=file] { width: 100%; }
 .buy-bank dd, .buy p { overflow-wrap: anywhere; }
+.soft-pop { position: fixed; inset: 0; background: rgba(6, 34, 43, .55); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 16px; }
+.soft-pop .card { max-width: 480px; }

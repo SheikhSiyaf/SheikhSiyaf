@@ -59,7 +59,7 @@ export function registerTrialRoutes(app: FastifyInstance, { as, opts }: Ctx) {
   });
 
   const summary = (a: Access) => ({
-    level: a.level satisfies Level, trialing: a.trialing, daysLeft: a.daysLeft,
+    level: a.level satisfies Level, trialing: a.trialing, daysLeft: a.daysLeft, softDay: a.softDay, softEndsAt: iso(a.softEndsAt),
     trialEndsAt: iso(a.trialEndsAt), graceEndsAt: iso(a.graceEndsAt), exportUntil: iso(a.exportUntil), deleteNotBefore: iso(a.deleteNotBefore),
   });
 

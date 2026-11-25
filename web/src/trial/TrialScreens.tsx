@@ -1,7 +1,7 @@
 // The free trial on screen: the "X days left" bar for everyone in a trial, and what a customer sees once the trial is over
 // (src/books/trialRules.ts decides which; /api/trial says). While the trial has ended the customer can only buy, contact us,
 // and export its data; once the account is closed only the export, until the date; after that only a closed-account page.
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { api, useApi, type Me } from '../api.ts';
 import { navigate, usePath } from '../router.ts';
 import { BuyPanel } from './BuyPanel.tsx';
@@ -10,7 +10,7 @@ import { TopControls } from '../ui.tsx';
 
 export interface TrialInfo {
   level: 'full' | 'locked' | 'export_only' | 'closed';
-  trialing: boolean; daysLeft: number | null;
+  trialing: boolean; daysLeft: number | null; softDay?: boolean; softEndsAt?: string | null;
   trialEndsAt: string | null; graceEndsAt: string | null; exportUntil: string | null; deleteNotBefore: string | null;
   modules?: string[];
   prices?: { currency: string; lines: { key: string; name: string; nameAr: string; amount: number | string }[] };
@@ -34,7 +34,29 @@ export function TrialBar() {
   const path = usePath();
   useEffect(() => { trial.reload(); }, [path, trial.reload]);
   const d = trial.data;
+  const [seen, setSeen] = useState(false);
   if (!d || !d.trialing || d.daysLeft === null) return null;
+  if (d.softDay) {
+    return (
+      <>
+        <div className="trial-bar urgent" id="trial-bar" role="note">
+          <span id="trial-days">{t('trialui.bar.soft')}</span>
+          <a className="trial-buy" id="trial-buy" href="/buy" onClick={(e) => { e.preventDefault(); navigate('/buy'); }}>{t('trialui.buy')}</a>
+        </div>
+        {!seen && (
+          <div className="soft-pop" id="soft-pop" role="dialog" aria-modal="true" aria-labelledby="soft-title">
+            <div className="card">
+              <h2 id="soft-title">{t('trialui.soft.title')}</h2>
+              <p>{t('trialui.soft.body')}</p>
+              <div className="actions">
+                <button className="b p big" id="soft-buy" onClick={() => { setSeen(true); navigate('/buy'); }}>{t('trialui.soft.buy')}</button>
+                <button className="b" id="soft-later" onClick={() => setSeen(true)}>{t('trialui.soft.later')}</button>
+              </div>
+            </div>
+          </div>)}
+      </>
+    );
+  }
   const urgent = d.daysLeft <= 3;
   return (
     <div className={`trial-bar${urgent ? ' urgent' : ''}`} id="trial-bar" role="note">

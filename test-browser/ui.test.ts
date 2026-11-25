@@ -760,6 +760,22 @@ describe('The free trial on screen', () => {
     expect(errs.filter((e) => !/favicon|Failed to load resource/i.test(e))).toEqual([]);
   });
 
+  it('day 16 is a soft last day: a pop-up asks to buy, the software still works, and "Buy now" opens the order', async () => {
+    await setState('trial', dayEnd(-1), dayEnd(29));   // the trial ended at 23:59 last night
+    const { page: p, errors: errs } = await newPage();
+    await signIn(p, accountant);
+    await p.locator('#soft-pop').waitFor({ timeout: 15000 });
+    expect(await text(p, '#soft-title')).toBe('Today is your last day');
+    expect(await text(p, '#trial-days')).toContain('locks at 23:59 tonight');
+    await screenshotTo(p, 'trial-soft-last-day');
+    await p.locator('#soft-later').click();
+    expect(await p.locator('#soft-pop').count()).toBe(0);
+    expect(await p.locator('nav.side').count()).toBe(1);   // the normal workspace, not the ended screen
+    await p.locator('#trial-buy').click();
+    await p.locator('#buy-panel').waitFor({ timeout: 15000 });
+    expect(errs.filter((e) => !/favicon|Failed to load resource/i.test(e))).toEqual([]);
+  });
+
   it('once it has ended: only the trial-ended screen, with buying, contact, the export and which modules switch off; nothing can be posted', async () => {
     await setState('trial', `now() - interval '2 days'`, dayEnd(28));
     // the shared page is still signed in as the accountant from the start of this file

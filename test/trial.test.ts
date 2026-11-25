@@ -254,8 +254,14 @@ describe('The lock in the API', () => {
     expect(res.json().daysLeft).toBe(11);
   });
 
-  it('the moment the trial ends the customer is locked, even though the job has not run (the status column still says trial)', async () => {
+  it('day 16 is a soft last day: everything works, and the trial screen says so', async () => {
     clock = d('2025-10-15T21:00:00.000Z');
+    expect((await summary('partner')).statusCode).toBe(200);
+    expect((await get('client', '/api/trial')).json()).toMatchObject({ level: 'full', trialing: true, softDay: true, daysLeft: 0 });
+  });
+
+  it('the moment the soft day ends the customer is locked, even though the job has not run (the status column still says trial)', async () => {
+    clock = d('2025-10-16T21:00:00.000Z');
     expect((await row(f)).status).toBe('trial');
     for (const who of ['partner', 'client', 'admin']) {
       const r = await (who === 'admin' ? get(who, '/api/admin/billing') : summary(who));

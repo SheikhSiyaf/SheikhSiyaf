@@ -6,6 +6,7 @@
 // cannot pass review just because the unit tests still pass.
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import pg from 'pg';
+import { zipStored } from '../src/export/xlsx.ts';
 import { BASE, call, closeBrowser, newPage, screenshotTo, signIn, waitForText, type Page } from './harness.js';
 
 const ADMIN = process.env.TEST_PG_ADMIN_URL ?? 'postgres://postgres:postgres@localhost:5432/postgres';
@@ -914,6 +915,84 @@ describe('The free trial on screen', () => {
     await ph.locator('#owner-trials').waitFor({ timeout: 15000 });
     const overflow = await ph.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow, `sideways by ${overflow}px`).toBeLessThanOrEqual(2);
+  });
+
+  it('the guided setup: business and goals, accounts for the business, bringing a Word table, the first invoice, and the page guide', async () => {
+    await setState('trial', dayEnd(8), dayEnd(38));
+    await db.query('DELETE FROM trial_setup WHERE firm_id = $1', [firm]).catch(() => undefined);
+    const stamp = Date.now().toString(36);
+    const cell = (x: string) => `<w:tc><w:p><w:r><w:t>${x}</w:t></w:r></w:p></w:tc>`;
+    const row = (...c: string[]) => `<w:tr>${c.map(cell).join('')}</w:tr>`;
+    const docx = Buffer.from(zipStored([['word/document.xml', new TextEncoder().encode(`<?xml version="1.0"?><w:document xmlns:w="x"><w:body><w:tbl>${row('Name', 'Email')}${row(`Word Customer ${stamp} A`, 'a@x.example')}${row(`Word Customer ${stamp} B`, 'b@x.example')}</w:tbl></w:body></w:document>`)]]));
+    const { page: p, errors: errs } = await newPage();
+    await signIn(p, accountant);
+    await p.locator('#wiz').waitFor({ timeout: 20000 });
+    expect(await p.locator('#wiz-next').isDisabled()).toBe(true);   // needs the kind of business first
+    await p.locator('#wiz-type-restaurant').click();
+    await p.locator('#wiz-goal-payroll').check();
+    await p.locator('#wiz-goal-invoicing').check();
+    await p.locator('#wiz-switch').waitFor();
+    await screenshotTo(p, 'setup-wizard-1');
+    await p.locator('#wiz-next').click();
+    await p.locator('#wiz-chart').waitFor({ timeout: 15000 });
+    expect(await p.locator('.wiz-accounts li').count()).toBe(4);
+    await p.locator('#wiz-add').click();
+    await p.locator('#wiz-added').waitFor({ timeout: 15000 });
+    await p.locator('#wiz-next').click();
+    await p.locator('#wiz-data').waitFor();
+    await p.locator('#wiz-import').click();
+    await p.locator('#wiz-kind-customers').click();
+    await p.locator('#imp-file').setInputFiles({ name: 'customers.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer: docx });
+    await p.locator('#imp-preview').waitFor({ timeout: 15000 });
+    expect(await text(p, '#imp-preview')).toContain(`Word Customer ${stamp} A`);
+    await p.locator('#imp-run').click();
+    await p.locator('#imp-done').waitFor({ timeout: 15000 });
+    await screenshotTo(p, 'setup-wizard-3');
+    await p.locator('#wiz-next').click();
+    await p.locator('#wiz-done').waitFor({ timeout: 15000 }).catch(async (e) => { throw new Error(`${e.message} | error shown: ${await p.locator('#wiz-error').innerText().catch(() => 'none')} | next count ${await p.locator('#wiz-next').count()}`); });
+    await p.locator('#wiz-finish').click();
+    expect(await p.locator('#wiz').count()).toBe(0);
+    // what was saved, and what the owner can see (counts only)
+    const saved = (await db.query('SELECT step, business_type, goals, data_choice, completed_at IS NOT NULL AS done FROM trial_setup WHERE firm_id = $1', [firm])).rows[0];
+    expect(saved).toMatchObject({ step: 'done', business_type: 'restaurant', goals: ['payroll', 'invoicing'], data_choice: 'import', done: true });
+    expect((await db.query(`SELECT count(*)::int AS n FROM contacts WHERE name LIKE $1`, [`Word Customer ${stamp}%`])).rows[0].n).toBe(2);
+    // it does not come back, and the "?" guide explains the page
+    await p.reload({ waitUntil: 'networkidle' });
+    await p.locator('#guide-btn').waitFor({ timeout: 15000 });
+    expect(await p.locator('#wiz').count()).toBe(0);
+    await p.locator('#guide-btn').click();
+    await p.locator('#guide-panel').waitFor();
+    expect(await text(p, '#guide-title')).toContain('Home');
+    expect((await db.query('SELECT tour_seen FROM trial_setup WHERE firm_id = $1', [firm])).rows[0].tour_seen).toContain('Home');
+    await screenshotTo(p, 'setup-guide');
+    // run it again, in Arabic
+    await p.locator('#guide-setup').click();
+    await p.locator('#wiz').waitFor();
+    await p.locator('#wiz').getByRole('button', { name: 'EN | AR' }).click();
+    await p.waitForTimeout(800);
+    expect(await p.evaluate(() => document.documentElement.dir)).toBe('rtl');
+    expect(await text(p, '#wiz-title')).toBe('لنُعدّ شركتك');
+    await screenshotTo(p, 'setup-wizard-arabic');
+    expect(errs.filter((e) => !/favicon|Failed to load resource/i.test(e))).toEqual([]);
+  });
+
+  it('the setup wizard does not scroll sideways on a phone, and a skipped setup stays skipped', async () => {
+    await setState('trial', dayEnd(8), dayEnd(38));
+    await db.query('DELETE FROM trial_setup WHERE firm_id = $1', [firm]).catch(() => undefined);
+    const { page: ph } = await newPage(390);
+    await signIn(ph, accountant);
+    await ph.locator('#wiz').waitFor({ timeout: 20000 });
+    await ph.locator('#wiz-type-services').click();
+    for (const g of ['invoicing', 'bookkeeping', 'vat', 'payroll']) await ph.locator(`#wiz-goal-${g}`).check();
+    const ov = await ph.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(ov, `sideways by ${ov}px`).toBeLessThanOrEqual(2);
+    await ph.locator('#wiz-skip').click();
+    await ph.waitForTimeout(800);
+    expect(await ph.locator('#wiz').count()).toBe(0);
+    await ph.reload({ waitUntil: 'networkidle' });
+    await ph.waitForTimeout(1500);
+    expect(await ph.locator('#wiz').count()).toBe(0);
+    expect((await db.query('SELECT skipped FROM trial_setup WHERE firm_id = $1', [firm])).rows[0].skipped).toBe(true);
   });
 
   it('on a phone the trial-ended screen does not scroll sideways', async () => {

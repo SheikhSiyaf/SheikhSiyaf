@@ -847,3 +847,30 @@ a.b.big { font-size: 17px; padding: 13px 30px; border-radius: 12px; box-shadow: 
 .buy-bank dd, .buy p { overflow-wrap: anywhere; }
 .soft-pop { position: fixed; inset: 0; background: rgba(6, 34, 43, .55); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 16px; }
 .soft-pop .card { max-width: 480px; }
+
+/* The guided setup and the page guides */
+.wiz-back { position: fixed; inset: 0; background: rgba(6, 34, 43, .55); display: flex; align-items: flex-start; justify-content: center; z-index: 70; padding: 16px; overflow-y: auto; }
+.wiz { background: var(--card, #fff); border-radius: 14px; max-width: 760px; width: 100%; padding: 20px 22px; margin: 12px 0; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); box-sizing: border-box; min-width: 0; }
+.wiz-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.wiz-head h2 { margin: 0 0 2px; }
+.wiz-steps { list-style: none; padding: 0; margin: 12px 0; display: flex; gap: 6px; flex-wrap: wrap; }
+.wiz-steps li { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--mut, #5b6b7b); border: 1px solid var(--line); border-radius: 20px; padding: 3px 10px; }
+.wiz-steps li span { display: inline-flex; width: 18px; height: 18px; border-radius: 50%; background: var(--line); align-items: center; justify-content: center; font-size: 11px; }
+.wiz-steps li.on { color: var(--teal); border-color: var(--teal); background: var(--tealbg); font-weight: 600; }
+.wiz-steps li.on span, .wiz-steps li.past span { background: var(--teal); color: #fff; }
+.wiz-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin: 8px 0 14px; }
+.wiz-opt { text-align: start; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: transparent; cursor: pointer; display: flex; flex-direction: column; gap: 2px; font: inherit; color: inherit; }
+.wiz-opt small { color: var(--mut, #5b6b7b); }
+.wiz-opt.on, .wiz-opt:hover { border-color: var(--teal); background: var(--tealbg); }
+.wiz-goals { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 14px; margin: 8px 0 12px; }
+.wiz-accounts { list-style: none; padding: 0; margin: 8px 0; columns: 2; column-gap: 20px; }
+.wiz-skip { margin-top: 14px; }
+.guide-btn { width: 32px; height: 32px; padding: 0; border-radius: 50%; font-weight: 700; position: relative; }
+.guide-btn.new::after { content: ''; position: absolute; top: -2px; inset-inline-end: -2px; width: 9px; height: 9px; border-radius: 50%; background: #f59e0b; }
+.guide { position: fixed; top: 64px; inset-inline-end: 16px; width: min(360px, calc(100vw - 32px)); background: var(--card, #fff); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, .2); z-index: 50; box-sizing: border-box; }
+.guide-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.guide-head h2 { margin: 0; font-size: 17px; }
+.guide-try { background: var(--tealbg); border-radius: 8px; padding: 8px 10px; }
+@media (max-width: 700px) { .wiz { padding: 14px; } .wiz-accounts { columns: 1; } }
+.wiz-tools { margin-inline-start: auto; }
+.wiz-tools .top, .wiz-tools > * { margin: 0; }

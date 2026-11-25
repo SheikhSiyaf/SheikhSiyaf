@@ -135,6 +135,11 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/crm/deals/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_deals', m[1]!, ['CRM'])],
   ['*', new RegExp(`^/api/crm/activities/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_activities', m[1]!, ['CRM'])],
   ['*', new RegExp(`^/api/crm/campaigns/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'crm_campaigns', m[1]!, ['CRM'])],
+  // reading a PDF or picture into import rows: the same module as the kind being imported; the guided setup's accounts belong to the Ledger
+  ['POST', new RegExp(`^/api/companies/${UUID}/import/extract$`), (_db, m, req) => ({ companyId: m[1]!,
+    modules: ({ customers: ['Sales'], suppliers: ['Purchases'], items: ['Inventory', 'Restaurant'], accounts: ['Ledger'], opening: ['Journal'],
+      'open-invoices': ['Sales'], 'open-bills': ['Purchases'] } as Record<string, string[]>)[String(body(req).kind)] ?? ['Ledger'] })],
+  ['POST', new RegExp(`^/api/companies/${UUID}/setup/chart$`), c(['Ledger'])],
   // bulk import: each kind to its module (view to preview, view and enter to import)
   // The kind can carry a hyphen (open-invoices, open-bills), so the pattern must allow one: with [a-z]+ those two
   // matched no rule at all and fell through to the catch-all.

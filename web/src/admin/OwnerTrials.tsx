@@ -8,7 +8,9 @@ import { ErrorNote, Loading, errorText } from '../ui.tsx';
 import { OPTIONAL } from '../trial/BuyPanel.tsx';
 
 type Label = 'trialing' | 'ending_soon' | 'ended' | 'in_grace' | 'closed' | 'paid';
+interface Setup { step: string; businessType: string | null; goals: string[]; dataChoice: string | null; skipped: boolean; completed: boolean; tourPages: number; extractUsed: number; companies: number; contacts: number; documents: number; people: number }
 interface Row {
+  setup: Setup | null;
   firmId: string; firmName: string; label: Label; endsAt: string | null; daysLeft: number | null; companies: string[];
   adminName: string | null; adminEmail: string | null; lastLoginAt: string | null; emailsSent: number; emailsFailed: number; orderId: string | null; orderConfirmed: boolean;
 }
@@ -48,7 +50,7 @@ export function OwnerTrials() {
       {rows.length === 0 ? <p className="small mut" id="tr-none">{t('trials.none')}</p> : (
         <div className="wrap"><table id="tr-table">
           <thead><tr><th>{t('trials.col.customer')}</th><th>{t('trials.col.status')}</th><th>{t('trials.col.ends')}</th><th>{t('trials.col.admin')}</th>
-            <th>{t('trials.col.login')}</th><th>{t('trials.col.mails')}</th><th>{t('trials.col.order')}</th><th /></tr></thead>
+            <th>{t('trials.col.login')}</th><th>{t('trials.col.setup')}</th><th>{t('trials.col.mails')}</th><th>{t('trials.col.order')}</th><th /></tr></thead>
           <tbody>{rows.map((r) => {
             const o = orderOf(r);
             return (
@@ -58,6 +60,11 @@ export function OwnerTrials() {
                 <td className="ltr">{when(r.endsAt)}</td>
                 <td>{r.adminName}<div className="small mut ltr">{r.adminEmail}</div></td>
                 <td className="ltr">{r.lastLoginAt ? when(r.lastLoginAt) : t('trials.never')}</td>
+                <td className="small" id={`tr-setup-${r.firmId}`}>{r.setup ? <>
+                  <b>{r.setup.completed ? t('trials.setup.done') : r.setup.skipped ? t('trials.setup.skipped') : t('trials.setup.at', { step: t(`wiz.s.${r.setup.step}` as Key) })}</b>
+                  {r.setup.businessType && <div>{t('trials.setup.type', { type: t(`wiz.type.${r.setup.businessType}` as Key) })}</div>}
+                  {r.setup.goals.length > 0 && <div>{t('trials.setup.goals', { goals: r.setup.goals.map((g) => (has(`wiz.goal.${g}`) ? t(`wiz.goal.${g}` as Key) : g)).join(', ') })}</div>}
+                  <div className="mut">{t('trials.setup.counts', { companies: r.setup.companies, contacts: r.setup.contacts, documents: r.setup.documents, people: r.setup.people, pages: r.setup.tourPages })}</div></> : <span className="mut">{t('trials.setup.none')}</span>}</td>
                 <td className="small">{t('trials.mails', { sent: r.emailsSent, failed: r.emailsFailed })}</td>
                 <td>{r.orderId ? (r.orderConfirmed ? <b>{t('trials.order.confirmed')}</b> : t('trials.order.waiting')) : <span className="mut">{t('trials.order.none')}</span>}
                   {o?.proof_name && <div><a href={`/api/owner/trial-orders/${o.id}/proof`} download id={`tr-proof-${r.firmId}`}>{t('trials.proof')}</a></div>}</td>
@@ -65,7 +72,7 @@ export function OwnerTrials() {
                   {r.label !== 'paid' && (['extend', 'paid', 'cancel', 'resend'] as const).map((k) => (
                     <button key={k} className="b small" id={`tr-${k}-${r.firmId}`} onClick={() => { setMsg({}); setAct({ firmId: r.firmId, kind: k }); }}>{t(`trials.act.${k}` as Key)}</button>))}
                 </td></tr>
-              {act?.firmId === r.firmId && <tr><td colSpan={8}><Action kind={act.kind} row={r} order={o} onDone={done} onError={failed} onCancel={() => setAct(undefined)} /></td></tr>}</Fragment>
+              {act?.firmId === r.firmId && <tr><td colSpan={9}><Action kind={act.kind} row={r} order={o} onDone={done} onError={failed} onCancel={() => setAct(undefined)} /></td></tr>}</Fragment>
             );
           })}</tbody>
         </table></div>)}

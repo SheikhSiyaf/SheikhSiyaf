@@ -53,6 +53,7 @@ import { Budgets, RecurringInvoices, Reminders, Statements } from '../sales/Tool
 import { Bell } from './Notifications.tsx';
 import { Counter } from '../inventory/Counter.tsx';
 import { CurrencyRates, CurrencyRevaluation } from '../ledger/Currencies.tsx';
+import { GuideButton, SetupGate } from '../setup/Setup.tsx';
 
 export const MODULES = NAV.map((m) => m.key);
 
@@ -106,6 +107,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
 
   return (
     <div className="app">
+      {b && me.user.kind !== 'owner' && <SetupGate books={b} onChanged={books.reload} />}
       <Sidebar subtitle={b ? local(b.company.name, b.company.nameAr) : ''} user={me.user} roleLabel={b ? (b.access ? local(b.access.name, b.access.nameAr ?? null) : t(`role.${b.role}`)) : undefined} onSignOut={onSignOut}>
         {b && <QuickSearch books={b} />}
         {(b ? navFor(b.company.modules, b.access?.permissions, hiddenFor(b.portal?.tenantKind)) : NAV.filter((m) => m.key === 'Home')).map((m, i, all) => (
@@ -126,6 +128,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
           <h1>{title}</h1>
           <TopControls>
             {me.user.kind === 'firm_staff' && <button className="b" onClick={() => navigate('/')}>{t('clients.back')}</button>}
+            {b && me.user.kind !== 'owner' && <GuideButton guide={mod.key} />}
             {b && <Bell books={b} />}
             {b && <span className="badge">{local(b.company.name, b.company.nameAr)} · {b.company.currency}</span>}
           </TopControls>

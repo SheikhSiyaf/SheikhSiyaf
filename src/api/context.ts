@@ -7,6 +7,8 @@ import { DEV_ENCRYPTION_KEY } from '../config.js';
 
 export interface ServerOptions {
   pool: pg.Pool;
+  /** Test-only: replaces the call that reads a PDF or picture into rows (src/books/documentExtract.ts). */
+  extractFetch?: import('../books/documentExtract.js').Fetcher;
   sessionSecret: string;
   /** Encrypts two-factor secrets. Defaults to sessionSecret. */
   encryptionKey?: string;

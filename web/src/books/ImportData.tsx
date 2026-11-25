@@ -2,7 +2,7 @@
 // 1 choose what, 2 download the template (or use your own file: headers in English or Arabic, any order),
 // 3 see what will happen to every row and why, 4 import. The file is read here in the browser; only the rows are sent.
 import { useState } from 'react';
-import { api, type CompanyBooks } from '../api.ts';
+import { api, useApi, type CompanyBooks } from '../api.ts';
 import { useI18n, type Key } from '../i18n.tsx';
 import { fmt } from '../money.ts';
 import { errorText } from '../ui.tsx';
@@ -10,6 +10,7 @@ import { useGo } from '../sales/common.tsx';
 import { COLUMNS, IMPORT_KINDS, template, type ImportKind } from '../../../src/books/importRules.ts';
 import { parseCsv } from '../../../src/bank/statement.ts';
 import { readXlsx } from '../../../src/bank/xlsx.ts';
+import { readDocx } from '../../../src/bank/docx.ts';
 
 interface PreviewRow { line: number; values: Record<string, string>; status: 'new' | 'exists' | 'error'; problems: string[] }
 interface Preview { missing: string[]; rows: PreviewRow[]; counts: { new: number; exists: number; error: number };
@@ -37,6 +38,9 @@ export function ImportData({ books, initial, only }: { books: CompanyBooks; init
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string>();
   const [done, setDone] = useState<{ imported: number; skipped: number }>();
+  const info = useApi<{ extractEnabled: boolean }>(books.company.id ? '/api/setup' : null);
+  const canRead = Boolean(info.data?.extractEnabled);
+  const [consent, setConsent] = useState(false);
   const body = (rows: string[][], o: { date?: string; eq?: boolean } = {}) => ({ rows, date: o.date ?? date, balanceToEquity: o.eq ?? toEquity });
   const check = async (rows: string[][], k = kind!, o: { date?: string; eq?: boolean } = {}) => {
     setBusy(true); setErr(undefined); setDone(undefined);
@@ -51,11 +55,20 @@ export function ImportData({ books, initial, only }: { books: CompanyBooks; init
       let rows: string[][];
       if (name.endsWith('.xlsx')) rows = await readXlsx(new Uint8Array(await f.arrayBuffer()));
       else if (name.endsWith('.csv') || name.endsWith('.txt')) rows = parseCsv((await f.text()).replace(/^﻿/, ''));
-      else { setErr(t('imp.fileType')); return; }
+      else if (name.endsWith('.docx')) {
+        try { rows = await readDocx(new Uint8Array(await f.arrayBuffer())); } catch { setErr(t('imp.noTable')); return; }
+      } else if (canRead && /\.(pdf|png|jpe?g|webp)$/.test(name)) {
+        if (!consent) { setErr(t('imp.consentNeeded')); return; }
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        setBusy(true);
+        try { rows = (await api<{ rows: string[][] }>(`/api/companies/${books.company.id}/import/extract`, { body: { kind, fileBase64: btoa(bin), fileType: f.type, consent: true } })).rows; }
+        finally { setBusy(false); }
+      } else { setErr(t('imp.fileType')); return; }
       if (rows.length > 5020) { setErr(t('imp.tooMany')); return; }
       setFile({ name: f.name, rows });
       await check(rows);
-    } catch { setErr(t('imp.unreadable')); }
+    } catch (e) { setErr((e as { key?: string }).key ? errorText(t, has, e) : t('imp.unreadable')); }
   };
   const run = async () => {
     if (!file || !kind) return;
@@ -97,11 +110,12 @@ export function ImportData({ books, initial, only }: { books: CompanyBooks; init
             <span>{t('imp.toEquity')}</span></label>
         </div>}
         <label className="imp-drop" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); void pick(e.dataTransfer.files[0]); }}>
-          <input id="imp-file" type="file" accept=".csv,.xlsx,.txt" hidden onChange={(e) => { void pick(e.target.files?.[0]); e.target.value = ''; }} />
+          <input id="imp-file" type="file" accept={canRead ? '.csv,.xlsx,.txt,.docx,.pdf,.png,.jpg,.jpeg,.webp' : '.csv,.xlsx,.txt,.docx'} hidden onChange={(e) => { void pick(e.target.files?.[0]); e.target.value = ''; }} />
           <b>{file ? file.name : t('imp.choose')}</b><span className="small mut">{t('imp.chooseHint')}</span>
         </label>
+        {canRead && <label className="check-one small" style={{ marginTop: 8 }}><input type="checkbox" id="imp-consent" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>{t('imp.consent')}</span></label>}
         {err && <div className="notice bad" role="alert">{err}</div>}
-        {busy && <div className="mut small">{t('loading')}</div>}
+        {busy && <div className="mut small">{t('imp.reading')}</div>}
       </div>}
       {p && kind && <div className="card" id="imp-preview">
         <h2>{t('imp.step3')}</h2>

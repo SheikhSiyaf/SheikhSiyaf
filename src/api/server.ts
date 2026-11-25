@@ -46,6 +46,7 @@ import { registerSetupRoutes } from './setup.js';
 import { profitAndLoss } from '../books/reportsService.js';
 import { registerPermissionCheck } from './permissions.js';
 import { registerTrialRoutes } from './trial.js';
+import { registerGuidedSetupRoutes } from './guidedSetup.js';
 import { registerWebsiteRoutes } from './website.js';
 
 export type { ServerOptions } from './context.js';
@@ -295,6 +296,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerEInvoiceRoutes(app, ctx);
   registerApprovalRoutes(app, ctx);
   registerImportRoutes(app, ctx);
+  registerGuidedSetupRoutes(app, ctx);
   registerFxRoutes(app, ctx);
   registerYearEndRoutes(app, ctx);
   registerEmailRoutes(app, ctx);

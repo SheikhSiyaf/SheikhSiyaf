@@ -35,7 +35,7 @@ export async function placeOrder(db: Db, x: { modules?: unknown; cleanup?: unkno
   return { id, order: await myOrder(db) };
 }
 
-const TYPES: Record<string, (b: Buffer) => boolean> = {
+export const TYPES: Record<string, (b: Buffer) => boolean> = {
   'application/pdf': (b) => b.subarray(0, 4).toString('latin1') === '%PDF',
   'image/png': (b) => b.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])),
   'image/jpeg': (b) => b.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])),
@@ -155,11 +155,15 @@ export interface TrialRow {
   firmId: string; firmName: string; kind: string; status: string; level: string; label: 'trialing' | 'ending_soon' | 'ended' | 'in_grace' | 'closed' | 'paid';
   startedAt: string | null; endsAt: string | null; graceEndsAt: string | null; daysLeft: number | null; companies: string[]; adminName: string | null; adminEmail: string | null;
   lastLoginAt: string | null; emailsSent: number; emailsFailed: number; orderId: string | null; orderConfirmed: boolean;
+  /** What the customer did in the guided setup, as counts only (never the books' contents). */
+  setup: { step: string; businessType: string | null; goals: string[]; dataChoice: string | null; skipped: boolean; completed: boolean; tourPages: number; extractUsed: number;
+    companies: number; contacts: number; documents: number; people: number; updatedAt: string } | null;
 }
 /** The owner's Trials view: every trial with where it stands now, and the counters that show conversion. */
 export async function trialsOverview(db: Db, now: Date = new Date()) {
   await requireOwner(db);
   const rows = (await db.query('SELECT * FROM owner_trials_overview()')).rows;
+  const setups = new Map((await db.query('SELECT * FROM owner_setup_overview()')).rows.map((x) => [x.firm_id as string, x]));
   const trials: TrialRow[] = rows.map((r) => {
     const a = accessOf(stateOf(r), now);
     const paid = Boolean(r.converted_at);
@@ -170,6 +174,8 @@ export async function trialsOverview(db: Db, now: Date = new Date()) {
       startedAt: r.trial_started_at?.toISOString() ?? null, endsAt: r.trial_ends_at?.toISOString() ?? null, graceEndsAt: r.grace_ends_at?.toISOString() ?? null,
       daysLeft: left, companies: r.companies, adminName: r.admin_name, adminEmail: r.admin_email, lastLoginAt: r.last_login_at?.toISOString() ?? null,
       emailsSent: r.emails_sent, emailsFailed: r.emails_failed, orderId: r.order_id, orderConfirmed: r.order_confirmed,
+      setup: ((x) => x ? { step: x.step, businessType: x.business_type, goals: x.goals, dataChoice: x.data_choice, skipped: x.skipped, completed: x.completed, tourPages: x.tour_pages,
+        extractUsed: x.extract_used, companies: x.companies, contacts: x.contacts, documents: x.documents, people: x.people, updatedAt: x.updated_at.toISOString() } : null)(setups.get(r.firm_id)),
     };
   });
   const counters = {

@@ -8,6 +8,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { HttpError } from './errors.js';
 import { routePath, uuidParam, type Ctx } from './context.js';
 import * as T from '../books/trialService.js';
+import * as O from '../books/trialOrders.js';
 import type { Access, Level, SubState } from '../books/trialRules.js';
 import { accessOf } from '../books/trialRules.js';
 import { SUPPORT } from '../books/trialEmails.js';
@@ -19,6 +20,7 @@ const EXPORT: Allow = ['GET', new RegExp(`^/api/companies/${UUID}/export$`)];
 const ABOUT_ME: Allow[] = [['GET', /^\/api\/me$/], ['GET', /^\/api\/trial$/]];
 /** What a customer can still reach while its trial has ended and it is waiting to buy. */
 const WHEN_LOCKED: Allow[] = [...ABOUT_ME, EXPORT,
+  ['GET', /^\/api\/trial\/order$/], ['POST', /^\/api\/trial\/order$/], ['POST', /^\/api\/trial\/order\/payment$/],
   ['GET', /^\/api\/admin\/billing$/], ['GET', new RegExp(`^/api/billing/invoices/${UUID}$`)],
   ['*', /^\/api\/support(\/.*)?$/]];
 /** After closing: only getting the data out. */
@@ -91,4 +93,24 @@ export function registerTrialRoutes(app: FastifyInstance, { as, opts }: Ctx) {
       if (!(await db.query('SELECT app_is_owner() AS o')).rows[0].o) throw new HttpError(403, 'Only the platform owner can do this.', 'err.ownerOnly');
       const moved = await T.advance(db, now()); cache.clear(); return { moved: moved.length };
     }));
+
+  // Buying inside the software. A customer in its trial (open or ended) places an order and confirms its bank transfer.
+  app.get('/api/trial/order', async (req) => as(req, async (db) => ({ order: await O.myOrder(db) })));
+  app.post<{ Body: { modules?: unknown; cleanup?: unknown } }>('/api/trial/order', async (req) => as(req, (db) => O.placeOrder(db, req.body ?? {})));
+  app.post<{ Body: O.PaymentInput }>('/api/trial/order/payment', { bodyLimit: 8 * 1024 * 1024 }, async (req) => as(req, (db) => O.confirmPayment(db, req.body ?? {})));
+
+  // The platform owner: the Trials view, orders, proofs, marking paid, resending a reminder, the bank details.
+  app.get('/api/owner/trials', async (req) => as(req, (db) => O.trialsOverview(db, now())));
+  app.get('/api/owner/trial-orders', async (req) => as(req, async (db) => ({ orders: await O.ownerOrders(db) })));
+  app.get<{ Params: { id: string } }>('/api/owner/trial-orders/:id/proof', async (req, reply) => {
+    const p = await as(req, (db) => O.ownerProof(db, uuidParam(req.params.id)));
+    reply.header('content-type', p.type).header('content-disposition', `attachment; filename="${p.name.replace(/[^\w.\- ]/g, '_')}"`).header('x-content-type-options', 'nosniff');
+    return reply.send(p.bytes);
+  });
+  app.post<{ Params: { id: string }; Body: O.MarkPaidInput }>('/api/owner/tenants/:id/trial/mark-paid', async (req) =>
+    as(req, async (db) => { const r = await O.ownerMarkPaid(db, uuidParam(req.params.id), req.body ?? {}, now(), opts.publicUrl); cache.clear(); return r; }));
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>('/api/owner/tenants/:id/trial/resend', async (req) =>
+    as(req, (db) => O.resendReminder(db, uuidParam(req.params.id), req.body?.reason, now(), opts.publicUrl)));
+  app.get('/api/owner/bank-details', async (req) => as(req, (db) => O.bankDetails(db)));
+  app.post<{ Body: O.BankInput }>('/api/owner/bank-details', async (req) => as(req, async (db) => { await O.saveBankDetails(db, req.body ?? {}); return { ok: true }; }));
 }

@@ -34,6 +34,7 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
   const sessionFor = async (userId: string) => {
     const v = (await pool.query('SELECT session_version_of($1) AS v', [userId])).rows[0]?.v;
     if (v === null || v === undefined) throw new HttpError(403, 'This account is suspended. Contact the Administrator.', 'err.suspended');
+    pool.query('SELECT record_login($1)', [userId]).catch(() => {});   // best effort: the owner's Trials view shows when somebody last signed in
     return sessionCookie(signSession(opts.sessionSecret, userId, Number(v)), secure);
   };
   /** A code from the person's authenticator, accepted once (the same code again is refused). */

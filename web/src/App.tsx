@@ -18,7 +18,7 @@ import { Security } from './pages/Security.tsx';
 import { ConfirmEmail } from './pages/ConfirmEmail.tsx';
 import { ErrorNote, Loading } from './ui.tsx';
 import { PrintHost } from './print/Print.tsx';
-import { ClosedAccount, TrialBar, TrialEnded, type TrialInfo } from './trial/TrialScreens.tsx';
+import { BuyPage, ClosedAccount, TrialBar, TrialEnded, type TrialInfo } from './trial/TrialScreens.tsx';
 
 export function App() {
   return (
@@ -60,6 +60,7 @@ function Screens() {
       else if (!path.startsWith('/owner') && !path.startsWith('/admin')) navigate('/owner');
       return;
     }
+    if (path === '/buy') return;   // buying while the trial is open, for everybody who is not the platform owner
     if (user.kind === 'admin' && !path.startsWith('/admin')) navigate('/admin/clients');
     if (user.kind !== 'admin' && !(user.kind === 'client' && me.data!.canManageUsers) && path.startsWith('/admin')) navigate('/');
     if (user.kind === 'client' && !path.startsWith('/c/') && !path.startsWith('/admin') && me.data!.companies[0]) navigate(`/c/${me.data!.companies[0].id}/Home`);
@@ -94,6 +95,7 @@ function Screens() {
   if (me.data.user.kind !== 'owner') {
     if (trial.loading && !trial.data && !trial.error) return <main><Loading /></main>;
     if (trial.data && (trial.data.level === 'locked' || trial.data.level === 'export_only')) return <TrialEnded me={me.data} trial={trial.data} onSignOut={signOut} />;
+    if (path === '/buy' && trial.data?.trialing) return <BuyPage trial={{ ...trial.data, modules: trial.data.modules ?? [] }} />;
   }
   if (me.data.user.kind === 'owner') {
     // The owner works inside one customer's Administrator console at a time, or on the customer list.

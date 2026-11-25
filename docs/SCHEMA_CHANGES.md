@@ -624,3 +624,13 @@ Every change below is covered by a test in `test/`.
 |---|---|
 | New function `my_trial_modules()` (security definer, read-only, executable by `nusuh_app`, not by PUBLIC): the optional modules switched on in the signed-in person's own customer; nothing for the platform owner or when nobody is signed in | The "your trial has ended" screen says plainly which optional modules stay on only if bought. It reveals module names only, nothing about anyone's books. |
 
+## 0074_trial_orders.sql
+| Change | Why |
+|---|---|
+| `billing_settings` gets `bank_account_name`, `bank_name`, `bank_iban`, `bank_swift` (IBAN and SWIFT checked by pattern; all four or none, enforced by the service) | The owner's bank account, shown to a customer that buys inside the software (Owner > Settings > Payment settings). |
+| New table `user_last_login` and function `record_login(uuid)` (only the server, nobody signed in, can call it) | The owner's Trials view shows when somebody last signed in; kept apart from the user row so sign-ins do not fill the audit log. |
+| `subscription_events.kind` also allows `reminder_resent` | The owner can send a reminder again, with a reason, and it is recorded. |
+| New table `trial_orders` (customer, optional modules chosen, clean-up yes/no, the lines and totals worked out in the database from the prices in Payment settings, payment details the customer entered, who marked it paid and when). One waiting order per customer (unique index). Row-level security: only the platform owner reads rows; nobody writes except through the functions below. Audited | A customer in or after its trial orders what it wants and tells us about its bank transfer; the owner sees it and marks it paid. |
+| New table `trial_order_proofs` (the proof of payment: PDF, PNG, JPG or WebP up to 5 MB). Row-level security: only the platform owner reads; kept apart from the order so the file never goes into the audit log | The customer may attach the transfer receipt. |
+| New functions `trial_order_quote`, `trial_order_place`, `my_trial_order`, `trial_order_confirm` (the customer's side), `owner_trial_orders`, `owner_order_proof`, `owner_order_paid`, `owner_reminder_resent`, `owner_trials_overview`, `firm_name_of` (the owner's side). All security definer with a fixed search path, executable by `nusuh_app`, not by PUBLIC. `owner_order_paid` converts the SAME customer through the existing `trial_convert`, switches off the optional modules not bought, and marks the order paid; the first invoice is then made and settled in the same transaction by the existing billing functions | The amounts are never taken from the browser. Nothing about posted entries or any existing table's row-level security changed. |
+

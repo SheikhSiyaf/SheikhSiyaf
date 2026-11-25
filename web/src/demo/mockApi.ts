@@ -4694,6 +4694,17 @@ routes.push(
   // ---- the free trial: the demo has none, so nothing is locked and no bar shows
   ['GET', /^\/api\/trial$/, () => ({ level: 'full', trialing: false, daysLeft: null, trialEndsAt: null, graceEndsAt: null, exportUntil: null, deleteNotBefore: null })],
   // ---- the website connection (owner): Payment settings and testimonials
+  ['GET', /^\/api\/owner\/bank-details$/, () => { owner(); return demoBank; }],
+  ['POST', /^\/api\/owner\/bank-details$/, (_m, b) => {
+    owner();
+    const x = b as { accountName?: string; bank?: string; iban?: string; swift?: string };
+    const v = [x.accountName, x.bank, x.iban, x.swift].map((y) => String(y ?? '').trim());
+    if (v.some(Boolean) && !v.every(Boolean)) throw new Fail(400, 'Fill in all four bank lines, or leave all four empty.', 'err.bankAll');
+    demoBank = { accountName: v[0]!, bank: v[1]!, iban: v[2]!.replace(/\s+/g, '').toUpperCase(), swift: v[3]!.replace(/\s+/g, '').toUpperCase() };
+    return { ok: true };
+  }],
+  ['GET', /^\/api\/owner\/trials$/, () => { owner(); return { counters: { started: 0, open: 0, converted: 0, ended: 0, waitingOrders: 0, emailFailures: 0 }, trials: [] }; }],
+  ['GET', /^\/api\/owner\/trial-orders$/, () => { owner(); return { orders: [] }; }],
   ['GET', /^\/api\/owner\/payment-settings$/, () => { owner(); return { planId: 'demo-plan', planName: wsite.planName, planNameAr: wsite.planNameAr, currency: 'SAR', vatRate: '15.00', customers: 2, lines: wsite.lines, history: wsite.history }; }],
   ['POST', /^\/api\/owner\/payment-settings$/, (_m, b) => {
     owner();
@@ -4735,6 +4746,7 @@ routes.push(
   }],
 );
 /** Sample website connection: the one plan the website sells and no testimonials yet. */
+let demoBank = { accountName: '', bank: '', iban: '', swift: '' };
 const wsite = {
   planName: 'Nusuh Books', planNameAr: 'نصوح بوكس', limit: 8,
   lines: [

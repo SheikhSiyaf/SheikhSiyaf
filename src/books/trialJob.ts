@@ -5,6 +5,7 @@ import type pg from 'pg';
 import { runExclusive } from '../jobs/runJob.js';
 import { advance } from './trialService.js';
 import { SUPPORT, sendTrialEmails } from './trialEmails.js';
+import { ownerAlert } from './trialOrders.js';
 
 export function startLifecycleJob(pool: pg.Pool, log: (m: string) => void = console.log) {
   if (process.env.LIFECYCLE_JOBS === 'off') return () => undefined;
@@ -15,6 +16,7 @@ export function startLifecycleJob(pool: pg.Pool, log: (m: string) => void = cons
         await c.query('BEGIN');
         const now = new Date();
         const moved = await advance(c, now);
+        for (const m of moved) if (m.to === 'trial_ended') await ownerAlert(c, 'trial_ended_unpaid', { firmId: m.firmId });
         const mails = await sendTrialEmails(c, now, { enabled: process.env.TRIAL_EMAILS === 'on', appUrl: (process.env.PUBLIC_URL ?? '').replace(/\/+$/, '') || 'https://app.nusuhbooks.com', copyTo: SUPPORT.email });
         await c.query('COMMIT');
         if (moved.length) log(`Trials: ${moved.length} moved on`);

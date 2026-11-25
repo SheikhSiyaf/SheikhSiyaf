@@ -9,6 +9,7 @@ import { bilingual, type Mail } from '../email/templates.js';
 import { queue } from './emailService.js';
 import { LIFECYCLE } from './trialRules.js';
 import { cancelTrial, startTrial } from './trialService.js';
+import { ownerAlert } from './trialOrders.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -120,7 +121,11 @@ export async function saveSubscription(db: Db, firmId: string, x: SubscriptionIn
   // A free trial: its dates come from the one schedule in trialRules.ts (the annual plan's 15 days, or an older plan's own days).
   // It is not billed; the customer is locked when it ends unless the owner converts it (src/books/trialService.ts).
   const trialDays = x.trial ? (plan.annual ? LIFECYCLE.trialDays : Number(plan.trial_days)) : 0;
-  if (trialDays > 0) return { id: await startTrial(db, firmId, { planId: plan.id, cycle: x.cycle as 'monthly' | 'yearly', startOn: start, days: trialDays, implementation, discountPct: disc, notes }) };
+  if (trialDays > 0) {
+    const id = await startTrial(db, firmId, { planId: plan.id, cycle: x.cycle as 'monthly' | 'yearly', startOn: start, days: trialDays, implementation, discountPct: disc, notes });
+    await ownerAlert(db, 'trial_started', { firmId });   // to hello@, only when TRIAL_EMAILS=on
+    return { id };
+  }
   // Bills fall on the same day each month, so they start on day 1 to 28.
   if (Number(start.slice(8)) > 28) bad('Start on day 1 to 28, so the bill date is the same every month.', 'err.startDay');
   const trialEnds: string | null = null;

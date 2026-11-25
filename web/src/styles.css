@@ -815,3 +815,33 @@ a.b.big { font-size: 17px; padding: 13px 30px; border-radius: 12px; box-shadow: 
 .trial-ended a:not(.b) { color: var(--teal); }
 @media (max-width: 900px) { .te-wrap { grid-template-columns: 1fr; margin: 14px auto; } .te-promo { position: relative; top: auto; } }
 @media (max-width: 700px) { .trial-bar { font-size: 12px; } .trial-bar .trial-until { display: none; } }
+
+/* Buying inside the software and the owner's Trials view */
+.buy { margin: 18px 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--card, #fff); }
+.buy h2 { margin-top: 0; }
+.buy-mods { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 8px 0; }
+.check { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.check input { width: auto; }
+.buy-sum { width: 100%; max-width: 420px; margin: 12px 0 4px; border-collapse: collapse; }
+.buy-sum th { text-align: start; font-weight: 500; padding: 6px 0; }
+.buy-sum td { text-align: end; padding: 6px 0; font-variant-numeric: tabular-nums; }
+.buy-sum tr.tot th, .buy-sum tr.tot td { border-top: 1px solid var(--line); font-weight: 700; }
+.buy-bank { background: var(--tealbg); border-radius: 10px; padding: 12px 14px; margin: 12px 0; }
+.buy-bank h3 { margin: 0 0 6px; }
+.buy-bank dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+.buy-bank dt { color: var(--mut, #5b6b7b); }
+.buy-bank dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.buy-pay { display: grid; gap: 10px; max-width: 460px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin: 12px 0; }
+.stats .stat { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; }
+.stats .stat b { font-size: 24px; }
+.stats .stat span { font-size: 12px; color: var(--mut, #5b6b7b); }
+.row-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.tr-act { background: var(--tealbg); border-radius: 10px; padding: 12px; display: grid; gap: 10px; }
+@media (max-width: 700px) { .buy-bank dl { grid-template-columns: 1fr; } }
+.te-wrap > * { min-width: 0; }
+.buy, .buy-pay, .buy-pay .f { min-width: 0; max-width: 100%; }
+.buy-pay { grid-template-columns: minmax(0, 1fr); }
+.buy input:not([type=checkbox]) { max-width: 100%; box-sizing: border-box; }
+.buy input[type=file] { width: 100%; }
+.buy-bank dd, .buy p { overflow-wrap: anywhere; }

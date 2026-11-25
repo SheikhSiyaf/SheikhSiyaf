@@ -14,6 +14,43 @@ interface Data {
 const fmt = (n: string) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const when = (iso: string) => iso.replace('T', ' ').slice(0, 16);
 
+/** The bank account customers are told to pay into when they buy inside the software (all four lines, or none). */
+function BankDetails() {
+  const { t, has } = useI18n();
+  const d = useApi<{ accountName: string; bank: string; iban: string; swift: string }>('/api/owner/bank-details');
+  const [f, setF] = useState<{ accountName: string; bank: string; iban: string; swift: string }>();
+  const [msg, setMsg] = useState<{ ok?: string; bad?: string }>({});
+  const [busy, setBusy] = useState(false);
+  if (d.error) return <ErrorNote error={d.error} onRetry={d.reload} />;
+  if (!d.data) return <Loading />;
+  const form = f ?? d.data;
+  const set = (k: keyof typeof form, v: string) => { setMsg({}); setF({ ...form, [k]: v }); };
+  const save = async () => {
+    setBusy(true); setMsg({});
+    try { await api('/api/owner/bank-details', { body: form }); setMsg({ ok: t('bank.saved') }); setF(undefined); d.reload(); }
+    catch (e) { setMsg({ bad: errorText(t, has, e) }); } finally { setBusy(false); }
+  };
+  return (
+    <div className="card" id="bank-details" style={{ marginTop: 12 }}>
+      <h2>{t('bank.title')}</h2>
+      <div className="small mut" style={{ marginBottom: 8 }}>{t('bankd.hint')}</div>
+      {msg.ok && <div className="notice" id="bank-msg">{msg.ok}</div>}
+      {msg.bad && <div className="notice bad" role="alert" id="bank-error">{msg.bad}</div>}
+      <form onSubmit={(e) => { e.preventDefault(); void save(); }}>
+        <div className="row">
+          <label className="f">{t('bankd.account')}<input id="bank-account" maxLength={120} value={form.accountName} onChange={(e) => set('accountName', e.target.value)} /></label>
+          <label className="f">{t('bank.bank')}<input id="bank-name" maxLength={120} value={form.bank} onChange={(e) => set('bank', e.target.value)} /></label>
+        </div>
+        <div className="row">
+          <label className="f">{t('bankd.iban')}<input id="bank-iban" dir="ltr" value={form.iban} onChange={(e) => set('iban', e.target.value)} /></label>
+          <label className="f">{t('bank.swift')}<input id="bank-swift" dir="ltr" value={form.swift} onChange={(e) => set('swift', e.target.value)} /></label>
+        </div>
+        <div className="actions"><button className="b p" id="bank-save" disabled={busy || !f}>{t('bank.save')}</button></div>
+      </form>
+    </div>
+  );
+}
+
 export function PaymentSettings() {
   const { t, has, lang } = useI18n();
   const d = useApi<Data>('/api/owner/payment-settings');
@@ -39,6 +76,7 @@ export function PaymentSettings() {
   };
   const desc = (k: Key) => t(`psettings.line.${k}`);
   return (
+    <>
     <div className="card" id="pay-settings">
       <h2>{t('psettings.title')}</h2>
       <div className="small mut" style={{ marginBottom: 8 }}>{t('psettings.hint')}</div>
@@ -92,5 +130,7 @@ export function PaymentSettings() {
               <td className="small ltr">{Object.keys(h.after).map((k) => <div key={k}>{k}: {h.before[k]} → {h.after[k]}</div>)}</td></tr>))}</tbody>
         </table></div>)}
     </div>
+    <BankDetails />
+    </>
   );
 }

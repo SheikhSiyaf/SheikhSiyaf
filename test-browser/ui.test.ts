@@ -667,6 +667,33 @@ describe('The platform owner\'s Payment settings and Website tab', () => {
   });
 });
 
+describe('The owner\'s bank details for customers who buy', () => {
+  it('need all four lines (or none) and are then shown to a buying customer', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: p } = await newPage();
+    await signIn(p, platform);
+    await p.goto(`${BASE}/owner/settings`, { waitUntil: 'networkidle' });
+    await p.locator('#bank-details').waitFor({ timeout: 15000 });
+    await p.locator('#bank-account').fill('Nusuh Demo Co');
+    await p.locator('#bank-name').fill('Demo Bank');
+    await p.locator('#bank-save').click();
+    await p.locator('#bank-error').waitFor({ timeout: 15000 });
+    expect(await p.locator('#bank-error').innerText()).toContain('all four');
+    await p.locator('#bank-iban').fill('SA03 8000 0000 6080 1016 7519');
+    await p.locator('#bank-swift').fill('DEMOSARI');
+    await p.locator('#bank-save').click();
+    await p.locator('#bank-msg').waitFor({ timeout: 15000 });
+    expect((await db.query('SELECT bank_iban FROM billing_settings')).rows[0].bank_iban).toBe('SA0380000000608010167519');
+    await p.locator('#bank-iban').fill('');
+    await p.locator('#bank-account').fill('');
+    await p.locator('#bank-name').fill('');
+    await p.locator('#bank-swift').fill('');
+    await p.locator('#bank-save').click();
+    await p.locator('#bank-msg').waitFor({ timeout: 15000 });
+    expect((await db.query('SELECT bank_iban FROM billing_settings')).rows[0].bank_iban).toBeNull();
+  });
+});
+
 describe('Payment settings and the Website tab: Arabic and a phone', () => {
   it('read right to left in Arabic, show Arabic text, and fit a phone with no sideways scrolling', async () => {
     const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
@@ -717,7 +744,7 @@ describe('The free trial on screen', () => {
     await signIn(p, accountant);
     await p.locator('#trial-bar').waitFor({ timeout: 15000 });
     expect(await text(p, '#trial-days')).toBe('7 days left in your free trial');
-    expect(await p.evaluate(() => document.querySelector('#trial-buy')?.getAttribute('href'))).toBe('https://nusuhbooks.com/order/');
+    expect(await p.evaluate(() => document.querySelector('#trial-buy')?.getAttribute('href'))).toBe('/buy');
     expect(await p.evaluate(() => document.querySelector('#trial-bar')?.classList.contains('urgent'))).toBe(false);
     expect(await p.locator('nav.side').count()).toBe(1);   // the normal workspace
     await setState('trial', dayEnd(2), dayEnd(32));
@@ -741,7 +768,7 @@ describe('The free trial on screen', () => {
     expect(await page.evaluate(() => document.querySelector('#trial-ended')?.getAttribute('data-level'))).toBe('locked');
     expect(await text(page, '#trialui-title')).toBe('Your free trial has ended');
     expect(await text(page, '#trialui-body')).toContain('Nothing has been deleted. Your data is kept until');
-    expect(await page.evaluate(() => document.querySelector('#trialui-buy')?.getAttribute('href'))).toBe('https://nusuhbooks.com/order/');
+    expect(await page.locator('#buy-panel').count()).toBe(1);   // buying happens right here, not on another site
     expect(await text(page, '#trialui-modules')).toContain('The core modules stay on');
     expect(await text(page, '#trialui-contact')).toContain('hello@nusuhbooks.com');
     // what you keep, what it costs (the owner's prices), how buying works, and our own promotional panel beside it
@@ -753,7 +780,7 @@ describe('The free trial on screen', () => {
     expect(await text(page, '#trial-promo')).toContain('Close every month on one set of books.');
     expect(await text(page, '#trial-promo')).toContain('Built for ZATCA Phase 2');
     expect(await page.locator('#trial-testimonials').count()).toBe(0);   // none until the owner adds real ones
-    expect(await page.locator('#trialui-buy').count() + await page.locator('#trialui-buy-2').count()).toBe(2);
+    expect(await page.locator('#trialui-buy-2').count()).toBe(1);
     // a real testimonial the owner added shows in the panel; nothing is invented
     await db.query(`INSERT INTO website_testimonials (name, role, company, quote, consent) VALUES ('Browser Customer', 'Finance manager', 'Browser Co', 'It closes our month without chasing anyone.', true)`);
     await page.goto(`${BASE}/c/${company}/Home`, { waitUntil: 'networkidle' });
@@ -781,6 +808,98 @@ describe('The free trial on screen', () => {
     await page.waitForTimeout(500);
   });
 
+  it('buying inside the software: choose modules, order, transfer details, then the owner marks it paid and the company opens again', async () => {
+    await setState('trial', `now() - interval '2 days'`, dayEnd(28));
+    const modsBefore = (await db.query('SELECT id, modules FROM companies WHERE firm_id = $1', [firm])).rows;
+    const subBefore = (await db.query('SELECT plan_id, cycle, discount_pct, implementation FROM subscriptions WHERE firm_id = $1', [firm])).rows[0];
+    await db.query(`UPDATE subscriptions SET plan_id = $2, cycle = 'yearly', discount_pct = 0 WHERE firm_id = $1`, [firm, planId]);   // the standard plan, so the invoice equals the order
+    await db.query('DELETE FROM trial_orders WHERE firm_id = $1 AND status = $2', [firm, 'waiting']).catch(() => undefined);
+    const { page: c } = await newPage();
+    await c.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await c.locator('input[type=email]').fill(accountant);
+    await c.locator('input[type=password]').fill('demo1234');
+    await c.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await c.locator('#buy-panel').waitFor({ timeout: 30000 });
+    // pick exactly two optional modules; the preview adds up with the owner's prices
+    for (const m of ['Inventory', 'Restaurant', 'Rooms', 'Assets', 'Rentals', 'Projects', 'HRM', 'CRM']) { const box = c.locator(`#buy-mod-${m}`); if (await box.isChecked()) await box.uncheck(); }
+    await c.locator('#buy-mod-HRM').check();
+    await c.locator('#buy-mod-CRM').check();
+    expect(await text(c, '#buy-year')).toBe('SAR 2,500.00');   // 1,500 core + 2 x 500
+    expect(await text(c, '#buy-once')).toBe('SAR 9,000.00');
+    expect(await text(c, '#buy-sub')).toBe('SAR 11,500.00');
+    await c.locator('#buy-cleanup').check();
+    expect(await text(c, '#buy-sub')).toBe('SAR 16,500.00');
+    await c.locator('#buy-place').click();
+    await c.locator('#buy-waiting-title').waitFor({ timeout: 15000 });
+    expect(await text(c, '#buy-waiting-sum')).toContain('SAR 18,975.00');   // 16,500 + 15% VAT
+    expect(await text(c, '#buy-bank-none')).toContain('hello@nusuhbooks.com');
+    await screenshotTo(c, 'trial-buy-waiting');
+    // the bank details the owner saves show up here
+    await db.query(`UPDATE billing_settings SET bank_account_name = 'Nusuh Demo Co', bank_name = 'Demo Bank', bank_iban = 'SA0380000000608010167519', bank_swift = 'DEMOSARI'`);
+    await c.reload({ waitUntil: 'networkidle' });
+    await c.locator('#buy-iban').waitFor({ timeout: 15000 });
+    expect(await text(c, '#buy-iban')).toBe('SA0380000000608010167519');
+    await db.query(`UPDATE billing_settings SET bank_account_name = NULL, bank_name = NULL, bank_iban = NULL, bank_swift = NULL`);
+    // an empty form cannot be sent; a bad amount is explained in plain words
+    expect(await c.locator('#buy-send').isDisabled()).toBe(true);
+    await c.locator('#buy-amount').fill('abc');
+    await c.locator('#buy-reference').fill('BROWSER-TRF-1');
+    await c.locator('#buy-send').click();
+    await c.locator('#buy-pay-error').waitFor({ timeout: 15000 });
+    expect(await text(c, '#buy-pay-error')).toContain('amount');
+    await c.locator('#buy-amount').fill('18975');
+    await c.locator('#buy-send').click();
+    await c.locator('#buy-done-title').waitFor({ timeout: 15000 });
+    expect(await text(c, '#buy-done-body')).toContain('BROWSER-TRF-1');
+    // the owner sees the order in Trials and marks it paid
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: o } = await newPage();
+    await signIn(o, platform);
+    await o.goto(`${BASE}/owner/trials`, { waitUntil: 'networkidle' });
+    await o.locator('#tr-table').waitFor({ timeout: 15000 });
+    expect(await o.locator('#tr-c-orders b').innerText()).not.toBe('0');
+    await o.locator('#tr-f-orders').click();
+    expect(await text(o, `#tr-row-${firm}`)).toContain('Says it has paid');
+    await o.locator(`#tr-paid-${firm}`).click();
+    await o.locator('#tr-action').waitFor();
+    expect(await o.locator('#tr-mod-HRM').isChecked()).toBe(true);
+    expect(await o.locator('#tr-cleanup').isChecked()).toBe(true);
+    expect(await o.locator('#tr-go').isDisabled()).toBe(true);   // needs a reason
+    await o.locator('#tr-reason').fill('Browser check: money seen in the bank');
+    await o.locator('#tr-go').click();
+    await o.locator('#tr-msg').waitFor({ timeout: 30000 });
+    expect(await text(o, '#tr-msg')).toMatch(/Invoice NB-\d{4}-\d{4} \(SAR 18,975\.00\) is made and settled/);
+    await screenshotTo(o, 'owner-trials');
+    // the customer works again, with the same data
+    await c.goto(`${BASE}/c/${company}/Home`, { waitUntil: 'networkidle' });
+    await c.locator('nav.side').waitFor({ timeout: 20000 });
+    expect(await c.locator('#trial-ended').count()).toBe(0);
+    // put the demo company's modules back
+    for (const r of modsBefore) await db.query('UPDATE companies SET modules = $2 WHERE id = $1', [r.id, r.modules]);
+    await db.query('UPDATE subscriptions SET plan_id = $2, cycle = $3, discount_pct = $4, implementation = $5 WHERE firm_id = $1', [firm, subBefore.plan_id, subBefore.cycle, subBefore.discount_pct, subBefore.implementation]);
+    await setState('trial', `now() - interval '2 days'`, dayEnd(28));   // ended again for the checks that follow
+    await db.query(`UPDATE trial_orders SET status = 'cancelled' WHERE firm_id = $1 AND status = 'waiting'`, [firm]);
+  });
+
+  it('the buying panel reads right to left in Arabic, and the owner\'s Trials tab fits a phone', async () => {
+    await setState('trial', `now() - interval '2 days'`, dayEnd(28));
+    await page.goto(`${BASE}/c/${company}/Home`, { waitUntil: 'networkidle' });
+    await page.locator('#buy-panel').waitFor({ timeout: 15000 });
+    await page.getByRole('button', { name: 'EN | AR' }).click();
+    await page.waitForTimeout(800);
+    expect(await page.evaluate(() => document.documentElement.dir)).toBe('rtl');
+    expect(await text(page, '#buy-panel h2')).toBe('اختر ما تريد شراءه');
+    await page.getByRole('button', { name: 'EN | AR' }).click();
+    await page.waitForTimeout(500);
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: ph } = await newPage(390);
+    await signIn(ph, platform);
+    await ph.goto(`${BASE}/owner/trials`, { waitUntil: 'networkidle' });
+    await ph.locator('#owner-trials').waitFor({ timeout: 15000 });
+    const overflow = await ph.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow, `sideways by ${overflow}px`).toBeLessThanOrEqual(2);
+  });
+
   it('on a phone the trial-ended screen does not scroll sideways', async () => {
     const { page: ph } = await newPage(390);
     await ph.goto(`${BASE}/`, { waitUntil: 'networkidle' });   // signing in works while ended; the sidebar is just not there afterwards
@@ -791,6 +910,12 @@ describe('The free trial on screen', () => {
     const overflow = await ph.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     const wide = await ph.evaluate(() => { const w = document.documentElement.clientWidth; return [...document.querySelectorAll('#trial-ended *')].filter((e) => e.getBoundingClientRect().right > w + 1).slice(0, 6).map((e) => `${e.tagName}.${e.className}#${e.id} right=${Math.round(e.getBoundingClientRect().right)}`); });
     expect(overflow, `sideways by ${overflow}px: ${JSON.stringify(wide)}`).toBeLessThanOrEqual(2);
+    // and after ordering (bank lines, the payment form and its file picker are wider than the choice screen)
+    await ph.locator('#buy-place').click();
+    await ph.locator('#buy-waiting-title').waitFor({ timeout: 15000 });
+    const after = await ph.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(after, `sideways by ${after}px after ordering`).toBeLessThanOrEqual(2);
+    await db.query(`UPDATE trial_orders SET status = 'cancelled' WHERE firm_id = $1 AND status = 'waiting'`, [firm]);
   });
 
   it('the Administrator sees the same screen, told that the books are exported by company users', async () => {

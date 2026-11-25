@@ -3,7 +3,8 @@
 // and export its data; once the account is closed only the export, until the date; after that only a closed-account page.
 import { useEffect } from 'react';
 import { api, useApi, type Me } from '../api.ts';
-import { usePath } from '../router.ts';
+import { navigate, usePath } from '../router.ts';
+import { BuyPanel } from './BuyPanel.tsx';
 import { useI18n, type Key } from '../i18n.tsx';
 import { TopControls } from '../ui.tsx';
 
@@ -17,7 +18,6 @@ export interface TrialInfo {
   buyUrl?: string;
   testimonials?: { name: string; nameAr: string; role: string; roleAr: string; company: string; companyAr: string; quote: string; quoteAr: string }[];
 }
-const BUY = 'https://nusuhbooks.com/order/';   // until buying happens inside the software (it opens the website's Order page)
 const CONTACT = { email: 'hello@nusuhbooks.com', phone: '+966 546958273', hours: '8:00 am to 6:00 pm' };
 
 function useDay() {
@@ -40,7 +40,7 @@ export function TrialBar() {
     <div className={`trial-bar${urgent ? ' urgent' : ''}`} id="trial-bar" role="note">
       <span id="trial-days">{d.daysLeft === 1 ? t('trialui.bar.last') : t('trialui.bar', { n: d.daysLeft })}</span>
       <span className="trial-until">{t('trialui.bar.until', { date: day(d.trialEndsAt) })}</span>
-      <a className="trial-buy" id="trial-buy" href={d.buyUrl ?? BUY} target="_blank" rel="noopener noreferrer">{t('trialui.buy')}</a>
+      <a className="trial-buy" id="trial-buy" href="/buy" onClick={(e) => { e.preventDefault(); navigate('/buy'); }}>{t('trialui.buy')}</a>
     </div>
   );
 }
@@ -63,9 +63,7 @@ export function TrialEnded({ me, trial, onSignOut }: { me: Me; trial: TrialInfo;
   const mod = lines.find((l) => l.key === 'perModule');
   const modules = trial.modules ?? [];
   const companies = me.companies;
-  const buy = trial.buyUrl ?? BUY;
-  const confirm = `${(trial.support?.website ?? 'https://nusuhbooks.com')}/confirm-payment/`;
-  const buyButton = (id: string) => <a className="b p big" id={id} href={buy} target="_blank" rel="noopener noreferrer">{t('trialui.buy')}</a>;
+  const buyButton = (id: string) => <a className="b p big" id={id} href="#buy-panel">{t('trialui.buy')}</a>;
   return (
     <main className="trial-ended" id="trial-ended" data-level={trial.level}>
       <div className="te-wrap">
@@ -93,7 +91,7 @@ export function TrialEnded({ me, trial, onSignOut }: { me: Me; trial: TrialInfo;
               <p className="small mut">{t('trialui.price.vat')}</p>
             </div>)}
 
-          <div className="actions">{buyButton('trialui-buy')}</div>
+          <BuyPanel trial={trial} />
           <p className="small mut">{t('trialui.buyHint')}</p>
 
           <div className="te-steps" id="trial-steps">
@@ -101,7 +99,7 @@ export function TrialEnded({ me, trial, onSignOut }: { me: Me; trial: TrialInfo;
             <ol>
               <li><b>{t('trialui.steps.1')}</b><span>{t('trialui.steps.1d')}</span></li>
               <li><b>{t('trialui.steps.2')}</b><span>{t('trialui.steps.2d')}</span></li>
-              <li><b>{t('trialui.steps.3')}</b><span>{t('trialui.steps.3d')} <a href={confirm} target="_blank" rel="noopener noreferrer">{t('trialui.steps.3link')}</a></span></li>
+              <li><b>{t('trialui.steps.3')}</b><span>{t('trialui.steps.3d')}</span></li>
             </ol>
           </div>
 
@@ -146,6 +144,20 @@ export function TrialEnded({ me, trial, onSignOut }: { me: Me; trial: TrialInfo;
           <div className="actions">{buyButton('trialui-buy-2')}</div>
           <p className="small te-talk">{t('trialui.promo.talk')} {trial.support?.email ?? CONTACT.email}</p>
         </aside>
+      </div>
+    </main>
+  );
+}
+
+/** Buying while the free trial is still open: the same order and payment steps, from the "Buy" link in the trial bar. */
+export function BuyPage({ trial }: { trial: TrialInfo }) {
+  const { t } = useI18n();
+  return (
+    <main className="trial-ended" id="buy-page">
+      <div className="card" style={{ maxWidth: 720, margin: '24px auto' }}>
+        <div className="top"><TopControls /></div>
+        <BuyPanel trial={trial} />
+        <div className="actions"><button className="b" id="buy-back" onClick={() => navigate('/')}>{t('buy.back')}</button></div>
       </div>
     </main>
   );

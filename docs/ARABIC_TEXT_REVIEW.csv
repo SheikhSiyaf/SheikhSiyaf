@@ -4550,3 +4550,7 @@
 "Database default","db/migrations/0049_support_owner_email.sql:32","","الموضوع: ","Written in code, not in i18n"
 "Database default","db/migrations/0049_support_owner_email.sql:33","","محادثات تنتظر الرد: ","Written in code, not in i18n"
 "Database default","db/migrations/0049_support_owner_email.sql:34","","اقرأه في لوحة المالك تحت الدعم.","Written in code, not in i18n"
+"App","err.trialEnded","Your free trial has ended. Buy to continue: your data is kept.","انتهت فترتك التجريبية المجانية. اشترِ للمتابعة، وبياناتك محفوظة.","Screens"
+"App","err.accountClosed","This account is closed. You can still export your data for a limited time.","هذا الحساب مغلق. ما زال بإمكانك تصدير بياناتك لمدة محدودة.","Screens"
+"App","err.trialReason","Say why the trial is changed.","اكتب سبب تغيير الفترة التجريبية.","Screens"
+"App","err.trialDays","Extend a trial by 1 to 90 days.","مدّد الفترة التجريبية من يوم إلى 90 يومًا.","Screens"

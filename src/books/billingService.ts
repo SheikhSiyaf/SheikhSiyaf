@@ -7,11 +7,12 @@ import type { Db } from '../db/session.js';
 import { HttpError } from '../api/errors.js';
 import { bilingual, type Mail } from '../email/templates.js';
 import { queue } from './emailService.js';
+import { LIFECYCLE } from './trialRules.js';
+import { cancelTrial, startTrial } from './trialService.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MONEY = /^\d{1,12}(\.\d{1,2})?$/;
-const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 
 async function requireOwner(db: Db) {
   if (!(await db.query('SELECT app_is_owner() AS o')).rows[0].o) throw new HttpError(403, 'Only the platform owner can do this.', 'err.ownerOnly');
@@ -116,14 +117,18 @@ export async function saveSubscription(db: Db, firmId: string, x: SubscriptionIn
   }
   const start = String(x.startOn ?? '');
   if (!DATE.test(start)) bad('Choose the start date.', 'err.startDate');
-  // Bills fall on the same day each month, so they start on day 1 to 28; a trial ending later runs to the 1st.
+  // A free trial: its dates come from the one schedule in trialRules.ts (the annual plan's 15 days, or an older plan's own days).
+  // It is not billed; the customer is locked when it ends unless the owner converts it (src/books/trialService.ts).
+  const trialDays = x.trial ? (plan.annual ? LIFECYCLE.trialDays : Number(plan.trial_days)) : 0;
+  if (trialDays > 0) return { id: await startTrial(db, firmId, { planId: plan.id, cycle: x.cycle as 'monthly' | 'yearly', startOn: start, days: trialDays, implementation, discountPct: disc, notes }) };
+  // Bills fall on the same day each month, so they start on day 1 to 28.
   if (Number(start.slice(8)) > 28) bad('Start on day 1 to 28, so the bill date is the same every month.', 'err.startDay');
-  let trialEnds = x.trial && plan.trial_days > 0 ? addDays(start, plan.trial_days) : null;
-  if (trialEnds && Number(trialEnds.slice(8)) > 28) trialEnds = addDays(trialEnds.slice(0, 8) + '28', 4).slice(0, 8) + '01';
+  const trialEnds: string | null = null;
   const vals = [plan.id, x.cycle, trialEnds ? 'trial' : 'active', start, trialEnds, trialEnds ?? start, disc, notes, implementation];
   if (cur) {   // a cancelled customer starts again
     await db.query(`UPDATE subscriptions SET plan_id = $2, cycle = $3, status = $4, started_on = $5, trial_ends = $6, next_bill_on = $7, discount_pct = $8,
-      notes = $9, implementation = $10, setup_billed = false, cancel_at_period_end = false WHERE id = $1`, [cur.id, ...vals]);
+      notes = $9, implementation = $10, setup_billed = false, cancel_at_period_end = false,
+      trial_started_at = NULL, trial_ends_at = NULL, grace_ends_at = NULL, converted_at = NULL, cancelled_at = NULL WHERE id = $1`, [cur.id, ...vals]);
     return { id: cur.id as string };
   }
   return { id: (await db.query(`INSERT INTO subscriptions (firm_id, plan_id, cycle, status, started_on, trial_ends, next_bill_on, discount_pct, notes, implementation)
@@ -135,7 +140,7 @@ export async function setCancel(db: Db, firmId: string, cancel: boolean) {
   await requireOwner(db);
   const s = (await db.query('SELECT id, status FROM subscriptions WHERE firm_id = $1', [firmId])).rows[0];
   if (!s || s.status === 'cancelled') bad('This customer has no subscription to change.', 'err.noSubscription');
-  if (cancel && s.status === 'trial') await db.query(`UPDATE subscriptions SET status = 'cancelled' WHERE id = $1`, [s.id]);
+  if (cancel && (s.status === 'trial' || s.status === 'trial_ended')) await cancelTrial(db, firmId, 'Cancelled from the billing screen');
   else await db.query('UPDATE subscriptions SET cancel_at_period_end = $2 WHERE id = $1', [s.id, cancel]);
 }
 

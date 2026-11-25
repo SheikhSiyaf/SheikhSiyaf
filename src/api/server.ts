@@ -45,6 +45,7 @@ import { reviewedUpTo } from '../books/reviewService.js';
 import { registerSetupRoutes } from './setup.js';
 import { profitAndLoss } from '../books/reportsService.js';
 import { registerPermissionCheck } from './permissions.js';
+import { registerTrialRoutes } from './trial.js';
 
 export type { ServerOptions } from './context.js';
 const POSTING_ROLES = ['partner', 'staff_accountant', 'client_accountant'];
@@ -96,6 +97,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   const ctx: Ctx = { pool, opts, as };
   configureEInvoicing({ encryptionKey: encryptionKeyOf(opts) });
   configurePayments({ encryptionKey: encryptionKeyOf(opts), production: Boolean(opts.production) });
+  registerTrialRoutes(app, ctx);   // the free-trial lock must come before the role check
   registerPermissionCheck(app, ctx);
 
   async function companyRole(db: Db, companyId: string): Promise<string> {

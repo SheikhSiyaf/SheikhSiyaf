@@ -10,6 +10,7 @@ import { startFxJobs } from '../books/fxJobs.js';
 import { startMailer } from '../email/mailer.js';
 import { startToolJobs } from '../books/toolsJobs.js';
 import { startBillingJob } from '../books/billingService.js';
+import { startLifecycleJob } from '../books/trialService.js';
 import { startBankFeedJob } from '../books/bankFeedService.js';
 import { startAuthPurgeJob } from '../auth/throttle.js';
 import { startEInvoiceSender } from '../books/einvoiceSender.js';
@@ -71,6 +72,8 @@ startMailer(pool, (m) => app.log.info(m));
 startToolJobs(pool, (m) => app.log.info(m));
 // Billing the platform's customers for their subscriptions, every six hours (BILLING_JOBS=off turns it off).
 startBillingJob(pool, (m) => app.log.info(m));
+// Unpaid free trials: lock, then close, as the clock says, every hour (LIFECYCLE_JOBS=off turns it off).
+startLifecycleJob(pool, (m) => app.log.info(m));
 // Direct bank feeds, synced every six hours (BANK_FEED_JOBS=off turns it off).
 startBankFeedJob(pool, (m) => app.log.info(m));
 // Simplified e-invoices reported to ZATCA every 2 minutes, with retries and warnings (EINVOICE_JOBS=off turns it off).

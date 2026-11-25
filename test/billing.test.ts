@@ -4,6 +4,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { app as appPool, as, owner, seed, type Fixture } from './helpers.js';
 import * as B from '../src/books/billingService.js';
+import * as T from '../src/books/trialService.js';
 
 let f: Fixture;
 let other: Fixture;
@@ -42,13 +43,17 @@ describe('Plans and subscriptions', () => {
     await expect(as(f.platformOwner, (db) => B.saveSubscription(db, f.firmId, { planId, cycle: 'monthly', startOn: '2026-01-30' }))).rejects.toThrow(/day 1 to 28/);
   });
 
-  it('a trial is not billed until it ends, then bills the plan with extra users, discount and VAT', async () => {
+  it('a trial is never billed by the run (an unpaid one locks instead); once the owner converts it, the plan is billed with extra users, discount and VAT', async () => {
     const id = await as(f.platformOwner, async (db) => {
       await db.query(`UPDATE plans SET trial_days = 14 WHERE id = $1`, [planId]);
       return (await B.saveSubscription(db, f.firmId, { planId, cycle: 'monthly', startOn: '2026-01-01', trial: true, discountPct: '10' })).id;
     });
     expect(id).toBeTruthy();
     expect((await job('2026-01-10')).filter((x) => x.firmId === f.firmId)).toHaveLength(0);
+    // The trial ends on 14 January. Before 0070 the run turned it into a paying subscription by itself; now it does not.
+    expect((await job('2026-01-15')).filter((x) => x.firmId === f.firmId)).toHaveLength(0);
+    expect((await as(f.platformOwner, (db) => db.query(`SELECT status FROM subscriptions WHERE firm_id = $1`, [f.firmId]))).rows[0].status).toBe('trial');
+    await as(f.platformOwner, (db) => T.convertTrial(db, f.firmId, 'Paid by bank transfer', new Date('2026-01-15T07:00:00Z')));
     const made = (await job('2026-01-15')).filter((x) => x.firmId === f.firmId);
     expect(made).toHaveLength(1);
     const inv = await as(f.platformOwner, (db) => B.invoice(db, made[0]!.id));

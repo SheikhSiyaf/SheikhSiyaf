@@ -13,6 +13,7 @@ export const JOBS: Record<string, { everyMinutes: number; off: string }> = {
   accountant_tools: { everyMinutes: 60, off: 'TOOL_JOBS' },
   bank_feeds: { everyMinutes: 60, off: 'BANK_FEED_JOBS' },
   billing: { everyMinutes: 360, off: 'BILLING_JOBS' },
+  lifecycle: { everyMinutes: 60, off: 'LIFECYCLE_JOBS' },
   signin_purge: { everyMinutes: 60, off: 'AUTH_PURGE_JOBS' },
 };
 

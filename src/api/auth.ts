@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Ctx } from './context.js';
 import { HttpError } from './errors.js';
 import { hashPassword, verifyPassword } from '../auth/password.js';
+import { accessForUser } from '../books/trialService.js';
 import { clearedCookie, sessionCookie, signSession, signToken, verifyToken } from '../auth/session.js';
 import { newTotpSecret, otpauthUri, totpStep } from '../auth/totp.js';
 import { decryptSecret, encryptSecret } from '../auth/secretBox.js';
@@ -70,6 +71,8 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
     }
     if (u.status !== 'active') throw new HttpError(403, 'This account is suspended. Contact the Administrator.', 'err.suspended');
     if (u.firm_status !== 'active') throw new HttpError(403, 'This organisation\'s access is suspended. Contact Nusuh Books.', 'err.tenantSuspended');
+    // A customer closed after an unpaid trial, past its export window, cannot sign in at all.
+    if ((await accessForUser(pool, u.id, opts.now?.())).level === 'closed') throw new HttpError(403, 'This account is closed. Contact Nusuh Books.', 'err.accountClosed');
     await accounts.clear(email);
     if (u.totp_secret_enc) {
       return { twoFactor: true, ticket: signToken(opts.sessionSecret, 'mfa', b64(`${u.id}:${email}`), 300) };

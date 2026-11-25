@@ -27,6 +27,10 @@ export interface ServerOptions {
   production?: boolean;
   /** Fastify's trustProxy: when on, the client address comes from X-Forwarded-For (only behind your own proxy). */
   trustProxy?: boolean | number | string;
+  /** The clock for the free-trial lock. Only code (the tests) sets it; there is no setting or address that can change it. */
+  now?: () => Date;
+  /** How long, in milliseconds, the trial lock remembers a person's customer. Default 15000; the tests use 0. */
+  lockCacheMs?: number;
 }
 
 export interface Ctx {

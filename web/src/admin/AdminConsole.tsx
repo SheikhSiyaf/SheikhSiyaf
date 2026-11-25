@@ -1,6 +1,7 @@
 // Administrator console: separate from the books.
 // Clients (summary, search, add, manage), Staff (add, clients handled, suspend, sign-in links),
 // Activity (who changed clients, people and access) and Settings (firm name, sign-in security).
+import { ChecklistEditor } from '../books/Checklist.tsx';
 import { DEFAULT_MODULES, INDUSTRIES, OPTIONAL_MODULES, ROLE_MODULES, type AccessLevel, type Industry } from '../../../src/books/modules.ts';
 import { createContext, useContext, useEffect, useState, type FormEvent } from 'react';
 import { api, setActingTenant, useApi, type Me } from '../api.ts';
@@ -493,6 +494,8 @@ function ClientPage({ id }: { id: string }) {
           <button className="b p" type="submit" disabled={busy}>{t('admin.add')}</button>
         </form>
       </div>
+
+      <ChecklistEditor companyId={id} />
 
       {/* Firm staff for this client (a company that keeps its own books has no firm staff) */}
       {tenantInfo.kind !== 'company' && <div className="card">

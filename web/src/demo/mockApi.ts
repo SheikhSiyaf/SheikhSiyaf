@@ -26,6 +26,7 @@ import * as Im from '../../../src/books/importRules.ts';
 import { fmtPercent, fmtUnits, ownershipKind, parsePercent, parseUnits, percentsFromShares, PERCENT_TOTAL, splitByPercent } from '../../../src/books/ownershipRules.ts';
 import { cleanBarcode, internalEan, validBarcode } from '../../../src/books/barcode.ts';
 import * as AtR from '../../../src/books/attendanceRules.ts';
+import * as CkRules from '../../../src/books/checklistRules.ts';
 import * as Fx from '../../../src/books/fx.ts';
 import { documentMail } from '../../../src/email/templates.ts';
 import type { EInvoiceData, EParty } from '../../../src/einvoice/invoiceData.ts';
@@ -3054,6 +3055,32 @@ function saveBudgetM(companyId: string, b: Body, id?: string) {
   if (id) { Object.assign(tdb.budgets.find((x) => x.id === id) ?? fail(404, 'Not found.', 'err.notFound'), { name, startDate, lines }); return id; }
   const nid = uid(); tdb.budgets.push({ id: nid, companyId, name, startDate, status: 'active', lines }); return nid;
 }
+// ------------------------------------------------------------------ checklist beside the bell (demo: kept in the browser only)
+const CkBuiltIn = CkRules.BUILT_IN, CkPeriodKey = CkRules.periodKey, CkSetupList = CkRules.setupList, CkCleanItem = CkRules.cleanItem, CkNewKey = CkRules.newKey;
+interface CkStore { ticks: CkRules.Tick[]; hidden: Set<string>; over: CkRules.Override[] }
+const ckStores = new Map<string, CkStore>();
+const ckState = (companyId: string): CkStore => { let s = ckStores.get(companyId); if (!s) { s = { ticks: [], hidden: new Set(), over: [] }; ckStores.set(companyId, s); } return s; };
+/** The company's Administrator (in the demo: a person with the Administrator kind, or a Manage-users role) may edit the list. */
+function ckAdmin(companyId: string) { const u = me(); if (u.kind !== 'admin' && u.kind !== 'owner') fail(403, 'Only the company Administrator can change the checklist.', 'err.checklistAdmin'); return companyId; }
+function ckListM(companyId: string) {
+  const u = me(); const co = db.companies.find((c) => c.id === companyId)!; const r = clientRoleIn(companyId);
+  const today = new Date().toISOString().slice(0, 10); const prev = CkRules.previousMonth(today); const st = ckState(companyId);
+  const facts: CkRules.Facts = {
+    country: co.country, vatStatus: co.vatStatus, cr: '1010123456', vat: co.vatNumber ?? null, modules: co.modules, addressDone: true, logo: false,
+    bankAccounts: odb.banks.some((b) => b.companyId === companyId && b.kind === 'bank'), customers: sdb.contacts.some((c) => c.companyId === companyId && c.isCustomer),
+    suppliers: sdb.contacts.some((c) => c.companyId === companyId && c.isSupplier), items: odb.items.some((x) => x.companyId === companyId),
+    entries: db.entries.some((e) => e.companyId === companyId), invoice: sdb.docs.some((d) => d.companyId === companyId && d.type === 'invoice' && d.status === 'issued'),
+    einvoicing: edb.devices.some((x) => x.companyId === companyId && x.status === 'active') || einvSettings(companyId).enabled,
+    approvalRules: apdb.rules.some((x) => x.companyId === companyId && x.active), members: db.users.filter((x) => x.firmId === u.firmId).length, twofa: u.twoFactor,
+    openBankLines: false, openBankLinesToMonthEnd: false, draftsToMonthEnd: sdb.docs.some((d) => d.companyId === companyId && d.status === 'draft' && d.type !== 'quotation' && d.issueDate <= prev.end), signedOff: false,
+  };
+  const items = CkRules.buildChecklist({
+    facts, role: r ? { permissions: r.permissions, canApprove: r.canApprove, canSignOff: Boolean(r.canSignOff) } : null, isAdmin: u.kind === 'admin', today, userId: u.id,
+    overrides: st.over, ticks: st.ticks, hiddenByMe: [...st.hidden].filter((k) => k.startsWith(`${u.id}:`)).map((k) => k.slice(u.id.length + 1)),
+  });
+  return { items, progress: CkRules.progress(items), isAdmin: u.kind === 'admin', today, month: prev.period };
+}
+
 function notificationsM(companyId: string) {
   const out: { key: string; kind: string; count: number; params: Record<string, string | number>; module: string; sub?: string; at: string | null; read?: boolean }[] = [];
   const add = (kind: string, n: number, module: string, sub: string, extra: Record<string, string | number> = {}) => { if (n) out.push({ key: `${kind}:${today()}:${n}`, kind, count: n, params: { n, ...extra }, module, sub, at: null }); };
@@ -4525,19 +4552,61 @@ routes.push(
     const items = can('Inventory') || can('Restaurant') ? odb.items.filter((x) => x.companyId === id && (has(x.sku) || has(x.name) || has(x.nameAr))).slice(0, 6).map((x) => ({ id: x.id, sku: x.sku, name: x.name, nameAr: x.nameAr })) : [];
     return { contacts, documents, items };
   }],
-  ['GET', /^\/api\/companies\/([\w-]+)\/setup-status$/, (m) => {
-    const id = inCo(m[1]!); const co = db.companies.find((c) => c.id === id)!;
-    const steps: { key: string; done: boolean; go: string[] }[] = [
-      { key: 'bank', done: odb.banks.some((b) => b.companyId === id && b.kind === 'bank'), go: ['Bank', 'accounts', 'new'] },
-      { key: 'customers', done: sdb.contacts.some((c) => c.companyId === id && c.isCustomer), go: ['Sales', 'customers', 'import'] },
-      { key: 'suppliers', done: sdb.contacts.some((c) => c.companyId === id && c.isSupplier), go: ['Purchases', 'suppliers', 'import'] },
-      ...(co.modules.includes('Inventory') ? [{ key: 'items', done: odb.items.some((x) => x.companyId === id), go: ['Inventory', 'items', 'import'] }] : []),
-      { key: 'opening', done: db.entries.some((e) => e.companyId === id), go: ['Ledger', 'import-data', 'opening'] },
-      ...(co.vatStatus === 'registered' && co.country !== 'OM' ? [{ key: 'einvoicing', done: edb.devices.some((x) => x.companyId === id && x.status === 'active') || einvSettings(id).enabled, go: ['Sales', 'e-invoicing'] }] : []),
-      { key: 'approvals', done: apdb.rules.some((r) => r.companyId === id && r.active), go: ['Approvals', 'approval-rules'] },
-      { key: 'invoice', done: sdb.docs.some((d) => d.companyId === id && d.type === 'invoice' && d.status === 'issued'), go: ['Sales', 'invoices', 'new'] },
-    ];
-    return { steps, done: steps.filter((x) => x.done).length, total: steps.length };
+  // the checklist beside the bell (kept in the browser only; the real rules from src/books/checklistRules.ts)
+  ['GET', /^\/api\/companies\/([\w-]+)\/checklist$/, (m) => ckListM(inCo(m[1]!))],
+  ['POST', /^\/api\/companies\/([\w-]+)\/checklist\/tick$/, (m, b) => {
+    const id = inCo(m[1]!); const c = ckListM(id); const item = c.items.find((x) => x.key === b?.key);
+    if (!item) fail(404, 'Not found.', 'err.notFound');
+    if (typeof b?.done !== 'boolean') fail(400, 'That checklist change is not allowed.', 'err.checklistInput');
+    if (item!.how === 'auto') { if (!b!.done) fail(400, 'This item ticks itself.', 'err.checklistAuto'); return ckListM(id); }
+    const st = ckState(id); const built = CkBuiltIn.find((x) => x.key === item!.key);
+    const period = CkPeriodKey(built?.period ?? 'once', c.today); const uid = item!.scope === 'user' ? me().id : null;
+    st.ticks = st.ticks.filter((t) => !(t.key === item!.key && t.period === period && t.userId === uid));
+    if (b!.done) st.ticks.push({ key: item!.key, userId: uid, period, at: new Date().toISOString() });
+    return ckListM(id);
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/checklist\/hide$/, (m, b) => {
+    const id = inCo(m[1]!); const item = ckListM(id).items.find((x) => x.key === b?.key);
+    if (!item) fail(404, 'Not found.', 'err.notFound');
+    const st = ckState(id); const k = `${me().id}:${item!.key}`;
+    if (b?.hidden) st.hidden.add(k); else st.hidden.delete(k);
+    return ckListM(id);
+  }],
+  ['GET', /^\/api\/companies\/([\w-]+)\/checklist\/setup$/, (m) => { const id = ckAdmin(m[1]!); return { items: CkSetupList(ckState(id).over) }; }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/checklist\/items$/, (m, b) => {
+    const id = ckAdmin(m[1]!); const st = ckState(id); const key = typeof b?.key === 'string' ? b.key : undefined;
+    const c = CkCleanItem(b, !key); if (!c.ok) fail(400, 'That checklist change is not allowed.', 'err.checklistInput');
+    const v = (c as { ok: true; value: Record<string, unknown> }).value;
+    if (!key) {
+      if (st.over.filter((o) => o.isCustom).length >= 30) fail(400, 'That checklist change is not allowed.', 'err.checklistInput');
+      st.over.push({ key: CkNewKey(Math.random().toString(16).slice(2).padEnd(12, '0')), isCustom: true, area: v.area as never, scope: (v.scope as never) ?? 'company', title: (v.title as string) ?? null, titleAr: (v.titleAr as string) ?? null,
+        help: (v.help as string) ?? null, helpAr: (v.helpAr as string) ?? null, goModule: (v.goModule as string) ?? null, goSub: (v.goSub as string) ?? null, sort: 1000 + st.over.length * 10, hidden: false });
+    } else {
+      let o = st.over.find((x) => x.key === key);
+      if (!o) {
+        if (!CkBuiltIn.some((x) => x.key === key)) fail(404, 'Not found.', 'err.notFound');
+        o = { key, isCustom: false, area: null, scope: 'company', title: null, titleAr: null, help: null, helpAr: null, goModule: null, goSub: null, sort: null, hidden: false }; st.over.push(o);
+      }
+      if (!o.isCustom && (v.area !== undefined || v.scope !== undefined || v.goModule !== undefined || v.goSub !== undefined)) fail(400, 'That checklist change is not allowed.', 'err.checklistInput');
+      for (const f of ['title', 'titleAr', 'help', 'helpAr', 'hidden'] as const) if (v[f] !== undefined) (o as unknown as Record<string, unknown>)[f] = v[f];
+    }
+    return { items: CkSetupList(st.over) };
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/checklist\/items\/delete$/, (m, b) => {
+    const id = ckAdmin(m[1]!); const st = ckState(id);
+    if (!st.over.some((o) => o.key === b?.key && o.isCustom)) fail(400, 'That checklist change is not allowed.', 'err.checklistInput');
+    st.over = st.over.filter((o) => o.key !== b?.key); st.ticks = st.ticks.filter((t) => t.key !== b?.key);
+    return { items: CkSetupList(st.over) };
+  }],
+  ['POST', /^\/api\/companies\/([\w-]+)\/checklist\/order$/, (m, b) => {
+    const id = ckAdmin(m[1]!); const st = ckState(id); const keys = b?.keys as string[];
+    if (!Array.isArray(keys) || new Set(keys).size !== keys.length || keys.some((k) => !CkBuiltIn.some((x) => x.key === k) && !st.over.some((o) => o.key === k && o.isCustom))) fail(400, 'That checklist change is not allowed.', 'err.checklistInput');
+    keys.forEach((k, i) => {
+      let o = st.over.find((x) => x.key === k);
+      if (!o) { o = { key: k, isCustom: false, area: null, scope: 'company', title: null, titleAr: null, help: null, helpAr: null, goModule: null, goSub: null, sort: null, hidden: false }; st.over.push(o); }
+      o.sort = (i + 1) * 10;
+    });
+    return { items: CkSetupList(st.over) };
   }],
 );
 

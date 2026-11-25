@@ -51,6 +51,7 @@ import { Ownership } from '../ownership/Ownership.tsx';
 import { useDemoSite } from '../pages/DemoSite.tsx';
 import { Budgets, RecurringInvoices, Reminders, Statements } from '../sales/Tools.tsx';
 import { Bell } from './Notifications.tsx';
+import { ChecklistButton } from './Checklist.tsx';
 import { Counter } from '../inventory/Counter.tsx';
 import { CurrencyRates, CurrencyRevaluation } from '../ledger/Currencies.tsx';
 import { GuideButton, SetupGate } from '../setup/Setup.tsx';
@@ -129,6 +130,7 @@ export function Workspace({ me, companyId, path, onSignOut }: { me: Me; companyI
           <TopControls>
             {me.user.kind === 'firm_staff' && <button className="b" onClick={() => navigate('/')}>{t('clients.back')}</button>}
             {b && me.user.kind !== 'owner' && <GuideButton guide={mod.key} />}
+            {b && me.user.kind !== 'owner' && <ChecklistButton books={b} />}
             {b && <Bell books={b} />}
             {b && <span className="badge">{local(b.company.name, b.company.nameAr)} · {b.company.currency}</span>}
           </TopControls>

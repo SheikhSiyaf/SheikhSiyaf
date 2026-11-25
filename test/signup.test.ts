@@ -282,11 +282,12 @@ describe('Signing up', () => {
     const v = await verify(await tokenOf(b.email));
     const cookie = String(v.headers['set-cookie']).split(';')[0]!;
     const company = (await on.inject({ method: 'GET', url: '/api/me', headers: { cookie } })).json().companies[0].id as string;
-    const status = async () => (await on.inject({ method: 'GET', url: `/api/companies/${company}/setup-status`, headers: { cookie } })).json() as { steps: { key: string; done: boolean }[] };
-    expect((await status()).steps[0]).toMatchObject({ key: 'company', done: false });
+    const status = async () => (await on.inject({ method: 'GET', url: `/api/companies/${company}/checklist`, headers: { cookie } })).json() as { items: { key: string; done: boolean }[] };
+    expect((await status()).items.find((x) => x.key === 'company')).toMatchObject({ key: 'company', done: false });   // the Owner is also the Administrator, so the company items reach them
     const edit = await on.inject({ method: 'POST', url: `/api/admin/companies/${company}`, headers: { cookie }, payload: { company: { name: b.companyName, crNumber: b.crNumber, legalForm: 'LLC', vatStatus: 'registered', vatNumber: `3${String(Math.floor(1e12 + Math.random() * 9e12)).slice(0, 13)}3`.slice(0, 15), address: 'King Fahd Road 1', city: 'Riyadh', industry: 'other' } } });
     expect(edit.statusCode, edit.body).toBe(200);
-    expect((await status()).steps.some((x) => x.key === 'company')).toBe(false);
+    expect((await status()).items.find((x) => x.key === 'company')!.done).toBe(true);   // it ticks itself once the address is real
+    expect((await status()).items.find((x) => x.key === 'registration')!.done).toBe(true);
   });
 
   it('a self-service company can change only its address and VAT details: name, registration number and country stay locked, and other customers are out of reach', async () => {

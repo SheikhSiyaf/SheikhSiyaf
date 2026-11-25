@@ -1171,3 +1171,121 @@ describe('Signing up from the website\'s "Start free trial" link', () => {
     expect(table).not.toContain(`visitor.${stamp}@`);
   });
 });
+
+describe('The checklist beside the bell', () => {
+  const clean = async () => {
+    await db.query('DELETE FROM checklist_ticks WHERE company_id = $1', [company]);
+    await db.query('DELETE FROM checklist_hidden WHERE company_id = $1', [company]);
+    await db.query('DELETE FROM checklist_items WHERE company_id = $1', [company]);
+  };
+  afterEach(clean);
+  const open = async (p: Page) => {
+    await p.goto(`${BASE}/c/${company}`, { waitUntil: 'networkidle' });
+    await p.locator('#checklist-btn').waitFor({ timeout: 15000 });
+    await p.locator('#checklist-btn').click();
+    await p.locator('#checklist-panel').waitFor({ timeout: 10000 });
+  };
+
+  it('sits beside the bell with its progress, and the home page no longer carries the checklist', async () => {
+    const { page: p } = await newPage();
+    await signIn(p, accountant);
+    await p.goto(`${BASE}/c/${company}`, { waitUntil: 'networkidle' });
+    await p.locator('#checklist-btn').waitFor({ timeout: 15000 });
+    expect(await p.locator('#home-setup').count()).toBe(0);
+    expect(await p.locator('#checklist-progress').innerText()).toMatch(/^\d+\/\d+$/);
+    const order = await p.evaluate(() => {
+      const a = document.querySelector('#checklist-btn')!.getBoundingClientRect(), b = document.querySelector('#bell')!.getBoundingClientRect();
+      return { checklistBeforeBell: a.right <= b.left + 1, sameRow: Math.abs(a.top - b.top) < 12 };
+    });
+    expect(order).toEqual({ checklistBeforeBell: true, sameRow: true });
+  });
+
+  it('opens a panel grouped as Set up, Daily and Month end; a tick is kept, shown under Done, and written to the audit log', async () => {
+    const { page: p } = await newPage();
+    await signIn(p, accountant);
+    await open(p);
+    const text = await p.locator('#checklist-panel').innerText();
+    expect(text).toContain('Set up');
+    expect(text).toContain('Daily');
+    await p.locator('#ck-daily_record').click();
+    await p.waitForTimeout(900);
+    expect(await p.locator('#checklist-panel').innerText()).toContain('Done (1)');
+    const tick = (await db.query(`SELECT t.period, t.done_by, u.email FROM checklist_ticks t JOIN users u ON u.id = t.done_by WHERE t.company_id = $1 AND t.item_key = 'daily_record'`, [company])).rows;
+    expect(tick).toHaveLength(1);
+    expect(tick[0].email).toBe(accountant);
+    expect(tick[0].period).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const audit = await db.query(`SELECT count(*)::int AS n FROM audit_log WHERE company_id = $1 AND table_name = 'checklist_ticks' AND action = 'insert'`, [company]);
+    expect(audit.rows[0].n).toBe(1);
+    // a reload keeps it
+    await p.reload({ waitUntil: 'networkidle' });
+    await p.locator('#checklist-btn').click();
+    await p.locator('#checklist-panel').waitFor({ timeout: 10000 });
+    expect(await p.locator('#checklist-panel').innerText()).toContain('Done (1)');
+  });
+
+  it('hiding an item hides it for this person only, and Escape closes the panel', async () => {
+    const { page: p } = await newPage();
+    await signIn(p, accountant);
+    await open(p);
+    await p.locator('[data-key="daily_record"] .link').first().click();
+    await p.waitForTimeout(900);
+    expect(await p.locator('#ck-daily_record').count()).toBe(1);   // it is now under "Hidden by you", not in the open list
+    expect(await p.locator('#checklist-hidden').count()).toBe(1);
+    expect((await db.query(`SELECT count(*)::int AS n FROM checklist_hidden WHERE company_id = $1`, [company])).rows[0].n).toBe(1);
+    await p.evaluate(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+    await p.waitForTimeout(300);
+    expect(await p.locator('#checklist-panel').count()).toBe(0);
+  });
+
+  it('is a full-screen sheet on a phone with no sideways scrolling', async () => {
+    const { page: ph } = await newPage(390);
+    await signIn(ph, accountant);
+    await open(ph);
+    const m = await ph.evaluate(() => {
+      const r = document.querySelector('#checklist-panel')!.getBoundingClientRect();
+      return { width: Math.round(r.width), height: Math.round(r.height), inner: window.innerWidth, innerH: window.innerHeight, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+    });
+    expect(m.width).toBe(m.inner);
+    expect(m.height).toBeGreaterThanOrEqual(m.innerH - 2);
+    expect(m.overflow).toBeLessThanOrEqual(2);
+  });
+
+  it('reads right to left in Arabic', async () => {
+    const { page: ar } = await newPage();
+    await signIn(ar, accountant);
+    await ar.goto(`${BASE}/c/${company}`, { waitUntil: 'networkidle' });
+    await ar.getByRole('button', { name: 'EN | AR' }).click();
+    await ar.waitForTimeout(900);
+    await ar.locator('#checklist-btn').click();
+    await ar.locator('#checklist-panel').waitFor({ timeout: 10000 });
+    const text = await ar.locator('#checklist-panel').innerText();
+    expect(text).toContain('قائمة المهام');
+    expect(text).toContain('الإعداد');
+    expect(await ar.evaluate(() => getComputedStyle(document.querySelector('#checklist-panel')!).direction)).toBe('rtl');
+    const order = await ar.evaluate(() => {
+      const a = document.querySelector('#checklist-btn')!.getBoundingClientRect(), b = document.querySelector('#bell')!.getBoundingClientRect();
+      return a.left >= b.right - 1;   // mirrored: the checklist is to the right of the bell
+    });
+    expect(order).toBe(true);
+  });
+
+  it('the Administrator hides an item for everyone from the client page, and the person in the books no longer gets it', async () => {
+    const adminEmail = (await db.query(`SELECT u.email FROM users u JOIN companies c ON c.firm_id = u.firm_id WHERE c.id = $1 AND u.kind = 'admin' AND u.status = 'active' LIMIT 1`, [company])).rows[0]?.email as string | undefined;
+    expect(adminEmail).toBeTruthy();
+    const { page: a } = await newPage();
+    await signIn(a, adminEmail!);
+    await a.goto(`${BASE}/admin/clients/${company}`, { waitUntil: 'networkidle' });
+    await a.locator('#checklist-editor summary').waitFor({ timeout: 15000 });
+    await a.locator('#checklist-editor summary').click();
+    await a.locator('#checklist-editor [data-key="daily_record"]').waitFor({ timeout: 10000 });
+    await a.locator('#checklist-editor [data-key="daily_record"] .link').first().click();
+    await a.waitForTimeout(900);
+    expect((await db.query(`SELECT hidden FROM checklist_items WHERE company_id = $1 AND key = 'daily_record'`, [company])).rows[0]?.hidden).toBe(true);
+    const { page: p } = await newPage();
+    await signIn(p, accountant);
+    await open(p);
+    expect(await p.locator('#ck-daily_record').count()).toBe(0);
+    // the same page for the Administrator carries no figures from the books
+    expect(await a.locator('#checklist-editor').innerText()).not.toMatch(/\b\d+\/\d+\b/);
+  });
+});

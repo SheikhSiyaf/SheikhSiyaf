@@ -665,3 +665,10 @@ Every change below is covered by a test in `test/`.
 | New table `signup_mail` (which outbox e-mail belongs to which sign-up request, by the keyed e-mail hash). No policy, no grant | The owner sees whether each confirmation e-mail was sent, is waiting, or failed, with the e-mail service's error. |
 | `signup_mail_log()` (server only) and `owner_signup_activity()` replaced to add the e-mail status, error and attempts (owner only) | A confirmation link that never arrives is usually an e-mail service problem; this shows it instead of guessing. |
 
+## 0080_checklist.sql
+| Change | Why |
+|---|---|
+| New table `checklist_items` (the company's own changes to the checklist: hidden, order, wording of built-in items, and items the Administrator added, at most 30). Readable by the company's members and Administrator; written only by the company's Administrator through `checklist_admin_of()`; only added items can be deleted. Audited | The Administrator sets one list for the whole company without anyone touching code. |
+| New table `checklist_ticks` (what was ticked by hand: for the company, or for one person; a period for daily and month-end items). A person reads company ticks and their own only; ticks are added or removed, never edited; company ticks need a posting role, a client role or the Administrator. Audited (insert and delete) | Who ticked what, and when. |
+| New table `checklist_hidden` (items a person hid for themselves; own rows only) | Hiding is personal. |
+| New functions `checklist_admin_of(company)` (an Administrator who is a member, or one in the company's own firm) and `checklist_people(company)` (how many people are in the company, and whether the caller has two-factor sign-in). Security definer, fixed search path | An Administrator is usually not a member of the company (they never see the books), and the checklist needs the head count without opening the people tables. |

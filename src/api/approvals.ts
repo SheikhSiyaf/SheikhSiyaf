@@ -103,37 +103,3 @@ export function registerSearchRoutes(app: FastifyInstance, { as }: Ctx) {
     });
   });
 }
-
-// ---------------------------------------------------------------- getting started (Home): what is set up for this client
-export function registerSetupStatusRoutes(app: FastifyInstance, { as }: Ctx) {
-  app.get<{ Params: { id: string } }>('/api/companies/:id/setup-status', async (req) => {
-    const c = uuidParam(req.params.id);
-    return as(req, async (db) => {
-      await member(db, c);
-      const r = (await db.query(
-        `SELECT co.country, co.vat_status::text AS vat, co.modules, co.address = 'To be completed in company settings' AS "addressMissing", app_is_admin() AS "canEditCompany",
-          EXISTS (SELECT 1 FROM bank_accounts WHERE company_id = $1 AND kind = 'bank') AS bank,
-          EXISTS (SELECT 1 FROM contacts WHERE company_id = $1 AND is_customer) AS customers,
-          EXISTS (SELECT 1 FROM contacts WHERE company_id = $1 AND is_supplier) AS suppliers,
-          EXISTS (SELECT 1 FROM items WHERE company_id = $1) AS items,
-          EXISTS (SELECT 1 FROM journal_entries WHERE company_id = $1) AS opening,
-          EXISTS (SELECT 1 FROM documents WHERE company_id = $1 AND type = 'invoice' AND status = 'issued') AS invoice,
-          EXISTS (SELECT 1 FROM einvoice_devices WHERE company_id = $1 AND status = 'active') OR coalesce((SELECT enabled FROM einvoice_settings WHERE company_id = $1), false) AS einvoicing,
-          EXISTS (SELECT 1 FROM approval_rules WHERE company_id = $1 AND active) AS approvals
-         FROM companies co WHERE co.id = $1`, [c])).rows[0];
-      const steps: { key: string; done: boolean; go: [string, string?, string?] }[] = [
-        // a company made by self-service sign-up starts without its address and VAT details: the person who manages the company is asked for them first
-        ...(r.addressMissing && r.canEditCompany ? [{ key: 'company', done: false, go: ['Admin', 'company'] as [string, string] }] : []),
-        { key: 'bank', done: r.bank, go: ['Bank', 'accounts', 'new'] },
-        { key: 'customers', done: r.customers, go: ['Sales', 'customers', 'import'] },
-        { key: 'suppliers', done: r.suppliers, go: ['Purchases', 'suppliers', 'import'] },
-        ...((r.modules ?? []).includes('Inventory') ? [{ key: 'items', done: r.items, go: ['Inventory', 'items', 'import'] as [string, string, string] }] : []),
-        { key: 'opening', done: r.opening, go: ['Ledger', 'import-data', 'opening'] },
-        ...(r.vat === 'registered' && r.country !== 'OM' ? [{ key: 'einvoicing', done: r.einvoicing, go: ['Sales', 'e-invoicing'] as [string, string] }] : []),
-        { key: 'approvals', done: r.approvals, go: ['Approvals', 'approval-rules'] },
-        { key: 'invoice', done: r.invoice, go: ['Sales', 'invoices', 'new'] },
-      ];
-      return { steps, done: steps.filter((s) => s.done).length, total: steps.length };
-    });
-  });
-}

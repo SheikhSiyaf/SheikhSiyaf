@@ -15,6 +15,7 @@ export interface TrialInfo {
   prices?: { currency: string; lines: { key: string; name: string; nameAr: string; amount: number | string }[] };
   support?: { email: string; phone: string; hours: string; website: string };
   buyUrl?: string;
+  testimonials?: { name: string; nameAr: string; role: string; roleAr: string; company: string; companyAr: string; quote: string; quoteAr: string }[];
 }
 const BUY = 'https://nusuhbooks.com/order/';   // until buying happens inside the software (it opens the website's Order page)
 const CONTACT = { email: 'hello@nusuhbooks.com', phone: '+966 546958273', hours: '8:00 am to 6:00 pm' };
@@ -48,46 +49,103 @@ function ContactLine({ t, support = CONTACT }: { t: ReturnType<typeof useI18n>['
   return <p className="small mut" id="trialui-contact">{t('trialui.contact', { email: support.email, phone: support.phone, hours: support.hours })}</p>;
 }
 
-/** The screen that replaces the software when the free trial has ended (locked) or the account is closed (export only). */
+/** The screen that replaces the software when the free trial has ended (locked) or the account is closed (export only). It is
+ *  also the one place a customer is asked to buy, so it says plainly what they keep, what it costs and how buying works, with
+ *  our own words (the website's) and, when there are any, the owner's real customer quotes. Nothing here is invented. */
 export function TrialEnded({ me, trial, onSignOut }: { me: Me; trial: TrialInfo; onSignOut: () => void }) {
   const { t, has, lang } = useI18n();
   const day = useDay();
   const closed = trial.level === 'export_only';
-  const mod = trial.prices?.lines.find((l) => l.key === 'perModule');
-  const price = mod ? `${trial.prices!.currency} ${Number(mod.amount).toLocaleString('en-US')}` : '';
+  const lines = trial.prices?.lines ?? [];
+  const cur = trial.prices?.currency ?? 'SAR';
+  const money = (a: number | string) => `${cur} ${Number(a).toLocaleString('en-US', Number(a) % 1 ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : undefined)}`;
+  const when: Record<string, Key> = { implementation: 'trialui.price.once', cleanup: 'trialui.price.onceOptional', annualCore: 'trialui.price.year', perModule: 'trialui.price.yearModule' };
+  const mod = lines.find((l) => l.key === 'perModule');
   const modules = trial.modules ?? [];
   const companies = me.companies;
+  const buy = trial.buyUrl ?? BUY;
+  const confirm = `${(trial.support?.website ?? 'https://nusuhbooks.com')}/confirm-payment/`;
+  const buyButton = (id: string) => <a className="b p big" id={id} href={buy} target="_blank" rel="noopener noreferrer">{t('trialui.buy')}</a>;
   return (
     <main className="trial-ended" id="trial-ended" data-level={trial.level}>
-      <div className="card" style={{ maxWidth: 720, margin: '40px auto' }}>
-        <div className="top"><TopControls /></div>
-        <h1 id="trialui-title">{t(closed ? 'trialui.closed.title' : 'trialui.ended.title')}</h1>
-        <p id="trialui-body">{closed
-          ? t('trialui.closed.body', { until: day(trial.exportUntil), delete: day(trial.deleteNotBefore) })
-          : t('trialui.ended.body', { date: day(trial.graceEndsAt) })}</p>
-        <div className="actions"><a className="b p" id="trialui-buy" href={trial.buyUrl ?? BUY} target="_blank" rel="noopener noreferrer">{t('trialui.buy')}</a></div>
-        <p className="small mut">{t('trialui.buyHint')}</p>
+      <div className="te-wrap">
+        <div className="card te-main">
+          <div className="top"><TopControls /></div>
+          <span className="te-eyebrow">{t(closed ? 'trialui.eyebrow.closed' : 'trialui.eyebrow')}</span>
+          <h1 id="trialui-title">{t(closed ? 'trialui.closed.title' : 'trialui.ended.title')}</h1>
+          <p className="te-lead" id="trialui-body">{closed
+            ? t('trialui.closed.body', { until: day(trial.exportUntil), delete: day(trial.deleteNotBefore) })
+            : t('trialui.ended.body', { date: day(trial.graceEndsAt) })}</p>
 
-        <h2>{t('trialui.export.title')}</h2>
-        {companies.length > 0 ? (
-          <>
-            <p className="small mut">{t('trialui.export.hint')}</p>
-            <ul id="trialui-exports" style={{ paddingInlineStart: 18 }}>
-              {companies.map((c) => (
-                <li key={c.id}><a href={`/api/companies/${c.id}/export`} download>{t('trialui.export.company', { name: lang === 'ar' && c.nameAr ? c.nameAr : c.name })}</a></li>))}
-            </ul>
-          </>
-        ) : <p className="small mut" id="trialui-export-admin">{t('trialui.export.admin')}</p>}
+          <div className="te-keep" id="trialui-keep">
+            <b>{t('trialui.keep.title')}</b>
+            <ul>{(['trialui.keep.1', 'trialui.keep.2', 'trialui.keep.3'] as const).map((k) => <li key={k}>{t(k)}</li>)}</ul>
+          </div>
 
-        {!closed && (
-          <>
-            <h2>{t('trialui.modules.title')}</h2>
-            <p id="trialui-modules">{modules.length
-              ? t('trialui.modules.some', { list: modules.map((m) => (has(`mod.${m}`) ? t(`mod.${m}` as Key) : m)).join(', '), price })
-              : t('trialui.modules.none')}</p>
-          </>)}
-        <ContactLine t={t} support={trial.support} />
-        <div className="actions"><button className="b" id="trialui-signout" onClick={onSignOut}>{t('signOut')}</button></div>
+          {lines.length > 0 && (
+            <div className="te-price" id="trial-price">
+              <h2>{t('trialui.price.title')}</h2>
+              <table><tbody>{lines.map((l) => (
+                <tr key={l.key}>
+                  <th scope="row">{lang === 'ar' && l.nameAr ? l.nameAr : l.name}<small>{when[l.key] ? t(when[l.key]!) : ''}</small></th>
+                  <td className="ltr">{money(l.amount)}</td>
+                </tr>))}</tbody></table>
+              <p className="small mut">{t('trialui.price.vat')}</p>
+            </div>)}
+
+          <div className="actions">{buyButton('trialui-buy')}</div>
+          <p className="small mut">{t('trialui.buyHint')}</p>
+
+          <div className="te-steps" id="trial-steps">
+            <h2>{t('trialui.steps.title')}</h2>
+            <ol>
+              <li><b>{t('trialui.steps.1')}</b><span>{t('trialui.steps.1d')}</span></li>
+              <li><b>{t('trialui.steps.2')}</b><span>{t('trialui.steps.2d')}</span></li>
+              <li><b>{t('trialui.steps.3')}</b><span>{t('trialui.steps.3d')} <a href={confirm} target="_blank" rel="noopener noreferrer">{t('trialui.steps.3link')}</a></span></li>
+            </ol>
+          </div>
+
+          <h2>{t('trialui.export.title')}</h2>
+          {companies.length > 0 ? (
+            <>
+              <p className="small mut">{t('trialui.export.hint')}</p>
+              <ul id="trialui-exports" style={{ paddingInlineStart: 18 }}>
+                {companies.map((c) => (
+                  <li key={c.id}><a href={`/api/companies/${c.id}/export`} download>{t('trialui.export.company', { name: lang === 'ar' && c.nameAr ? c.nameAr : c.name })}</a></li>))}
+              </ul>
+            </>
+          ) : <p className="small mut" id="trialui-export-admin">{t('trialui.export.admin')}</p>}
+
+          {!closed && (
+            <>
+              <h2>{t('trialui.modules.title')}</h2>
+              <p id="trialui-modules">{modules.length
+                ? t('trialui.modules.some', { list: modules.map((m) => (has(`mod.${m}`) ? t(`mod.${m}` as Key) : m)).join(', '), price: mod ? money(mod.amount) : '' })
+                : t('trialui.modules.none')}</p>
+            </>)}
+          <ContactLine t={t} support={trial.support} />
+          <div className="actions"><button className="b" id="trialui-signout" onClick={onSignOut}>{t('signOut')}</button></div>
+        </div>
+
+        <aside className="te-promo" id="trial-promo" aria-label={t('trialui.promo.kicker')}>
+          <span className="te-kicker">{t('trialui.promo.kicker')}</span>
+          <h2>{t('trialui.promo.title')}</h2>
+          <p>{t('trialui.promo.body')}</p>
+          <div className="te-badges">
+            {(['trialui.promo.b1', 'trialui.promo.b2', 'trialui.promo.b3'] as const).map((k) => <span key={k}>{t(k)}</span>)}
+          </div>
+          {(trial.testimonials?.length ?? 0) > 0 && (
+            <div className="te-say" id="trial-testimonials">
+              <b>{t('trialui.promo.say')}</b>
+              {trial.testimonials!.map((q, i) => {
+                const name = lang === 'ar' && q.nameAr ? q.nameAr : q.name, quote = lang === 'ar' && q.quoteAr ? q.quoteAr : q.quote;
+                const who = [lang === 'ar' && q.roleAr ? q.roleAr : q.role, lang === 'ar' && q.companyAr ? q.companyAr : q.company].filter(Boolean).join(', ');
+                return <figure key={i}><blockquote>{'\u201C'}{quote}{'\u201D'}</blockquote><figcaption><b>{name}</b>{who && <span>{who}</span>}</figcaption></figure>;
+              })}
+            </div>)}
+          <div className="actions">{buyButton('trialui-buy-2')}</div>
+          <p className="small te-talk">{t('trialui.promo.talk')} {trial.support?.email ?? CONTACT.email}</p>
+        </aside>
       </div>
     </main>
   );

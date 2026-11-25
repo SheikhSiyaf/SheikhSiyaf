@@ -289,6 +289,7 @@ describe('The lock in the API', () => {
     expect(t.prices.lines.map((l: { key: string }) => l.key)).toEqual(['implementation', 'cleanup', 'annualCore', 'perModule']);
     expect(t.support).toMatchObject({ email: 'hello@nusuhbooks.com', phone: '+966 546958273' });
     expect(t.buyUrl).toBe('https://nusuhbooks.com/order/');
+    expect(Array.isArray(t.testimonials) && t.testimonials.length <= 3).toBe(true);   // the owner's real quotes only, at most three
     // a customer with no trial gets only the plain summary, and a customer cannot see another's modules
     const other$ = (await get('otherPartner', '/api/trial')).json();
     expect(other$).toMatchObject({ level: 'full', trialing: false });

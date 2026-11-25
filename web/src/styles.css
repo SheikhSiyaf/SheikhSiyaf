@@ -776,6 +776,42 @@ main.auth { padding: 0; display: grid; grid-template-columns: minmax(360px, 520p
 .trial-bar { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; justify-content: center; background: var(--okbg, #e6f6f2); color: var(--ok, #0f5f55); font-size: 13px; padding: 6px 16px; }
 .trial-bar.urgent { background: var(--warnbg); color: var(--warn); }
 .trial-bar .trial-buy { font-weight: 600; text-decoration: underline; color: inherit; }
-.trial-ended .card h2 { margin-top: 22px; }
+/* the trial-ended screen: what you keep, what it costs, how to buy, beside our own promotional panel (stacked on a phone) */
+.te-wrap { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 24px; max-width: 1120px; margin: 28px auto; align-items: start; }
+.te-main { padding: clamp(18px, 3vw, 32px); margin: 0; }
+.te-main h1 { font-size: clamp(26px, 4vw, 36px); margin: 6px 0 10px; line-height: 1.15; }
+.te-main h2 { font-size: 16px; margin: 24px 0 8px; }
+.te-eyebrow { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--teal); }
+.te-lead { font-size: 17px; line-height: 1.5; margin: 0 0 16px; }
+.te-keep { background: var(--okbg, #e6f6f2); border-radius: 12px; padding: 12px 16px; margin: 0 0 16px; }
+.te-keep ul { margin: 6px 0 0; padding-inline-start: 0; list-style: none; display: grid; gap: 4px; }
+.te-keep li::before { content: "\2713"; color: var(--teal); font-weight: 800; margin-inline-end: 8px; }
+.te-price { border: 1px solid var(--line); border-radius: 14px; padding: 6px 16px 10px; margin: 0 0 18px; }
+.te-price h2 { margin-top: 12px; }
+.te-price table { width: 100%; border-collapse: collapse; }
+.te-price th { text-align: start; font-weight: 600; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.te-price th small { display: block; font-weight: 400; color: var(--mut); font-size: 12px; }
+.te-price td { text-align: end; font-weight: 700; font-size: 18px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.te-price tr:last-child th, .te-price tr:last-child td { border-bottom: 0; }
+a.b.big { font-size: 17px; padding: 13px 30px; border-radius: 12px; box-shadow: 0 8px 20px -10px rgba(15, 118, 110, .7); }
+.te-steps ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: step; }
+.te-steps li { display: grid; grid-template-columns: 32px 1fr; column-gap: 12px; counter-increment: step; }
+.te-steps li::before { content: counter(step); grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; background: var(--teal); color: var(--onteal); display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+.te-steps li span { color: var(--mut); font-size: 14px; }
+.te-promo { position: sticky; top: 24px; background: linear-gradient(160deg, #06222b 0%, #0b3f45 55%, #0f766e 120%); color: #fff; border-radius: 22px; padding: clamp(22px, 3vw, 34px); box-shadow: 0 24px 50px -28px rgba(6, 34, 43, .8); overflow: hidden; }
+.te-promo::after { content: ""; position: absolute; inset-inline-end: -60px; inset-block-start: -60px; width: 200px; height: 200px; border-radius: 50%; background: radial-gradient(circle, rgba(94, 234, 212, .35), transparent 70%); pointer-events: none; }
+.te-kicker { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #5eead4; }
+.te-promo h2 { font-size: clamp(24px, 3vw, 32px); line-height: 1.15; margin: 10px 0 12px; color: #fff; }
+.te-promo p { color: rgba(255, 255, 255, .82); line-height: 1.55; margin: 0 0 16px; }
+.te-badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; }
+.te-badges span { background: rgba(255, 255, 255, .12); border: 1px solid rgba(255, 255, 255, .22); border-radius: 999px; padding: 6px 12px; font-size: 13px; color: #fff; }
+.te-say { border-top: 1px solid rgba(255, 255, 255, .2); padding-top: 14px; margin: 0 0 18px; display: grid; gap: 12px; }
+.te-say figure { margin: 0; }
+.te-say blockquote { margin: 0 0 6px; font-size: 15px; line-height: 1.5; color: #fff; }
+.te-say figcaption { display: flex; flex-direction: column; font-size: 13px; color: rgba(255, 255, 255, .75); }
+.te-say figcaption b { color: #fff; }
+.te-promo a.b.p { background: #5eead4; border-color: #5eead4; color: #06222b; box-shadow: none; }
+.te-talk { margin: 14px 0 0 !important; font-size: 13px; }
 .trial-ended a:not(.b) { color: var(--teal); }
+@media (max-width: 900px) { .te-wrap { grid-template-columns: 1fr; margin: 14px auto; } .te-promo { position: relative; top: auto; } }
 @media (max-width: 700px) { .trial-bar { font-size: 12px; } .trial-bar .trial-until { display: none; } }

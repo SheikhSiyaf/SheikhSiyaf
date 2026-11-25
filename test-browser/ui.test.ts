@@ -744,6 +744,22 @@ describe('The free trial on screen', () => {
     expect(await page.evaluate(() => document.querySelector('#trialui-buy')?.getAttribute('href'))).toBe('https://nusuhbooks.com/order/');
     expect(await text(page, '#trialui-modules')).toContain('The core modules stay on');
     expect(await text(page, '#trialui-contact')).toContain('hello@nusuhbooks.com');
+    // what you keep, what it costs (the owner's prices), how buying works, and our own promotional panel beside it
+    expect(await text(page, '#trialui-keep')).toContain('The same company and the same data');
+    expect(await page.locator('#trial-price tr').count()).toBe(4);
+    expect(await text(page, '#trial-price')).toMatch(/SAR 9,000[\s\S]*SAR 1,500/);
+    expect(await text(page, '#trial-price')).toContain('before VAT');
+    expect(await page.locator('#trial-steps li').count()).toBe(3);
+    expect(await text(page, '#trial-promo')).toContain('Close every month on one set of books.');
+    expect(await text(page, '#trial-promo')).toContain('Built for ZATCA Phase 2');
+    expect(await page.locator('#trial-testimonials').count()).toBe(0);   // none until the owner adds real ones
+    expect(await page.locator('#trialui-buy').count() + await page.locator('#trialui-buy-2').count()).toBe(2);
+    // a real testimonial the owner added shows in the panel; nothing is invented
+    await db.query(`INSERT INTO website_testimonials (name, role, company, quote, consent) VALUES ('Browser Customer', 'Finance manager', 'Browser Co', 'It closes our month without chasing anyone.', true)`);
+    await page.goto(`${BASE}/c/${company}/Home`, { waitUntil: 'networkidle' });
+    await page.locator('#trial-testimonials').waitFor({ timeout: 15000 });
+    expect(await text(page, '#trial-testimonials')).toContain('It closes our month without chasing anyone.');
+    await db.query('DELETE FROM website_testimonials');
     await screenshotTo(page, 'trial-ended-screen');
     expect(await page.locator('nav.side').count()).toBe(0);   // no software behind it
     // the export link gives a zip; posting is refused
@@ -772,7 +788,9 @@ describe('The free trial on screen', () => {
     await ph.locator('input[type=password]').fill('demo1234');
     await ph.getByRole('button', { name: 'Sign in', exact: true }).click();
     await ph.locator('#trial-ended').waitFor({ timeout: 30000 });
-    expect(await ph.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+    const overflow = await ph.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    const wide = await ph.evaluate(() => { const w = document.documentElement.clientWidth; return [...document.querySelectorAll('#trial-ended *')].filter((e) => e.getBoundingClientRect().right > w + 1).slice(0, 6).map((e) => `${e.tagName}.${e.className}#${e.id} right=${Math.round(e.getBoundingClientRect().right)}`); });
+    expect(overflow, `sideways by ${overflow}px: ${JSON.stringify(wide)}`).toBeLessThanOrEqual(2);
   });
 
   it('the Administrator sees the same screen, told that the books are exported by company users', async () => {

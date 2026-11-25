@@ -70,9 +70,10 @@ export function registerTrialRoutes(app: FastifyInstance, { as, opts }: Ctx) {
     if (a.level === 'full' && !a.trialing) return summary(a);   // a paying customer, or none with a trial: nothing more to say
     const more = await as(req, async (db) => ({
       modules: (await db.query('SELECT my_trial_modules() AS m')).rows[0].m as string[],
-      prices: (await db.query('SELECT public_site_data() AS d')).rows[0].d as { currency: string; lines: { key: string; name: string; nameAr: string; amount: number | string }[] },
+      prices: (await db.query('SELECT public_site_data() AS d')).rows[0].d as { currency: string; lines: { key: string; name: string; nameAr: string; amount: number | string }[]; testimonials: { items: unknown[] } },
     }));
-    return { ...summary(a), modules: more.modules, prices: { currency: more.prices.currency, lines: more.prices.lines }, support: SUPPORT,
+    // the customers' own words that the owner has added in Owner > Website (none until there are real ones): up to three
+    return { ...summary(a), modules: more.modules, prices: { currency: more.prices.currency, lines: more.prices.lines }, testimonials: more.prices.testimonials.items.slice(0, 3), support: SUPPORT,
       buyUrl: `${SUPPORT.website}/order/` };
   });
 

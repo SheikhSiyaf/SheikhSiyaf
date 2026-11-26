@@ -92,7 +92,9 @@ describe('Owner settings', () => {
     const held = await post(c, '/api/owner/settings/test-email');
     expect(held.statusCode, held.body).toBe(200);
     const heldTests = (held.json().tests as { to: string; status: string; lastError: string | null }[]).slice(0, 2);
-    expect(heldTests.every((t) => mine.has(t.to) && t.status === 'queued' && /No email provider/.test(t.lastError ?? ''))).toBe(true);
+    // The outbox is shared with other test files and test/email.test.ts sweeps every queued row at once: if that sweep ran between the press and this
+    // read, the test email was already "sent" by it (found in CI, where the files overlap more). Either way it went only to the owner's addresses.
+    expect(heldTests.every((t) => mine.has(t.to) && ((t.status === 'queued' && /No email provider/.test(t.lastError ?? '')) || t.status === 'sent'))).toBe(true);
     expect((await post(c, '/api/owner/settings/test-email')).json().key).toBe('err.testWait');   // pressed again straight away
     await age();
 

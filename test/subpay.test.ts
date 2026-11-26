@@ -1,12 +1,23 @@
 // Manual bank-transfer payments (migration 0089): the order, the "I paid" form, the review decisions, approval through the existing conversion,
 // the status machine, references, and the abuse cases. Trials here start on 1 October 2025, approvals run "on" 5 October 2025, like test/trialOrders.test.ts.
 import { describe, it, expect, beforeAll } from 'vitest';
-import { as, owner, seed, type Fixture } from './helpers.js';
+import { as as asOnce, owner, seed, type Fixture } from './helpers.js';
+import type { Db } from '../src/db/session.js';
 import * as B from '../src/books/billingService.js';
 import * as O from '../src/books/trialOrders.js';
 import * as P from '../src/books/subpay.js';
 
 const d = (s: string) => new Date(s);
+/** Customer erasure (another test file) briefly takes table locks and, by design, ends in "try again" when it meets other work; the same can happen to
+ *  anything here that runs at that moment. A request the database rolled back for a deadlock or a lock wait is safe to run again. */
+async function as<T>(userId: string, fn: (db: Db) => Promise<T>): Promise<T> {
+  for (let i = 0; ; i++) {
+    try { return await asOnce(userId, fn); } catch (e) {
+      if (i < 5 && /deadlock detected|lock timeout|could not obtain lock|system is busy/i.test(String(e))) { await new Promise((ok) => setTimeout(ok, 300)); continue; }
+      throw e;
+    }
+  }
+}
 let planId = '';
 const stamp = () => `${Date.now()}${Math.floor(Math.random() * 10000)}`;
 const PDF = Buffer.from('%PDF-1.4 slip').toString('base64');
@@ -397,7 +408,7 @@ describe('deleting a customer for good', () => {
     const f = await customer(); const id = await place(f); await pay(f, id);
     await owner.query(`UPDATE firms SET removed_at = now(), status = 'suspended' WHERE id = $1`, [f.firmId]);
     const name = (await owner.query('SELECT name FROM firms WHERE id = $1', [f.firmId])).rows[0].name as string;
-    await expect(as(f.platformOwner, (db) => db.query('SELECT owner_erase_tenant($1, $2)', [f.firmId, name]))).rejects.toThrow();
+    await expect(as(f.platformOwner, (db) => db.query('SELECT owner_erase_tenant($1, $2)', [f.firmId, name]))).rejects.toThrow(/payment|Posted records|deleted|used|busy|deadlock|lock/i);
     expect((await owner.query('SELECT count(*)::int AS n FROM firms WHERE id = $1', [f.firmId])).rows[0].n).toBe(1);
     expect((await owner.query('SELECT count(*)::int AS n FROM subpay.orders WHERE id = $1', [id])).rows[0].n).toBe(1);
     expect((await owner.query(`SELECT count(*)::int AS n FROM pg_trigger WHERE tgenabled = 'D' AND NOT tgisinternal`)).rows[0].n).toBe(0);

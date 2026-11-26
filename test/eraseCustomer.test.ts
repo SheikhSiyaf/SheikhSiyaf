@@ -35,7 +35,15 @@ async function newCustomer(label: string) {
   return { firmId, companyId, name, userEmail };
 }
 const remove = (id: string, removed = true) => server.inject({ method: 'POST', url: `/api/owner/tenants/${id}/remove`, headers: { cookie }, payload: { removed } });
-const erase = (id: string, confirmName: unknown, c = cookie) => server.inject({ method: 'POST', url: `/api/owner/tenants/${id}/erase`, headers: { cookie: c }, payload: { confirmName } });
+/** The erase takes brief table locks and, by design, gives up with "the system is busy, try again" (503) when other work holds the same tables at that moment
+ *  (the shared test database runs other test files at the same time). The product tells the owner to try again, so the checks do too, a few times. */
+async function again<T>(fn: () => Promise<T>): Promise<T> {
+  for (let i = 0; ; i++) {
+    try { const r = await fn(); if ((r as { statusCode?: number })?.statusCode === 503 && i < 8) { await new Promise((ok) => setTimeout(ok, 400)); continue; } return r; }
+    catch (e) { if (i < 8 && /deadlock|lock timeout|lock on relation/i.test(String(e))) { await new Promise((ok) => setTimeout(ok, 400)); continue; } throw e; }
+  }
+}
+const erase = (id: string, confirmName: unknown, c = cookie) => again(() => server.inject({ method: 'POST', url: `/api/owner/tenants/${id}/erase`, headers: { cookie: c }, payload: { confirmName } }));
 const listed = async (id: string) => ((await server.inject({ method: 'GET', url: '/api/owner/tenants', headers: { cookie } })).json() as { id: string; eraseBlockers: string[] | null }[]).find((x) => x.id === id);
 const everything = async (firmId: string, companyId: string) => ({
   firm: await n('SELECT count(*) AS n FROM firms WHERE id = $1', [firmId]),
@@ -136,7 +144,7 @@ describe('A customer that used the books can only be removed', () => {
     expect(await everything(used.firmId, used.companyId)).toEqual(before);
     expect(await n('SELECT count(*) AS n FROM journal_entries WHERE company_id = $1', [used.companyId])).toBe(1);
     // even the owner's own database function refuses it, whatever the screen did
-    await expect(as(f.platformOwner, (db) => db.query('SELECT owner_erase_tenant($1, $2)', [used.firmId, used.name]))).rejects.toThrow(/used the books/);
+    await expect(again(() => as(f.platformOwner, (db) => db.query('SELECT owner_erase_tenant($1, $2)', [used.firmId, used.name])))).rejects.toThrow(/used the books/);
     expect(await everything(used.firmId, used.companyId)).toEqual(before);
     expect(await n(`SELECT count(*) AS n FROM pg_trigger WHERE tgenabled = 'D' AND NOT tgisinternal`)).toBe(0);
   });

@@ -705,3 +705,14 @@ Every change below is covered by a test in `test/`.
 | New table `erasure_log` (when, who, customer name and kind, how many companies, people and rows). Read-only to the owner, never edited or deleted | A permanent record that a customer was erased, since the customer's own data is gone. |
 | New functions `erase_blockers(firm)`, `owner_erase_tenant(firm, name)` (executable by `nusuh_app`; owner only) and `erase_rows`, `erase_firm_data` (engine; not executable by the app) | The owner can erase a removed customer for good, but only one that never used the books: no entry, issued document, payment, e-invoice, payroll, month sign-off, Nusuh invoice or paid order. One transaction; the triggers that protect posted records are switched off only inside it, under exclusive locks, and the foreign keys stay on; a row of another customer that still points at it undoes the whole erase. An audit-log line (`erase`) and an `erasure_log` line are written. `trial_fingerprints` and the sign-up log stay so a company number or mailbox cannot get a second free trial. |
 | `owner_tenants()` replaced to add `erase_blockers` for removed customers | The owner's list shows the Delete-for-good button only where it is allowed, and why not otherwise. |
+
+## 0086_google_nonce_once.sql
+| Change | Why |
+|---|---|
+| New table `google_nonce_used` (a hash of each one-time sign-in value that was used, kept a day). Row-level security on, no policy, no grant | A Google sign-in token captured from a browser could be replayed while its one-time value was still valid; now each one-time value works once. |
+| New function `google_nonce_take(hash)` (security definer, fixed search path, server only, executable by `nusuh_app`): true the first time, false after | The only way the server reads or writes that table. |
+
+## 0087_erase_lighter_locks.sql
+| Change | Why |
+|---|---|
+| `erase_firm_data()` replaced (same signature and rights): no explicit `ACCESS EXCLUSIVE` lock on the guarded tables any more; switching their triggers off takes `SHARE ROW EXCLUSIVE` (reads go on, writes wait), in one fixed table order | The first version could deadlock with ordinary requests that read the same tables in a different order ("deadlock detected" in the test suite). A reader no longer waits for, or deadlocks with, an erase. |

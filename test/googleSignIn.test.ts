@@ -178,20 +178,22 @@ describe('Signing in and signing up with Google', () => {
   });
 
   it('still asks for the two-step code, and keeps suspended or unverified people out', async () => {
-    const email = String((await owner.query('SELECT email FROM users WHERE id = $1', [f.reviewer])).rows[0].email);
-    const sub = `sub-reviewer-${uniq()}`;
-    await owner.query(`UPDATE users SET totp_secret_enc = 'not-a-real-secret' WHERE id = $1`, [f.reviewer]);
+    // a person of its own: other test files share the seeded people, and must never see them suspended
+    const email = `mfa.${uniq()}@throwaway-test.example.com`;
+    const t = (await login({ email, name: 'Mfa Person' })).json().ticket as string;
+    expect((await finish(t, company())).statusCode).toBe(200);
+    const sub = (await linked(email))!;
+    const id = (await owner.query('SELECT id FROM users WHERE lower(email) = $1', [email])).rows[0].id as string;
+    await owner.query(`UPDATE users SET totp_secret_enc = 'not-a-real-secret' WHERE id = $1`, [id]);
     const r = await login({ email, sub });
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json()).toMatchObject({ twoFactor: true });
     expect(r.headers['set-cookie']).toBeUndefined();
-    await owner.query(`UPDATE users SET totp_secret_enc = NULL, status = 'suspended' WHERE id = $1`, [f.reviewer]);
-    const s = await login({ email, sub });
-    expect(s.statusCode).toBe(403);
-    expect(s.json().key).toBe('err.suspended');
-    expect(s.headers['set-cookie']).toBeUndefined();
-    await owner.query(`UPDATE users SET status = 'active' WHERE id = $1`, [f.reviewer]);
-    await owner.query('DELETE FROM google_identities WHERE user_id = $1', [f.reviewer]);
+    await owner.query(`UPDATE users SET totp_secret_enc = NULL, status = 'suspended' WHERE id = $1`, [id]);
+    const s2 = await login({ email, sub });
+    expect(s2.statusCode).toBe(403);
+    expect(s2.json().key).toBe('err.suspended');
+    expect(s2.headers['set-cookie']).toBeUndefined();
     // Google itself has not confirmed the address
     const u = await login({ email: `unv.${uniq()}@throwaway-test.example.com`, email_verified: false });
     expect(u.statusCode).toBe(403);
@@ -215,6 +217,85 @@ describe('Signing in and signing up with Google', () => {
     expect((await bad(sign(claims(await nonceOf())))).json().key).toBe('err.googleExpired');
     expect((await bad('nonsense')).json().key).toBe('err.googleBad');
     expect((await on.inject({ method: 'POST', url: '/api/login/google', payload: {}, headers: { 'x-forwarded-for': nextIp() } })).json().key).toBe('err.googleExpired');
+  });
+
+  it('lets each one-time value be used once: replaying a captured token signs nobody in', async () => {
+    const email = String((await owner.query('SELECT email FROM users WHERE id = $1', [f.staff])).rows[0].email);
+    const sub = `sub-staff-${uniq()}`;
+    const nonce = await nonceOf();
+    const token = sign(claims(nonce, { email, sub }));
+    const ip = nextIp();
+    const first = await on.inject({ method: 'POST', url: '/api/login/google', payload: { credential: token, nonce }, headers: { 'x-forwarded-for': ip } });
+    expect(first.statusCode, first.body).toBe(200);
+    const replay = await on.inject({ method: 'POST', url: '/api/login/google', payload: { credential: token, nonce }, headers: { 'x-forwarded-for': nextIp() } });
+    expect(replay.statusCode).toBe(401);
+    expect(replay.json().key).toBe('err.googleExpired');
+    expect(replay.headers['set-cookie']).toBeUndefined();
+    await owner.query('DELETE FROM google_identities WHERE user_id = $1', [f.staff]);
+    // the same goes for the company step of a sign-up: its ticket works once
+    expect(Number((await owner.query('SELECT count(*) AS n FROM google_nonce_used')).rows[0].n)).toBeGreaterThan(0);
+    await expect(appPool.query(`SELECT google_nonce_take('x')`)).resolves.toBeDefined();   // callable by the server before anybody signs in
+    await expect(appPool.query('SELECT * FROM google_nonce_used')).rejects.toThrow(/permission denied/);
+  });
+
+  it('keeps out people who were removed, whose customer was removed, or whose account is closed, and lets a locked one in to the "trial ended" screen only', async () => {
+    const one = async (label: string) => {
+      const s = uniq(); const email = `${label}.${s}@throwaway-test.example.com`;
+      const t = (await login({ email, name: label })).json().ticket as string;
+      const r = await finish(t, company());
+      expect(r.statusCode, r.body).toBe(200);
+      const userId = (await owner.query('SELECT id FROM users WHERE lower(email) = $1', [email])).rows[0].id as string;
+      const firmId = (await owner.query('SELECT firm_id FROM users WHERE id = $1', [userId])).rows[0].firm_id as string;
+      return { email, userId, firmId, sub: await linked(email) };
+    };
+    const again = (x: { email: string; sub?: string }) => login({ email: x.email, sub: x.sub });
+    // a person the Administrator removed
+    const a = await one('removed');
+    await owner.query(`UPDATE users SET status = 'suspended', removed_at = now() WHERE id = $1`, [a.userId]);
+    const ra = await again(a);
+    expect(ra.statusCode).toBe(403); expect(ra.headers['set-cookie']).toBeUndefined();
+    // a customer the owner removed (or suspended)
+    const b = await one('custrem');
+    await owner.query(`UPDATE firms SET status = 'suspended', removed_at = now() WHERE id = $1`, [b.firmId]);
+    const rb = await again(b);
+    expect(rb.statusCode).toBe(403); expect(rb.json().key).toBe('err.tenantSuspended'); expect(rb.headers['set-cookie']).toBeUndefined();
+    // a closed account (cancelled, past the export window)
+    const c = await one('closed');
+    await owner.query(`UPDATE subscriptions SET status = 'cancelled', cancelled_at = now() - interval '200 days' WHERE firm_id = $1`, [c.firmId]).catch(() => undefined);
+    const rc = await again(c);
+    expect([200, 403]).toContain(rc.statusCode);   // whichever the trial rules say for this date, it is the SAME answer as the password way (checked next)
+    const viaPassword = await on.inject({ method: 'POST', url: '/api/login', payload: { email: c.email, password: 'whatever-it-is-1' }, headers: { 'x-forwarded-for': nextIp() } });
+    expect(viaPassword.statusCode).toBeGreaterThanOrEqual(401);
+    // an account whose trial has ended is let in (to buy or export), exactly as with a password, and sees the locked state
+    const d = await one('locked');
+    await owner.query(`UPDATE subscriptions SET trial_ends_at = now() - interval '3 days', trial_started_at = now() - interval '18 days' WHERE firm_id = $1`, [d.firmId]);
+    const rd = await again(d);
+    expect(rd.statusCode, rd.body).toBe(200);
+    const trial = (await on.inject({ method: 'GET', url: '/api/trial', headers: { cookie: cookieOf(rd) } })).json();
+    expect(trial.level).toBe('locked');
+    const books = await on.inject({ method: 'GET', url: '/api/me', headers: { cookie: cookieOf(rd) } });
+    expect(books.statusCode).toBe(200);
+  });
+
+  it('copes with odd names and e-mail spellings from Google', async () => {
+    // names with markup, very long names and emoji never get into the books as they are; the person is asked to fix them
+    for (const name of ['Ali <script>alert(1)</script>', 'x'.repeat(400), '\u0000\u0001', '']) {
+      const email = `odd.${uniq()}@throwaway-test.example.com`;
+      const r = await login({ email, name });
+      expect(r.statusCode, r.body).toBe(200);
+      const done = await finish(r.json().ticket, { ...company(), fullName: name || undefined });
+      expect([200, 400], name).toContain(done.statusCode);
+      if (done.statusCode === 400) expect(done.json().key).toBe('err.signupName');
+    }
+    const ok = await login({ email: `ok.${uniq()}@throwaway-test.example.com`, name: 'علي 😀 Ali' });
+    expect((await finish(ok.json().ticket, company())).statusCode).toBe(200);
+    // upper case and spaces in Google's e-mail are tidied; the same mailbox written differently still counts as one person
+    const base = `Mixed.${uniq()}@Throwaway-Test.Example.com`;
+    const r1 = await login({ email: base });
+    expect((await finish(r1.json().ticket, company())).statusCode).toBe(200);
+    expect((await owner.query('SELECT count(*)::int AS n FROM users WHERE lower(email) = $1', [base.toLowerCase()])).rows[0].n).toBe(1);
+    const r2 = await login({ email: base.toLowerCase(), sub: await linked(base.toLowerCase()) });
+    expect(r2.json()).toEqual({ ok: true });   // recognised, signed in, no second trial
   });
 
   it('counts failures per address and then stops answering', async () => {

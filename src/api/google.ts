@@ -10,7 +10,7 @@ import { LOGIN_LIMITS, Throttle } from '../auth/throttle.js';
 import { accessForUser } from '../books/trialService.js';
 import { googleSignup, signupConfig } from '../books/signupService.js';
 import { outsideCallsOff } from '../outside.js';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 /** Is the Google button offered? Only with a Client ID, and (for the real call to Google) only while outside calls are allowed. */
 export const googleAvailable = (g: Ctx['opts']['google']) => Boolean(g?.clientId) && (Boolean(g?.fetchKeys) || !outsideCallsOff());
@@ -44,7 +44,10 @@ export function registerGoogleRoutes(app: FastifyInstance, { pool, opts }: Ctx, 
     await addresses.check(ip);
     try {
       if (typeof nonce !== 'string' || !verifyToken(opts.sessionSecret, 'gnonce', nonce)) throw new GoogleTokenError('wrong_nonce');
-      return await verifyGoogleToken(credential, { clientId: gg.clientId, nonce, getKey, now: () => (opts.now?.() ?? new Date()).getTime() });
+      const who = await verifyGoogleToken(credential, { clientId: gg.clientId, nonce, getKey, now: () => (opts.now?.() ?? new Date()).getTime() });
+      // each one-time value works for one sign-in only: a captured token cannot be replayed
+      if (!(await pool.query('SELECT google_nonce_take($1) AS ok', [createHash('sha256').update(nonce).digest('hex')])).rows[0].ok) throw new GoogleTokenError('wrong_nonce');
+      return who;
     } catch (e) {
       if (e instanceof GoogleTokenError) {
         if (e.problem !== 'unavailable') await addresses.fail(ip);

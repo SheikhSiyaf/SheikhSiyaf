@@ -162,8 +162,14 @@ describe('Owner settings', () => {
     const target = `scrub.${stamp()}@example.org`;
     await post(c, '/api/me/email-change', { purpose: 'backup', newEmail: target, password: PW });
     const fake: Fetch = async () => ({ ok: true, status: 200, text: async () => '{"id":"msg_scrub"}' });
-    await sendQueued(appPool, { limit: 50, cfg: { provider: 'resend', from: 'Nusuh Books <no-reply@send.example.com>', key: 're_test' }, fetchFn: fake });
-    const row = (await owner.query(`SELECT body_text, body_html, status FROM email_outbox WHERE lower(to_email) = lower($1) ORDER BY created_at DESC LIMIT 1`, [target])).rows[0];
+    // The e-mail queue is shared with every other test file running at the same moment, which also send from it: our message may be behind
+    // theirs (a batch is the oldest 50), or already taken by their sweep. Send until ours has gone, then look at it.
+    const fetchRow = async () => (await owner.query(`SELECT body_text, body_html, status FROM email_outbox WHERE lower(to_email) = lower($1) ORDER BY created_at DESC LIMIT 1`, [target])).rows[0];
+    for (let i = 0; i < 20 && (await fetchRow()).status !== 'sent'; i++) {
+      await sendQueued(appPool, { limit: 200, cfg: { provider: 'resend', from: 'Nusuh Books <no-reply@send.example.com>', key: 're_test' }, fetchFn: fake });
+      if ((await fetchRow()).status !== 'sent') await new Promise((r) => setTimeout(r, 100));
+    }
+    const row = await fetchRow();
     expect(row.status).toBe('sent');
     expect(row.body_text).not.toMatch(/confirm-email\/[A-Za-z0-9_-]{20,}/);
     expect(row.body_html).not.toMatch(/confirm-email\/[A-Za-z0-9_-]{20,}/);

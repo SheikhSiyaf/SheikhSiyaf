@@ -180,7 +180,9 @@ describe('Every route, given empty or nonsense input', () => {
       // The password is restored, the recorded attempts cleared, and each sign-in comes from a different address:
       // the per-account and per-address sign-in limits are deliberate and are tested on their own in
       // test/throttle.test.ts. Without this the probe trips them and silently stops testing the routes.
-      await ownerPool.query('UPDATE users SET password_hash = $1 WHERE email = $2', [hash, email]);
+      await ownerPool.query('UPDATE users SET password_hash = $1, status = \'active\', removed_at = NULL WHERE email = $2', [hash, email]);
+      // the nonsense it posts can also remove a person or a customer (a body with no "removed" field means "remove"): bring them back too
+      await ownerPool.query(`UPDATE firms SET status = 'active', removed_at = NULL WHERE id = (SELECT firm_id FROM users WHERE email = $1) AND kind <> 'platform'`, [email]);
       await ownerPool.query('DELETE FROM auth_attempts');
       signIns++;
       const res = await server.inject({ method: 'POST', url: '/api/login', payload: { email, password: DEMO_PASSWORD },

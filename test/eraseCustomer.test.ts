@@ -189,6 +189,26 @@ describe('A customer that something else still points at', () => {
   });
 });
 
+describe('Erasing does not get in the way of everyone else', () => {
+  it('does not wait for, or deadlock with, people who are only reading the books', async () => {
+    const x = await newCustomer('Readers');
+    await remove(x.firmId);
+    const reader = await owner.connect();
+    try {
+      // a request in the middle of reading the books: it holds read locks on tables the erase has to touch, and has not finished
+      await reader.query('BEGIN');
+      for (const tbl of ['journal_lines', 'journal_entries', 'accounts', 'companies', 'users', 'memberships', 'documents', 'contacts']) await reader.query(`SELECT count(*) FROM ${tbl}`);
+      const t0 = Date.now();
+      const r = await erase(x.firmId, x.name);
+      expect(r.statusCode, r.body).toBe(200);
+      expect(Date.now() - t0).toBeLessThan(5000);   // it did not sit waiting behind the reader
+      for (const tbl of ['firms', 'documents', 'accounts']) await reader.query(`SELECT count(*) FROM ${tbl}`);   // and the reader can carry on and finish
+      await reader.query('COMMIT');
+    } finally { await reader.query('ROLLBACK').catch(() => undefined); reader.release(); }
+    expect(await n('SELECT count(*) AS n FROM firms WHERE id = $1', [x.firmId])).toBe(0);
+  });
+});
+
 describe('Nobody but the owner', () => {
   it('cannot erase, list the blockers or call the engine', async () => {
     const x = await newCustomer('Guarded');

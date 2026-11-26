@@ -53,9 +53,10 @@ async function counts(url: string): Promise<Record<string, number>> {
   const c = new pg.Client({ connectionString: url });
   await c.connect();
   try {
-    const t = await c.query<{ t: string }>(`SELECT tablename t FROM pg_tables WHERE schemaname='public' ORDER BY 1`);
+    // our two sections: public, and subpay (the bank-transfer payments: orders, what customers said they paid, the slips). Losing the second in a restore would lose money records.
+    const t = await c.query<{ s: string; t: string }>(`SELECT schemaname s, tablename t FROM pg_tables WHERE schemaname IN ('public', 'subpay') ORDER BY 1, 2`);
     const out: Record<string, number> = {};
-    for (const { t: name } of t.rows) out[name] = Number((await c.query(`SELECT count(*) FROM "${name}"`)).rows[0].count);
+    for (const { s, t: name } of t.rows) out[s === 'public' ? name : `${s}.${name}`] = Number((await c.query(`SELECT count(*) FROM "${s}"."${name}"`)).rows[0].count);
     return out;
   } finally { await c.end(); }
 }

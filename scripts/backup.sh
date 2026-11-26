@@ -37,10 +37,10 @@ trap 'rm -f "$tmp"' EXIT
 
 # Custom format is compressed and lets pg_restore pick parts back. The passphrase goes in on a file descriptor, not on
 # the command line, where any other process on the machine could read it.
-# Only our own section (public) and the one extension our tables need are copied. On Supabase the database also holds
+# Only our own sections (public, and subpay: the bank-transfer payments) and the one extension our tables need are copied. On Supabase the database also holds
 # the platform's own schemas (vault, auth, graphql ...): they belong to Supabase, are rebuilt by it, and cannot be restored
 # anywhere else, so a copy of everything would never restore into a plain server.
-pg_dump --format=custom --no-owner --schema=public --extension=btree_gist --dbname="$BACKUP_DATABASE_URL" \
+pg_dump --format=custom --no-owner --schema=public --schema=subpay --extension=btree_gist --dbname="$BACKUP_DATABASE_URL" \
   | gpg --batch --yes --quiet --pinentry-mode loopback --passphrase-fd 3 \
         --symmetric --cipher-algo AES256 --compress-algo none --output "$tmp" 3<<<"$BACKUP_PASSPHRASE"
 

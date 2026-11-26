@@ -272,7 +272,7 @@ describe('the review desk', () => {
     const c = await owner.connect();
     try {
       await c.query('BEGIN');
-      await c.query('ALTER TABLE subpay.orders DISABLE TRIGGER USER');
+      await c.query('SET LOCAL session_replication_role = replica');   // skips the guard triggers for this one transaction (no table lock, so nothing else waits)
       await c.query(`UPDATE subpay.orders SET created_by = $1 WHERE id = $2`, [f.platformOwner, id]);   // as if the Owner had entered it for the customer
       await c.query('SET LOCAL ROLE nusuh_app'); await c.query(`SELECT set_config('app.user_id', $1, true)`, [f.platformOwner]);
       await expect(c.query('SELECT subpay.begin_approve($1, NULL)', [id])).rejects.toThrow(/yourself/);
@@ -385,8 +385,7 @@ describe('the database rules (hit directly, as the owner connection)', () => {
 
   it('an unpaid order that has run out of time is closed, and cannot be paid', async () => {
     const f = await customer(); const id = await place(f);
-    await owner.query(`ALTER TABLE subpay.orders DISABLE TRIGGER USER`);
-    try { await owner.query(`UPDATE subpay.orders SET expires_at = now() - interval '1 day' WHERE id = $1`, [id]); } finally { await owner.query(`ALTER TABLE subpay.orders ENABLE TRIGGER USER`); }
+    await owner.query(`UPDATE subpay.orders SET expires_at = now() - interval '1 day' WHERE id = $1`, [id]);
     await expect(pay(f, id)).rejects.toThrow(/expired/);
     expect(await as(f.platformOwner, async (db) => Number((await db.query('SELECT subpay.expire_stale() AS n')).rows[0].n))).toBeGreaterThanOrEqual(1);
     expect(await status(id)).toBe('expired');

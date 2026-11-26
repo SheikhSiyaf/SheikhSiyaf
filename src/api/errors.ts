@@ -21,6 +21,13 @@ export function listOf<T>(v: unknown, what = 'list'): T[] {
 }
 
 const RAISED: [RegExp, string][] = [
+  [/at least one active person with the Owner role/, 'err.staffLastOwner'],
+  [/cannot change your own/, 'err.staffSelf'],
+  [/Built-in roles/, 'err.staffBuiltIn'],
+  [/Move the people in this role/, 'err.staffRoleInUse'],
+  [/A role with this name exists already/, 'err.staffRoleName'],
+  [/must also be able to see/, 'err.staffNeedsView'],
+  [/Only the platform owner can do this/, 'err.ownerOnly'],
   [/period is locked/, 'err.periodLocked'],
   [/You can save at most \d+ testimonials/, 'err.tmFull'],
   [/You have \d+ testimonials saved/, 'err.tmLimitLow'],

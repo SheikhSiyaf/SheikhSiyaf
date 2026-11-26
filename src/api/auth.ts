@@ -132,7 +132,8 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
        ORDER BY c.name`);
     // A client user of a company that runs its own books may manage its users and job titles (db/migrations/0063).
     const canManageUsers = user.kind === 'client' && (await db.query('SELECT app_is_admin() AS a')).rows[0].a === true;
-    return { user, companies: user.kind === 'admin' || user.kind === 'owner' ? [] : companies.rows, canManageUsers };
+    const access = user.kind === 'owner' ? (await db.query('SELECT my_staff_access() AS a')).rows[0].a : undefined;   // the staff role and what it may open
+    return { user, companies: user.kind === 'admin' || user.kind === 'owner' ? [] : companies.rows, canManageUsers, access };
   }));
 
   // -------------------------------------------------------------- invitations

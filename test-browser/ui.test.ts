@@ -4,6 +4,7 @@
 //
 // These run against the server and database started in globalSetup.ts. They are the check that a change to a screen
 // cannot pass review just because the unit tests still pass.
+import { hashPassword } from '../src/auth/password.js';
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import pg from 'pg';
 import { zipStored } from '../src/export/xlsx.ts';
@@ -1699,5 +1700,63 @@ describe('The sign-in and sign-up pages', () => {
       expect(await ph.evaluate(() => getComputedStyle(document.querySelector('.auth-trust')!).display)).toBe('flex');
       expect(await overflowOf(ph), path).toBeLessThanOrEqual(2);
     }
+  });
+  it('Internal users: the owner adds a person, changes their role, suspends and restores them; a person without the Owner role sees only their own access', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: p } = await newPage(1280);
+    await signIn(p, platform);
+    await p.goto(`${BASE}/owner/staff`, { waitUntil: 'networkidle' });
+    await p.locator('#staff-new').waitFor({ timeout: 15000 });
+    const stamp = Date.now().toString(36), email = `ann.${stamp}@browser-staff.example.com`;
+    await p.locator('#staff-new').click();
+    await p.locator('#staff-name').fill(`Ann Accountant ${stamp}`);
+    await p.locator('#staff-email').fill(email);
+    await p.locator('#staff-role').selectOption({ index: 0 });
+    const roles = (await db.query(`SELECT id, name FROM staff_roles WHERE NOT archived ORDER BY is_full DESC, built_in DESC, name`)).rows as { id: string; name: string }[];
+    const accountant = roles.find((r) => r.name === 'Accountant')!, viewer = roles.find((r) => r.name === 'Viewer')!;
+    await p.locator('#staff-role').selectOption(accountant.id);
+    await p.locator('#staff-add').click();
+    await p.locator(`tr[data-email="${email}"]`).waitFor({ timeout: 15000 });
+    expect(await p.locator(`tr[data-email="${email}"]`).innerText()).toContain('Active');
+    const row = (await db.query(`SELECT u.id, r.name AS role FROM users u JOIN staff_roles r ON r.id = u.staff_role_id WHERE lower(u.email) = $1`, [email])).rows[0];
+    expect(row.role).toBe('Accountant');
+    await screenshotTo(p, 'staff-list');
+    // change the role from the list
+    await p.locator(`tr[data-email="${email}"] select`).selectOption(viewer.id);
+    await waitForText(p, 'Saved.');
+    expect((await db.query(`SELECT r.name FROM users u JOIN staff_roles r ON r.id = u.staff_role_id WHERE u.id = $1`, [row.id])).rows[0].name).toBe('Viewer');
+    // a new role with ticked permissions
+    await p.locator('#staff-role-new').click();
+    await p.locator('#staff-role-name').fill(`Bookkeeper ${stamp}`);
+    await p.locator('input[data-perm="billing.view"]').click();
+    await p.locator('input[data-perm="billing.manage"]').click();
+    await p.locator('#staff-role-save').click();
+    await waitForText(p, 'Role saved.');
+    expect((await db.query(`SELECT count(*)::int AS n FROM staff_role_grants g JOIN staff_roles r ON r.id = g.role_id WHERE r.name = $1`, [`Bookkeeper ${stamp}`])).rows[0].n).toBe(2);
+    // suspend, then restore
+    await p.locator(`tr[data-email="${email}"]`).getByRole('button', { name: 'Suspend' }).click();
+    await p.getByRole('button', { name: 'Yes, continue' }).click();
+    await waitForText(p, 'Suspended');
+    expect((await db.query(`SELECT status FROM users WHERE id = $1`, [row.id])).rows[0].status).toBe('suspended');
+    await p.locator(`tr[data-email="${email}"]`).getByRole('button', { name: 'Restore' }).click();
+    await p.getByRole('button', { name: 'Yes, continue' }).click();
+    await p.locator(`tr[data-email="${email}"]`).getByRole('button', { name: 'Suspend' }).waitFor({ timeout: 15000 });
+    // your own row has no role picker and no suspend button
+    const mine = p.locator(`tr[data-email="${platform}"]`);
+    expect(await mine.locator('select').count()).toBe(0);
+    expect(await mine.getByRole('button', { name: 'Suspend' }).count()).toBe(0);
+    expect(await overflowOf(p)).toBeLessThanOrEqual(2);
+    // the person without the Owner role: signs in, sees only their access, no owner tabs
+    await db.query(`UPDATE users SET password_hash = $1 WHERE id = $2`, [await hashPassword('staff-pass-123'), row.id]);
+    const { page: q } = await newPage(390);
+    await signIn(q, email, 'staff-pass-123');
+    await q.locator('#staff-home').waitFor({ timeout: 15000 });
+    expect(await q.locator('#staff-home').innerText()).toContain('Viewer');
+    expect(await q.locator('#own-tab-customers').count()).toBe(0);
+    expect(await q.locator('#own-tab-staff').count()).toBe(0);
+    expect(await overflowOf(q)).toBeLessThanOrEqual(2);
+    await screenshotTo(q, 'staff-restricted-home');
+    // Arabic and right to left
+    await p.locator('button.lang, #lang').first().click().catch(() => undefined);
   });
 });

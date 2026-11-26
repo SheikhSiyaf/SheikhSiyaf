@@ -255,6 +255,17 @@ BEGIN
   UPDATE users SET status = p_status, session_version = session_version + 1 WHERE id = p_user;
 END $$;
 
+/** Store a one-time sign-in invitation for a staff person who has not set a password yet (only the hash of the token is kept). */
+CREATE FUNCTION staff_member_invite(p_user uuid, p_hash text, p_days int) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+BEGIN
+  IF NOT app_is_owner() THEN RAISE EXCEPTION 'Only the platform owner can do this.'; END IF;
+  IF p_hash IS NULL OR char_length(p_hash) < 20 OR p_days NOT BETWEEN 1 AND 14 THEN RAISE EXCEPTION 'Not valid.'; END IF;
+  UPDATE users SET invite_token_hash = p_hash, invite_expires_at = now() + make_interval(days => p_days)
+   WHERE id = p_user AND kind = 'owner' AND removed_at IS NULL AND password_hash IS NULL;
+  IF NOT FOUND THEN RAISE EXCEPTION 'This person has signed in already.'; END IF;
+END $$;
+
 ALTER TABLE staff_permissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE staff_roles       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE staff_role_grants ENABLE ROW LEVEL SECURITY;
@@ -263,6 +274,6 @@ CREATE TRIGGER staff_roles_audit  AFTER INSERT OR UPDATE OR DELETE ON staff_role
 CREATE TRIGGER staff_grants_audit AFTER INSERT OR UPDATE OR DELETE ON staff_role_grants FOR EACH ROW EXECUTE FUNCTION audit_row();
 
 REVOKE ALL ON FUNCTION app_staff_can(text), my_staff_access(), staff_roles_list(), staff_role_save(uuid, text, text, text[]), staff_role_archive(uuid), staff_members(),
-  staff_keep_one_owner(uuid), staff_member_add(text, text, uuid), staff_member_update(uuid, text, text), staff_member_set_role(uuid, uuid), staff_member_set_status(uuid, text) FROM PUBLIC;
+  staff_keep_one_owner(uuid), staff_member_add(text, text, uuid), staff_member_update(uuid, text, text), staff_member_set_role(uuid, uuid), staff_member_set_status(uuid, text), staff_member_invite(uuid, text, int) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION app_staff_can(text), my_staff_access(), staff_roles_list(), staff_role_save(uuid, text, text, text[]), staff_role_archive(uuid), staff_members(),
-  staff_member_add(text, text, uuid), staff_member_update(uuid, text, text), staff_member_set_role(uuid, uuid), staff_member_set_status(uuid, text) TO nusuh_app;
+  staff_member_add(text, text, uuid), staff_member_update(uuid, text, text), staff_member_set_role(uuid, uuid), staff_member_set_status(uuid, text), staff_member_invite(uuid, text, int) TO nusuh_app;

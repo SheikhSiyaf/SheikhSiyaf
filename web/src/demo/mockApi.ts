@@ -3783,6 +3783,15 @@ function seedReview(companyId: string, poster: string) {
 
 // ---------------------------------------------------------------- owner (same rules as src/api/owner.ts)
 routes.push(
+  // Internal users (demo: a fixed picture of the staff page; changes are accepted but nothing is kept)
+  ['GET', /^\/api\/owner\/staff$/, () => { owner();
+    const perm = (code: string, workspace: string, labelEn: string, labelAr: string) => ({ code, workspace, labelEn, labelAr });
+    const me = db.users.find((u) => u.kind === 'owner');
+    return { people: [{ id: me?.id ?? uid(), name: me?.name ?? 'Owner', email: me?.email ?? 'owner@demo.example.com', status: 'active', roleId: 'r-owner', roleName: 'Owner', full: true, me: true, createdAt: new Date().toISOString() }],
+      roles: [{ id: 'r-owner', name: 'Owner', description: 'Full access, including staff and settings.', full: true, builtIn: true, archived: false, people: 1, permissions: [] },
+              { id: 'r-acc', name: 'Accountant', description: 'Billing and payments.', full: false, builtIn: true, archived: false, people: 0, permissions: ['billing.view', 'billing.manage'] }],
+      permissions: [perm('billing.view', 'billing', 'See plans, subscriptions and invoices', 'عرض الباقات والاشتراكات والفواتير'), perm('billing.manage', 'billing', 'Change plans, prices and invoices', 'تعديل الباقات والأسعار والفواتير')] }; }],
+  ['POST', /^\/api\/owner\/staff(-roles)?(\/.*)?$/, () => { owner(); return { ok: true, id: uid(), invite: { userId: uid(), name: 'Demo', email: 'demo@example.com', token: 'demo-token-not-real-0000000000000000' } }; }],
   ['GET', /^\/api\/owner\/tenants$/, () => { owner();
     return firms.filter((f) => f.kind !== 'platform').sort((a, b) => a.name.localeCompare(b.name)).map((f) => ({ id: f.id, name: f.name, kind: f.kind, status: f.status, createdAt: f.createdAt,
       companies: db.companies.filter((c) => c.firmId === f.id).length, users: db.users.filter((u) => u.firmId === f.id && u.status === 'active').length,

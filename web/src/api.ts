@@ -67,6 +67,8 @@ export interface Me {
   companies: { id: string; name: string; nameAr: string | null; country: 'SA' | 'AE' | 'OM'; currency: string; vatRate: string; role: Role }[];
   /** The Owner of a company that runs its own books may manage its users and job titles (opens the console from the workspace). */
   canManageUsers?: boolean;
+  /** Platform staff only: the role and what it may open (the Owner role may open everything). */
+  access?: { role: string; full: boolean; permissions: string[] } | null;
 }
 export interface Account { id: string; code: string; name: string; nameAr: string | null; type: string; costCentreRequired: boolean; isBank?: boolean; currency?: string | null }
 export interface CostCentre { id: string; name: string; nameAr: string | null; kind: string }

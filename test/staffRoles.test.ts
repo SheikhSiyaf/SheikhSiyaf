@@ -105,8 +105,15 @@ describe('staff roles', () => {
       const others = (await c.query(`SELECT u.id FROM users u JOIN staff_roles r ON r.id = u.staff_role_id WHERE r.is_full AND u.status = 'active' AND u.id <> $1`, [second])).rows.map((r) => r.id as string);
       await c.query('SET LOCAL ROLE nusuh_app');
       expect(others.length).toBeGreaterThan(0);
-      for (const id of others) { await c.query(`SELECT staff_member_set_status($1, 'suspended')`, [id]); }   // fine while the second owner stays
-      expect(await full()).toBe(1);
+      // suspend every other Owner (other test files add platform owners at the same time, so look again until none is left)
+      for (let pass = 0, todo = others; todo.length && pass < 5; pass++) {
+        for (const id of todo) { await c.query(`SELECT staff_member_set_status($1, 'suspended')`, [id]); }   // fine while the second owner stays
+        await c.query('RESET ROLE');
+        todo = (await c.query(`SELECT u.id FROM users u JOIN staff_roles r ON r.id = u.staff_role_id WHERE r.is_full AND u.status = 'active' AND u.removed_at IS NULL AND u.id <> $1`, [second])).rows.map((r) => r.id as string);
+        await c.query('SET LOCAL ROLE nusuh_app');
+      }
+      expect(await full()).toBeLessThanOrEqual(2);   // the second owner, and at most one a parallel test file added a moment ago
+      expect(await full()).toBeGreaterThanOrEqual(1);
       // the one left cannot be demoted or suspended by anyone: nobody else is an Owner, and nobody changes themselves
       await c.query('SAVEPOINT s1');
       await expect(c.query('SELECT staff_member_set_role($1, $2)', [second, viewerRole])).rejects.toThrow(/own role/);

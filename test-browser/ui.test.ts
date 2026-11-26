@@ -480,6 +480,44 @@ describe('Remove a customer and see a password', () => {
     expect((await db.query(`SELECT removed_at FROM firms WHERE id = $1`, [tenant.id])).rows[0].removed_at).toBeNull();
   });
 
+  it('the owner deletes a removed customer that never used the books for good: only after typing its name, nothing else is touched', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const { page: p } = await newPage(1280);
+    await signIn(p, platform);
+    const stamp = Date.now().toString(36), digits = (n: number) => String(Math.floor(Math.random() * 9 * 10 ** (n - 1) + 10 ** (n - 1)));
+    const made = await call(p, '/api/owner/customers/company', {
+      company: { name: `Erase Me ${stamp}`, country: 'SA', industry: 'trading', legalForm: 'LLC', crNumber: digits(10), vatStatus: 'registered', vatNumber: `3${digits(13)}3`, address: 'Road', city: 'Riyadh' },
+      users: [{ name: 'Admin', email: `admin.erase.${stamp}@browser-erase.example.com`, jobTitle: 'Administrator' }, { name: 'Finance', email: `fin.erase.${stamp}@browser-erase.example.com`, jobTitle: 'Owner' }] });
+    expect(made.status, JSON.stringify(made)).toBe(200);
+    const id = (made.json as { id: string }).id, name = `Erase Me ${stamp}`;
+    const others = (await db.query(`SELECT count(*)::int AS n FROM firms WHERE id <> $1`, [id])).rows[0].n as number;
+    await p.goto(`${BASE}/owner`, { waitUntil: 'networkidle' });
+    await p.locator(`#own-remove-${id}`).waitFor({ timeout: 15000 });
+    expect(await p.locator(`#own-erase-${id}`).count()).toBe(0);                       // a live customer cannot be deleted for good
+    await p.locator(`#own-remove-${id}`).click();
+    await p.getByRole('button', { name: 'Yes, continue' }).click();
+    await waitForText(p, 'was removed');
+    await p.locator('#own-show-removed').click();
+    await p.locator(`#own-erase-${id}`).waitFor({ timeout: 15000 });
+    await p.locator(`#own-erase-${id}`).click();
+    await p.locator('#own-erase-panel').waitFor({ timeout: 15000 });
+    expect(await p.locator('#own-erase-panel').innerText()).toContain(name);
+    expect(await p.locator('#own-erase-go').isDisabled()).toBe(true);                  // nothing happens until the name is typed
+    await p.locator('#own-erase-name').fill(`${name.slice(0, -1)}`);
+    expect(await p.locator('#own-erase-go').isDisabled()).toBe(true);
+    await screenshotTo(p, 'erase-customer-confirm');
+    await p.locator('#own-erase-name').fill(name);
+    expect(await p.locator('#own-erase-go').isDisabled()).toBe(false);
+    await p.locator('#own-erase-go').click();
+    await waitForText(p, 'was deleted for good');
+    expect((await db.query(`SELECT count(*)::int AS n FROM firms WHERE id = $1`, [id])).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int AS n FROM users WHERE firm_id = $1`, [id])).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT count(*)::int AS n FROM erasure_log WHERE firm_id = $1`, [id])).rows[0].n).toBe(1);
+    expect((await db.query(`SELECT count(*)::int AS n FROM firms WHERE id <> $1`, [id])).rows[0].n).toBe(others);
+    expect(await p.locator('table').innerText()).not.toContain(name);
+    expect((await db.query(`SELECT count(*)::int AS n FROM pg_trigger WHERE tgenabled = 'D' AND NOT tgisinternal`)).rows[0].n).toBe(0);
+  });
+
   it('the Administrator removes a person (hidden, cannot sign in, name kept), then restores them', async () => {
     const tenant = (await db.query(`SELECT f.id, f.name FROM firms f WHERE f.kind = 'company' AND f.name LIKE 'Flow Test Trading %' ORDER BY f.created_at DESC LIMIT 1`)).rows[0] as { id: string; name: string };
     const adminEmail = (await db.query(`SELECT email FROM users WHERE firm_id = $1 AND kind = 'admin' LIMIT 1`, [tenant.id])).rows[0].email as string;

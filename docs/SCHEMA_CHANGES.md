@@ -698,3 +698,10 @@ Every change below is covered by a test in `test/`.
 | Change | Why |
 |---|---|
 | `signup_done()` replaced (same signature, same rights): the two owner flags (`same_company_name`, `same_address_often`) are added with `array_append` instead of `fl || 'text'`, which Postgres read as an array and refused ("malformed array literal") | A bug since 0077: a second company with the same name, or a third sign-up from one address within a week, failed at the last step with "Some values are not in the right format" and nothing was created. Found by the Google sign-up browser check; now covered by a test in `test/signup.test.ts`. |
+
+## 0085_erase_customer.sql
+| Change | Why |
+|---|---|
+| New table `erasure_log` (when, who, customer name and kind, how many companies, people and rows). Read-only to the owner, never edited or deleted | A permanent record that a customer was erased, since the customer's own data is gone. |
+| New functions `erase_blockers(firm)`, `owner_erase_tenant(firm, name)` (executable by `nusuh_app`; owner only) and `erase_rows`, `erase_firm_data` (engine; not executable by the app) | The owner can erase a removed customer for good, but only one that never used the books: no entry, issued document, payment, e-invoice, payroll, month sign-off, Nusuh invoice or paid order. One transaction; the triggers that protect posted records are switched off only inside it, under exclusive locks, and the foreign keys stay on; a row of another customer that still points at it undoes the whole erase. An audit-log line (`erase`) and an `erasure_log` line are written. `trial_fingerprints` and the sign-up log stay so a company number or mailbox cannot get a second free trial. |
+| `owner_tenants()` replaced to add `erase_blockers` for removed customers | The owner's list shows the Delete-for-good button only where it is allowed, and why not otherwise. |

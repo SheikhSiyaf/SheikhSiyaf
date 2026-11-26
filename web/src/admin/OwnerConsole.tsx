@@ -13,7 +13,7 @@ import { NewCompanyCustomer } from './NewCompany.tsx';
 import { OwnerSupport, useOwnerSupportUnread } from '../support/Support.tsx';
 import { ConfirmBar, ErrorNote, InviteBox, Loading, Sidebar, TopControls, errorText, type Invite } from '../ui.tsx';
 
-interface Tenant { id: string; name: string; kind: 'firm' | 'company'; status: 'active' | 'suspended'; createdAt: string; companies: number; users: number; admins: string | null; removedAt: string | null }
+interface Tenant { id: string; name: string; kind: 'firm' | 'company'; status: 'active' | 'suspended'; createdAt: string; companies: number; users: number; admins: string | null; removedAt: string | null; eraseBlockers: string[] | null }
 
 /** Opens a customer's Administrator console as the owner. */
 export function openTenant(t: { id: string; name: string; kind: string }, to = '/admin/clients') {
@@ -62,6 +62,8 @@ function Customers() {
   const [addAdmin, setAddAdmin] = useState<{ id: string; name: string; email: string }>();
   const [confirm, setConfirm] = useState<Tenant>();
   const [confirmRemove, setConfirmRemove] = useState<Tenant>();
+  const [eraseFor, setEraseFor] = useState<Tenant>();   // a removed customer the owner is about to delete for good
+  const [typed, setTyped] = useState('');
   const [showRemoved, setShowRemoved] = useState(false);
   const [msg, setMsg] = useState<{ ok?: string; bad?: string }>({});
   const [busy, setBusy] = useState(false);
@@ -97,6 +99,20 @@ function Customers() {
           onYes={() => { const c = confirm; setConfirm(undefined); void run(() => api(`/api/owner/tenants/${c.id}`, { body: { name: c.name, status: c.status === 'active' ? 'suspended' : 'active' } })); }} />}
         {confirmRemove && <ConfirmBar busy={busy} message={t('own.removeConfirm', { name: confirmRemove.name })} onNo={() => setConfirmRemove(undefined)}
           onYes={() => { const c = confirmRemove; setConfirmRemove(undefined); void run(() => api(`/api/owner/tenants/${c.id}/remove`, { body: { removed: true } }), t('own.removed', { name: c.name })); }} />}
+        {eraseFor && (
+          <div className="card inset" id="own-erase-panel" role="alertdialog" aria-labelledby="own-erase-title" style={{ borderColor: 'var(--bad, #b42318)' }}>
+            <h2 id="own-erase-title">{t('own.erase.title', { name: eraseFor.name })}</h2>
+            <p>{t('own.erase.warn')}</p>
+            <label className="f">{t('own.erase.type', { name: eraseFor.name })}
+              <input id="own-erase-name" autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} dir="auto" />
+            </label>
+            <div className="actions">
+              <button className="b bad" id="own-erase-go" disabled={busy || typed.trim() !== eraseFor.name}
+                onClick={() => { const c = eraseFor; setEraseFor(undefined); setTyped(''); void run(() => api(`/api/owner/tenants/${c.id}/erase`, { body: { confirmName: typed } }), t('own.erase.done', { name: c.name })); }}>{t('own.erase')}</button>
+              <button className="b" id="own-erase-cancel" onClick={() => { setEraseFor(undefined); setTyped(''); }}>{t('cancel')}</button>
+            </div>
+          </div>
+        )}
         <div className="actions" style={{ marginBottom: 10 }}>
           {removedCount > 0 && <label className="small mut"><input type="checkbox" id="own-show-removed" checked={showRemoved} onChange={(e) => setShowRemoved(e.target.checked)} /> {t('own.showRemoved', { n: removedCount })}</label>}
           <span className="spacer" />
@@ -146,9 +162,12 @@ function Customers() {
                       </form>
                     )}</td>
                   <td className="num"><span className="actions" style={{ justifyContent: 'flex-end' }}>
-                    {x.removedAt ? (
+                    {x.removedAt ? (<>
                       <button className="b small p" id={`own-restore-${x.id}`} disabled={busy} onClick={() => void run(() => api(`/api/owner/tenants/${x.id}/remove`, { body: { removed: false } }), t('own.restored', { name: x.name }))}>{t('own.restore')}</button>
-                    ) : (<>
+                      {x.eraseBlockers && x.eraseBlockers.length === 0
+                        ? <button className="b small bad" id={`own-erase-${x.id}`} disabled={busy} onClick={() => { setEraseFor(x); setTyped(''); }}>{t('own.erase')}</button>
+                        : x.eraseBlockers && <span className="small mut" id={`own-erase-no-${x.id}`} style={{ maxWidth: 260, textAlign: 'start' }}>{t('own.erase.cannot', { why: x.eraseBlockers.map((k) => t(`own.erase.why.${k}` as 'own.erase')).join(', ') })}</span>}
+                    </>) : (<>
                       <button className="b small p" disabled={x.status !== 'active'} onClick={() => openTenant(x)}>{t('own.open')}</button>
                       {addAdmin?.id !== x.id && <button className="b small" onClick={() => setAddAdmin({ id: x.id, name: '', email: '' })}>{t('own.addAdmin')}</button>}
                       <button className="b small" onClick={() => setConfirm(x)}>{x.status === 'active' ? t('admin.suspend') : t('admin.reactivate')}</button>

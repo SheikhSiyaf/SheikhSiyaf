@@ -224,6 +224,9 @@ export function toHttpError(err: unknown): HttpError {
     }
     case '42501':
       return new HttpError(403, 'Your role does not allow this.', 'err.forbidden');
+    case '55P03':
+    case '40P01':   // two erases (or an erase and a request) waiting on each other: the database ends one of them
+      return new HttpError(503, 'The system is busy for a moment. Try again in a minute.', 'err.busy');
     case '23505':
     case '23514':
       if (known) return new HttpError(400, known[0], known[1]);

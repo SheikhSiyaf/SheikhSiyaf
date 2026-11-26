@@ -27,7 +27,7 @@ export function registerOwnerRoutes(app: FastifyInstance, { as, opts, pool }: Ct
   const owner = <T>(req: Parameters<Ctx['as']>[0], fn: (db: Db) => Promise<T>) => as(req, async (db) => { await requireOwner(db); return fn(db); });
 
   app.get('/api/owner/tenants', async (req) => owner(req, async (db) => (await db.query(
-    `SELECT id, name, kind, status, created_at AS "createdAt", companies, users, admins, removed_at AS "removedAt" FROM owner_tenants()`)).rows));
+    `SELECT id, name, kind, status, created_at AS "createdAt", companies, users, admins, removed_at AS "removedAt", erase_blockers AS "eraseBlockers" FROM owner_tenants()`)).rows));
 
   /** A new customer with its first Administrator; returns the Administrator's sign-in link token. */
   app.post<{ Body: { name?: string; kind?: string; adminName?: string; adminEmail?: string } }>('/api/owner/tenants', async (req) => {
@@ -142,6 +142,28 @@ export function registerOwnerRoutes(app: FastifyInstance, { as, opts, pool }: Ct
   app.post<{ Params: { id: string }; Body: { removed?: boolean } }>('/api/owner/tenants/:id/remove', async (req) => owner(req, async (db) => {
     await db.query('SELECT owner_remove_tenant($1, $2)', [uuidParam(req.params.id), req.body?.removed !== false]);
     return { ok: true };
+  }));
+
+  /**
+   * Erase a REMOVED customer for good. Only for a customer that never used the books (migration 0085): anything with posted entries,
+   * issued documents, payments, e-invoices, payroll, sign-offs, Nusuh invoices or paid orders can only be removed. The owner types the
+   * customer's exact name. One transaction: all of it, or nothing. There is no way back.
+   */
+  app.post<{ Params: { id: string }; Body: { confirmName?: unknown } }>('/api/owner/tenants/:id/erase', async (req) => owner(req, async (db) => {
+    const id = uuidParam(req.params.id);
+    const t = (await db.query(`SELECT name, removed_at AS "removedAt", erase_blockers AS blockers FROM owner_tenants() WHERE id = $1`, [id])).rows[0];
+    if (!t) throw new HttpError(404, 'Not found.', 'err.notFound');
+    if (!t.removedAt) throw new HttpError(400, 'Remove the customer first. Only a removed customer can be erased.', 'err.eraseNotRemoved');
+    if ((t.blockers as string[]).length) throw new HttpError(409, 'This customer has used the books, so it can only be removed, not erased.', 'err.eraseUsed', t.blockers as string[]);
+    if (typeof req.body?.confirmName !== 'string' || req.body.confirmName.trim() !== t.name) throw new HttpError(400, 'Type the customer\'s name exactly to confirm.', 'err.eraseName');
+    let r: { rows: number };
+    try { r = (await db.query('SELECT owner_erase_tenant($1, $2) AS r', [id, req.body.confirmName])).rows[0].r as { rows: number }; }
+    catch (e) {
+      // something of ANOTHER customer still points at this one: the database refuses, and nothing at all was deleted
+      if ((e as { code?: string }).code === '23503') throw new HttpError(409, 'Something outside this customer still refers to it, so nothing was deleted. It can stay removed.', 'err.eraseTied');
+      throw e;
+    }
+    return { ok: true, ...r };
   }));
 
   /** Another Administrator for a customer (for example when theirs has left). */

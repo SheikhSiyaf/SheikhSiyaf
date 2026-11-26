@@ -716,3 +716,11 @@ Every change below is covered by a test in `test/`.
 | Change | Why |
 |---|---|
 | `erase_firm_data()` replaced (same signature and rights): no explicit `ACCESS EXCLUSIVE` lock on the guarded tables any more; switching their triggers off takes `SHARE ROW EXCLUSIVE` (reads go on, writes wait), in one fixed table order | The first version could deadlock with ordinary requests that read the same tables in a different order ("deadlock detected" in the test suite). A reader no longer waits for, or deadlocks with, an erase. |
+
+## 0088_staff_roles.sql
+| Change | Why |
+|---|---|
+| New `staff_permissions`, `staff_roles`, `staff_role_grants`; `users.staff_role_id` (platform people only); built-in roles Owner, Accountant, Reviewer, HR, Support, Viewer | Platform staff with different rights instead of everyone being "the owner". Existing owners are given the Owner role. |
+| `app_is_owner()` replaced: true only for an active person whose role is the Owner role | Deny by default: every existing owner-only function (about 80) refuses any other role without being edited. |
+| New `app_staff_can(code)`, `my_staff_access()`, `staff_roles_list()`, `staff_role_save()`, `staff_role_archive()`, `staff_members()`, `staff_member_add/update/set_role/set_status()` (app can only execute these; the tables have no grant and no policy) | The only way to manage staff. Guards: nobody changes their own role or status, the last active Owner can never be demoted or suspended, built-in roles are fixed, a role in use cannot be archived, a role change or suspension signs the person out everywhere. |
+| Triggers `users_staff_role` (default Owner for rows made outside the app) and `users_staff_role_guard` (a direct UPDATE of the role from the app is refused); audit triggers on the role tables | Defense in depth and a record of every change. |

@@ -26,6 +26,7 @@ export const CSP = csp(false);
 /** Requests per minute per address for routes that work without signing in. */
 export const LIMITS: [RegExp, number][] = [
   [/^\/api\/google\//, 60],   // the one-time value the Google button asks for
+  [/^\/api\/pay\//, 40],   // the customer's order and "I paid" form
   [/^\/api\/signup/, 20],   // sign-up and its confirmation: the database also limits requests per address and per e-mail
   [/^\/api\/google\//, 60],   // the one-time value the Google button asks for
   [/^\/api\/login/, 60],   // the database throttle (0040) is the main guard: 5 per account, 30 per address

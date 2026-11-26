@@ -36,6 +36,7 @@ import { registerEmailRoutes } from './email.js';
 import { registerToolRoutes } from './tools.js';
 import { registerBillingRoutes } from './billing.js';
 import { registerStaffRoutes } from './staff.js';
+import { registerSubpayRoutes } from './subpay.js';
 import { registerPaymentRoutes } from './payments.js';
 import { registerRentalRoutes } from './rentals.js';
 import { accessTo } from '../books/modules.js';
@@ -309,6 +310,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   registerToolRoutes(app, ctx);
   registerBillingRoutes(app, ctx);
   registerStaffRoutes(app, ctx);
+  registerSubpayRoutes(app, ctx);
   registerWebsiteRoutes(app, ctx);
   registerPaymentRoutes(app, ctx);
   registerRentalRoutes(app, ctx);

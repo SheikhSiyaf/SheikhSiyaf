@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import pg from 'pg';
 import { zipStored } from '../src/export/xlsx.ts';
+import { readZatcaQr } from '../src/einvoice/zatcaQr.ts';
 import { BASE, call, closeBrowser, newPage, screenshotTo, signIn, waitForText, type Page } from './harness.js';
 
 const ADMIN = process.env.TEST_PG_ADMIN_URL ?? 'postgres://postgres:postgres@localhost:5432/postgres';
@@ -560,20 +561,86 @@ describe('Bank feed: consent and exceptions', () => {
 });
 
 describe('The billing invoice sent to a customer', () => {
-  it('has a letterhead, a clear table of what is charged, totals and a status, and no sideways scrolling on a phone', async () => {
-    const inv = (await db.query(`SELECT id, number FROM billing_invoices ORDER BY created_at DESC LIMIT 1`)).rows[0] as { id: string; number: string } | undefined;
-    if (!inv) return;   // the demo data has no billing invoice: nothing to look at
-    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
-    for (const width of [1280, 390]) {
-      const { page: p } = await newPage(width);
-      await signIn(p, platform);
-      await p.goto(`${BASE}/owner/billing/${inv.id}`, { waitUntil: 'networkidle' });
-      await waitForText(p, inv.number);
-      const text = await p.locator('.binv').innerText();
-      for (const want of ['TAX INVOICE', 'Description', 'Amount', 'Subtotal', 'Total']) expect(text.toUpperCase(), want).toContain(want.toUpperCase());
-      expect(await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
-      await screenshotTo(p, `billing-invoice-${width}`);
-    }
+  const NUMBER = 'ZT-BROWSER-0001';
+  let invoiceId = '', saved: Record<string, unknown> = {};
+  beforeAll(async () => {
+    saved = (await db.query(`SELECT seller_name_ar, seller_name_ar AS n, seller_vat, seller_cr, seller_address, seller_address_ar FROM billing_settings`)).rows[0];
+    await db.query(`UPDATE billing_settings SET seller_name_ar = 'نصوح بوكس', seller_vat = '300000000000003', seller_cr = '1010123456', seller_address = 'King Fahd Road, Riyadh 12211', seller_address_ar = 'طريق الملك فهد، الرياض 12211'`);
+    const firm = (await db.query(`SELECT firm_id FROM companies WHERE id = $1`, [company])).rows[0].firm_id as string;
+    invoiceId = (await db.query(`INSERT INTO billing_invoices (firm_id, number, customer_name, plan_name, cycle, period_start, period_end, issued_on, due_on, currency, lines, subtotal, discount, vat_rate, vat, total, buyer_name_ar, buyer_vat, buyer_cr, buyer_address)
+      VALUES ($1, $2, 'Al Noor Contracting Co', 'Nusuh', 'yearly', '2026-11-26', '2027-11-25', '2026-11-26', '2026-12-10', 'SAR',
+      '[{"key":"software","quantity":1,"unitPrice":9000,"amount":9000},{"key":"membership","quantity":1,"unitPrice":1500,"amount":1500},{"key":"extraModules","quantity":2,"unitPrice":500,"amount":1000}]',
+      11500, 1150, 15, 1552.50, 11902.50, 'شركة النور للمقاولات', '300055555500003', '1010987654', 'Prince Sultan Road 45, Jeddah, Saudi Arabia') RETURNING id`, [firm, NUMBER])).rows[0].id as string;
+  });
+  afterAll(async () => {
+    await db.query(`UPDATE billing_invoices SET status = 'void', void_reason = 'browser check' WHERE id = $1 AND status = 'open'`, [invoiceId]).catch(() => undefined);
+    await db.query(`UPDATE billing_settings SET seller_name_ar = $1, seller_vat = $2, seller_cr = $3, seller_address = $4, seller_address_ar = $5`,
+      [saved.seller_name_ar ?? null, saved.seller_vat ?? null, saved.seller_cr ?? null, saved.seller_address ?? null, saved.seller_address_ar ?? null]);
+  });
+  const platform = async () => (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+  const open = async (width: number) => {
+    const { page: p } = await newPage(width);
+    await signIn(p, await platform());
+    await p.goto(`${BASE}/owner/billing/${invoiceId}`, { waitUntil: 'networkidle' });
+    await p.locator('#tax-invoice').waitFor({ timeout: 20000 });
+    await p.waitForTimeout(600);
+    return p;
+  };
+
+  it('is a ZATCA-format tax invoice in Arabic and English: seller and buyer with VAT and registration numbers, a line for each charge with discount, taxable amount, VAT and total, and the totals', async () => {
+    const p = await open(1280);
+    const text = await p.locator('#tax-invoice').innerText();
+    for (const want of ['Tax invoice', 'فاتورة ضريبية', 'Nusuh Books', 'نصوح بوكس', '300000000000003', '1010123456', 'Al Noor Contracting Co', 'شركة النور للمقاولات', '300055555500003', '1010987654',
+      'Prince Sultan Road 45', 'Taxable amount', 'المبلغ الخاضع للضريبة', 'Discount', 'VAT %', 'Total amount due', 'إجمالي المبلغ المستحق', ZT_NO()]) expect(text, want).toContain(want);
+    expect(await p.locator('#inv-lines tbody tr').count()).toBe(3);
+    // every column adds up to the totals, to the cent
+    const cells = await p.evaluate(() => [...document.querySelectorAll('#inv-lines tbody tr')].map((tr) => [...tr.querySelectorAll('td.num')].map((td) => (td.textContent ?? '').replace(/,/g, ''))));
+    const cents = (v: string) => Math.round(Number(v.replace('%', '')) * 100);
+    const col = (i: number) => cells.reduce((n, r) => n + cents(r[i]!), 0);   // 0 qty, 1 unit, 2 discount, 3 taxable, 4 rate, 5 vat, 6 total
+    expect(col(2)).toBe(115000);
+    expect(col(3)).toBe(1035000);
+    expect(col(5)).toBe(155250);
+    expect(col(6)).toBe(1190250);
+    expect(await text_(p, '#inv-grand')).toBe('SAR 11,902.50');
+    expect(await text_(p, '#inv-totals')).toContain('10,350.00');
+    expect(await p.locator('#inv-mismatch').count()).toBe(0);
+    await screenshotTo(p, 'billing-invoice-zatca');
+  });
+
+  it('carries the ZATCA QR code: seller, VAT number, time stamp, total with VAT and VAT, matching the printed totals', async () => {
+    const p = await open(1280);
+    const payload = await p.locator('#inv-qr').getAttribute('data-payload');
+    expect(payload).toBeTruthy();
+    const f = readZatcaQr(payload!);
+    expect(f[1]).toBe('نصوح بوكس');
+    expect(f[2]).toBe('300000000000003');
+    expect(f[3]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(f[4]).toBe('11902.50');
+    expect(f[5]).toBe('1552.50');
+    expect(await p.evaluate(() => { const i = document.querySelector('#inv-qr') as HTMLImageElement; return i.naturalWidth > 100 && i.src.startsWith('data:image/png'); })).toBe(true);
+  });
+
+  it('without a seller VAT number there is no QR code and the owner is told why (and nothing of that note prints)', async () => {
+    await db.query(`UPDATE billing_settings SET seller_vat = NULL`);
+    try {
+      const p = await open(1280);
+      expect(await p.locator('#inv-qr').count()).toBe(0);
+      expect(await p.locator('#inv-no-vat.no-print').count()).toBe(1);
+    } finally { await db.query(`UPDATE billing_settings SET seller_vat = '300000000000003'`); }
+  });
+
+  it('reads right to left in Arabic and stacks each line as a card on a phone with no sideways scrolling', async () => {
+    const ar = await open(1280);
+    await ar.getByRole('button', { name: 'EN | AR' }).first().click();
+    await ar.waitForTimeout(900);
+    expect(await text_(ar, '#tax-invoice h1 .bi > span:first-child')).toBe('فاتورة ضريبية');
+    expect(await ar.evaluate(() => getComputedStyle(document.documentElement).direction)).toBe('rtl');
+    const ph = await open(390);
+    expect(await overflowOf(ph)).toBeLessThanOrEqual(2);
+    expect(await ph.evaluate(() => getComputedStyle(document.querySelector('#inv-lines thead')!).display)).toBe('none');
+    expect(await ph.locator('#inv-lines td[data-label]').first().getAttribute('data-label')).toBeTruthy();
+    expect(await text_(ph, '#inv-grand')).toBe('SAR 11,902.50');
+    await screenshotTo(ph, 'billing-invoice-phone');
   });
 });
 
@@ -1291,6 +1358,8 @@ describe('The checklist beside the bell', () => {
 });
 
 const textOf = (p: Page, sel: string) => p.locator(sel).innerText();
+const text_ = textOf;
+const ZT_NO = () => 'ZT-BROWSER-0001';
 const overflowOf = (p: Page) => p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) as Promise<number>;
 
 describe('The home page dashboard', () => {
@@ -1451,5 +1520,63 @@ describe('The home page dashboard', () => {
     await home(p);
     expect(await order(p)).not.toContain(firstType);
     expect(await p.locator('#dash-source').count()).toBe(1);   // "set by your company's Administrator"
+  });
+});
+
+describe('The sign-in and sign-up pages', () => {
+  it('the sign-in page has the brand panel, a full-width form and the way to sign up', async () => {
+    const { page: p, errors: errs } = await newPage(1280);
+    await p.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await p.locator('.auth-card').waitFor({ timeout: 15000 });
+    const aside = await textOf(p, '.auth-aside');
+    expect(aside).toContain('Built for ZATCA Phase 2');
+    expect(aside).toContain('Accounting that fits how Gulf businesses work');
+    const m = await p.evaluate(() => {
+      const card = document.querySelector('.auth-card')!.getBoundingClientRect(), btn = document.querySelector('#login-submit')!.getBoundingClientRect(), a = document.querySelector('.auth-aside')!.getBoundingClientRect();
+      return { btnFillsCard: btn.width > card.width - 80, asideRightOfCard: a.left > card.right };
+    });
+    expect(m).toEqual({ btnFillsCard: true, asideRightOfCard: true });
+    expect(await p.locator('#login-signup').count()).toBe(1);
+    expect(errs.filter((e) => !/40[0-9]|favicon/.test(e))).toEqual([]);
+    await screenshotTo(p, 'login-page');
+  });
+
+  it('the sign-up page has the same panel, its fields in two short sections, and a password strength bar that follows what is typed', async () => {
+    const { page: p } = await newPage(1280);
+    await p.goto(`${BASE}/signup`, { waitUntil: 'networkidle' });
+    await p.locator('#signup').waitFor({ timeout: 15000 });
+    expect(await textOf(p, '.auth-aside')).toContain('Create your account');
+    expect(await p.locator('.auth-aside .aside-steps li').count()).toBe(3);
+    const secs = await p.evaluate(() => [...document.querySelectorAll('#signup .auth-sec')].map((e) => (e as HTMLElement).innerText.replace(/\s+/g, ' ').trim()));
+    expect(secs).toEqual(['1 ABOUT YOU', '2 YOUR COMPANY']);
+    const strength = async (v: string) => { await p.locator('#su-password').fill(v); await p.waitForTimeout(150); return await p.evaluate(() => (document.querySelector('#pw-meter') as HTMLElement).dataset.s); };
+    expect(await strength('')).toBe('0');
+    expect(await strength('abc')).toBe('1');
+    expect(await strength('abcdefghij1')).toBe('2');
+    expect(await strength('Correct-Horse-Battery-9')).toBe('3');
+    expect(await textOf(p, '#pw-meter')).toContain('Strong');
+    // nothing was sent: it is only a guide
+    expect(await p.locator('#signup-sent').count()).toBe(0);
+    await screenshotTo(p, 'signup-page');
+  });
+
+  it('mirrors in Arabic (the panel moves to the left) and, on a phone, drops the panel for a row of trust points with no sideways scrolling', async () => {
+    const { page: ar } = await newPage(1280);
+    await ar.goto(`${BASE}/signup`, { waitUntil: 'networkidle' });
+    await ar.locator('#signup').waitFor({ timeout: 15000 });
+    await ar.getByRole('button', { name: 'EN | AR' }).first().click();
+    await ar.waitForTimeout(900);
+    const pos = await ar.evaluate(() => ({ aside: document.querySelector('.auth-aside')!.getBoundingClientRect().left, card: document.querySelector('.auth-card')!.getBoundingClientRect().left }));
+    expect(pos.aside).toBeLessThan(pos.card);
+    expect(await textOf(ar, '.auth-card h1')).toContain('15');
+    expect(await overflowOf(ar)).toBeLessThanOrEqual(2);
+    for (const path of ['/', '/signup']) {
+      const { page: ph } = await newPage(390);
+      await ph.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });
+      await ph.locator('.auth-card').waitFor({ timeout: 15000 });
+      expect(await ph.evaluate(() => getComputedStyle(document.querySelector('.auth-aside')!).display)).toBe('none');
+      expect(await ph.evaluate(() => getComputedStyle(document.querySelector('.auth-trust')!).display)).toBe('flex');
+      expect(await overflowOf(ph), path).toBeLessThanOrEqual(2);
+    }
   });
 });

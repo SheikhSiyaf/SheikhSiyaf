@@ -60,20 +60,27 @@ export async function savePlan(db: Db, id: string | null, p: PlanInput) {
 
 // ------------------------------------------------------------------ Settings
 export async function settings(db: Db) {
-  return (await db.query(`SELECT seller_name AS "sellerName", seller_vat AS "sellerVat", seller_address AS "sellerAddress", currency, vat_rate AS "vatRate",
-    terms_days AS "termsDays" FROM billing_settings`)).rows[0];
+  return (await db.query(`SELECT seller_name AS "sellerName", seller_name_ar AS "sellerNameAr", seller_vat AS "sellerVat", seller_cr AS "sellerCr", seller_address AS "sellerAddress",
+    seller_address_ar AS "sellerAddressAr", currency, vat_rate AS "vatRate", terms_days AS "termsDays" FROM billing_settings`)).rows[0];
 }
-export async function saveSettings(db: Db, s: { sellerName?: string; sellerVat?: string | null; sellerAddress?: string | null; currency?: string; vatRate?: string; termsDays?: number }) {
+export async function saveSettings(db: Db, s: { sellerName?: string; sellerNameAr?: string | null; sellerVat?: string | null; sellerCr?: string | null; sellerAddress?: string | null; sellerAddressAr?: string | null; currency?: string; vatRate?: string; termsDays?: number }) {
   await requireOwner(db);
   const name = String(s.sellerName ?? '').trim();
   if (!name) bad('Enter the seller name shown on invoices.', 'err.sellerName');
+  if (name.length > 120) bad('That text is too long.', 'err.sellerText');
   if (!/^[A-Z]{3}$/.test(String(s.currency ?? ''))) bad('Choose the currency.', 'err.currency');
   const rate = String(s.vatRate ?? '').trim();
   if (!/^\d{1,3}(\.\d{1,2})?$/.test(rate) || Number(rate) > 100) bad('Enter the VAT rate, for example 15.', 'err.vatRate');
   const terms = Number(s.termsDays);
   if (!Number.isInteger(terms) || terms < 0 || terms > 90) bad('Payment terms are 0 to 90 days.', 'err.termsDays');
-  await db.query(`UPDATE billing_settings SET seller_name = $1, seller_vat = $2, seller_address = $3, currency = $4, vat_rate = $5, terms_days = $6`,
-    [name, s.sellerVat?.trim() || null, s.sellerAddress?.trim() || null, s.currency, rate, terms]);
+  const vat = s.sellerVat?.trim() || null;
+  if (vat && !/^[0-9]{15}$/.test(vat)) bad('A VAT number has 15 digits.', 'err.sellerVat');
+  const cr = s.sellerCr?.trim() || null;
+  if (cr && !/^[0-9A-Za-z-]{5,30}$/.test(cr)) bad('Enter the commercial registration number (letters, digits and hyphens).', 'err.sellerCr');
+  const text = (v: string | null | undefined, max: number) => { const x = v?.trim() || null; if (x && x.length > max) bad('That text is too long.', 'err.sellerText'); return x; };
+  await db.query(`UPDATE billing_settings SET seller_name = $1, seller_vat = $2, seller_address = $3, currency = $4, vat_rate = $5, terms_days = $6,
+    seller_name_ar = $7, seller_address_ar = $8, seller_cr = $9`,
+    [name, vat, text(s.sellerAddress, 300), s.currency, rate, terms, text(s.sellerNameAr, 100), text(s.sellerAddressAr, 300), cr]);
 }
 
 // ------------------------------------------------------------------ Subscriptions
@@ -154,7 +161,8 @@ const INV_COLS = `b.id, b.firm_id AS "firmId", b.customer_name AS "customer", b.
   to_char(b.period_start, 'YYYY-MM-DD') AS "periodStart", to_char(b.period_end, 'YYYY-MM-DD') AS "periodEnd", to_char(b.issued_on, 'YYYY-MM-DD') AS "issuedOn",
   to_char(b.due_on, 'YYYY-MM-DD') AS "dueOn", b.currency, b.lines, b.subtotal::text, b.discount::text, b.vat_rate::text AS "vatRate", b.vat::text, b.total::text,
   CASE WHEN b.status = 'open' AND b.due_on < current_date THEN 'overdue' ELSE b.status END AS status, to_char(b.paid_on, 'YYYY-MM-DD') AS "paidOn",
-  b.paid_ref AS "paidRef", b.void_reason AS "voidReason"`;
+  b.paid_ref AS "paidRef", b.void_reason AS "voidReason", to_char(b.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "createdAt",
+  b.buyer_name_ar AS "buyerNameAr", b.buyer_vat AS "buyerVat", b.buyer_cr AS "buyerCr", b.buyer_address AS "buyerAddress"`;
 export async function invoices(db: Db, firmId?: string) {
   return (await db.query(`SELECT ${INV_COLS} FROM billing_invoices b WHERE ($1::uuid IS NULL OR b.firm_id = $1)
     ORDER BY b.issued_on DESC, b.number DESC LIMIT 500`, [firmId ?? null])).rows;
@@ -162,7 +170,12 @@ export async function invoices(db: Db, firmId?: string) {
 export async function invoice(db: Db, id: string) {
   const r = (await db.query(`SELECT ${INV_COLS} FROM billing_invoices b WHERE b.id = $1`, [id])).rows[0];
   if (!r) throw new HttpError(404, 'Not found.', 'err.notFound');
-  return { ...r, seller: await settings(db) };
+  return { ...r, seller: await settings(db), bank: await invoiceBank(db) };
+}
+/** Where to pay, for an invoice that is still open: the owner's bank details from Payment settings (all four lines or none). */
+async function invoiceBank(db: Db) {
+  const b = (await db.query(`SELECT coalesce(bank_account_name, '') AS "accountName", coalesce(bank_name, '') AS bank, coalesce(bank_iban, '') AS iban, coalesce(bank_swift, '') AS swift FROM billing_settings`)).rows[0];
+  return b.accountName && b.bank && b.iban && b.swift ? b : null;
 }
 export async function markPaid(db: Db, id: string, x: { paidOn?: string; reference?: string }) {
   await requireOwner(db);

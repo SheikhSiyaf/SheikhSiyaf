@@ -17,8 +17,9 @@ interface Customer { firmId: string; name: string; kind: 'firm' | 'company'; ten
 interface Line { key: 'plan' | 'extraCompanies' | 'extraUsers' | 'software' | 'implementation' | 'membership' | 'extraModules'; name?: string; quantity: number; months?: number; unitPrice: number | string; amount: number | string }
 export interface BillInvoice { id: string; firmId: string; customer: string; number: string; planName: string; cycle: string; periodStart: string; periodEnd: string;
   issuedOn: string; dueOn: string; currency: string; lines: Line[]; subtotal: string; discount: string; vatRate: string; vat: string; total: string;
-  status: 'open' | 'overdue' | 'paid' | 'void'; paidOn: string | null; paidRef: string | null; voidReason: string | null }
-interface Settings { sellerName: string; sellerVat: string | null; sellerAddress: string | null; currency: string; vatRate: string; termsDays: number }
+  status: 'open' | 'overdue' | 'paid' | 'void'; paidOn: string | null; paidRef: string | null; voidReason: string | null;
+  createdAt?: string | null; buyerNameAr?: string | null; buyerVat?: string | null; buyerCr?: string | null; buyerAddress?: string | null }
+export interface Settings { sellerName: string; sellerNameAr?: string | null; sellerVat: string | null; sellerCr?: string | null; sellerAddress: string | null; sellerAddressAr?: string | null; currency: string; vatRate: string; termsDays: number }
 interface Quote { lines: Line[]; subtotal: number; discount: number; vat: number; total: number; currency: string; periodStart: string; periodEnd: string }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -43,7 +44,8 @@ export function lineText(t: (k: Key, v?: Record<string, string | number>) => str
   if (l.key === 'membership') return t('bill.lineMembership');
   if (l.key === 'extraModules') return t('bill.lineModules', { n: l.quantity, price: money(l.unitPrice) });
   if (l.key === 'plan') return t(cycle === 'yearly' ? 'bill.linePlanYear' : 'bill.linePlanMonth', { plan: l.name ?? '' });
-  return t(l.key === 'extraCompanies' ? 'bill.lineExtraCompanies' : 'bill.lineExtraUsers', { n: l.quantity, months: l.months ?? 1 });
+  if (l.key === 'extraCompanies' || l.key === 'extraUsers') return t(l.key === 'extraCompanies' ? 'bill.lineExtraCompanies' : 'bill.lineExtraUsers', { n: l.quantity, months: l.months ?? 1 });
+  return l.name ?? String(l.key);
 }
 
 // ------------------------------------------------------------------ Owner: customers' subscriptions and invoices
@@ -212,16 +214,22 @@ function SellerSettings({ s, onSaved }: { s: Settings; onSaved: () => void }) {
   const { t } = useI18n();
   const { run, busy, note } = useRun();
   const [f, setF] = useState<Settings>();
-  if (!f) return <div className="actions"><span className="spacer" /><button className="b small" id="bill-settings" onClick={() => setF({ ...s, sellerVat: s.sellerVat ?? '', sellerAddress: s.sellerAddress ?? '', vatRate: String(Number(s.vatRate)) })}>{t('bill.settings')}</button></div>;
+  if (!f) return <div className="actions"><span className="spacer" /><button className="b small" id="bill-settings" onClick={() => setF({ ...s, sellerVat: s.sellerVat ?? '', sellerAddress: s.sellerAddress ?? '', sellerNameAr: s.sellerNameAr ?? '', sellerAddressAr: s.sellerAddressAr ?? '', sellerCr: s.sellerCr ?? '', vatRate: String(Number(s.vatRate)) })}>{t('bill.settings')}</button></div>;
   return (
     <form className="card inset" onSubmit={(e) => { e.preventDefault(); void run(() => api('/api/owner/billing/settings', { body: { ...f, termsDays: Number(f.termsDays) } }), t('admin.saved'), () => { setF(undefined); onSaved(); }); }}>
       <h2>{t('bill.settings')}</h2>
       {note}
       <div className="row">
         <label className="f">{t('bill.sellerName')}<input value={f.sellerName} onChange={(e) => setF({ ...f, sellerName: e.target.value })} /></label>
-        <label className="f">{t('bill.sellerVat')}<input dir="ltr" value={f.sellerVat ?? ''} onChange={(e) => setF({ ...f, sellerVat: e.target.value })} /></label>
+        <label className="f">{t('bill.sellerNameAr')}<input id="bill-seller-name-ar" dir="rtl" maxLength={100} value={f.sellerNameAr ?? ''} onChange={(e) => setF({ ...f, sellerNameAr: e.target.value })} /></label>
       </div>
-      <label className="f">{t('bill.sellerAddress')}<input value={f.sellerAddress ?? ''} onChange={(e) => setF({ ...f, sellerAddress: e.target.value })} /></label>
+      <div className="row">
+        <label className="f">{t('bill.sellerVat')}<input id="bill-seller-vat" dir="ltr" inputMode="numeric" maxLength={15} value={f.sellerVat ?? ''} onChange={(e) => setF({ ...f, sellerVat: e.target.value.replace(/\D/g, '') })} /></label>
+        <label className="f">{t('bill.sellerCr')}<input id="bill-seller-cr" dir="ltr" maxLength={30} value={f.sellerCr ?? ''} onChange={(e) => setF({ ...f, sellerCr: e.target.value })} /></label>
+      </div>
+      <p className="small mut" style={{ margin: '0 0 8px' }}>{t('bill.sellerVatHint')}</p>
+      <label className="f">{t('bill.sellerAddress')}<input id="bill-seller-address" maxLength={300} value={f.sellerAddress ?? ''} onChange={(e) => setF({ ...f, sellerAddress: e.target.value })} /></label>
+      <label className="f">{t('bill.sellerAddressAr')}<input id="bill-seller-address-ar" dir="rtl" maxLength={300} value={f.sellerAddressAr ?? ''} onChange={(e) => setF({ ...f, sellerAddressAr: e.target.value })} /></label>
       <div className="row">
         <label className="f">{t('bill.currency')}<select value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })}>{['SAR', 'AED', 'OMR', 'USD'].map((c) => <option key={c}>{c}</option>)}</select></label>
         <label className="f">{t('bill.vatRate')}<input inputMode="decimal" value={f.vatRate} onChange={(e) => setF({ ...f, vatRate: e.target.value })} /></label>
@@ -373,54 +381,5 @@ function QuoteLines({ q, cycle }: { q: { lines: Line[]; subtotal: number | strin
   );
 }
 
-// ------------------------------------------------------------------ One invoice, printable
-export function BillingInvoicePage({ id, back }: { id: string; back: string }) {
-  const { t } = useI18n();
-  const d = useApi<BillInvoice & { seller: Settings }>(`/api/billing/invoices/${id}`);
-  if (d.error) return <main className="public-doc"><ErrorNote error={d.error} onRetry={d.reload} /></main>;
-  if (!d.data) return <main className="public-doc"><Loading /></main>;
-  const x = d.data;
-  return (
-    <main className="public-doc">
-      <div className="public-actions no-print">
-        <div><b>{x.number}</b><div className="small">{x.customer}</div></div>
-        <span className="spacer" />
-        <button className="b" id="bill-back" onClick={() => navigate(back)}>{t('pub.back')}</button>
-        <button className="b" onClick={() => window.print()}>{t('pub.print')}</button>
-        <TopControls />
-      </div>
-      <div className="public-page binv">
-        <header className="binv-head">
-          <div>
-            <div className="binv-brand">{x.seller.sellerName}</div>
-            {x.seller.sellerAddress && <div className="binv-sub">{x.seller.sellerAddress}</div>}
-            {x.seller.sellerVat && <div className="binv-sub ltr">{t('bill.vatNo')} {x.seller.sellerVat}</div>}
-          </div>
-          <div className="binv-title">
-            <h1>{t('bill.taxInvoice')}</h1>
-            <div className="binv-no ltr">{x.number}</div>
-            <span className={`binv-stamp ${x.status}`}>{t(`bill.st.${x.status}`)}</span>
-          </div>
-        </header>
-        <section className="binv-meta">
-          <div className="binv-to"><small>{t('bill.billTo')}</small><b>{x.customer}</b></div>
-          <div><small>{t('bill.issuedOn')}</small><span className="ltr">{x.issuedOn}</span></div>
-          <div><small>{t('bill.dueOn')}</small><span className="ltr">{x.dueOn}</span></div>
-          <div><small>{t('bill.period')}</small><span className="ltr">{x.periodStart} → {x.periodEnd}</span></div>
-        </section>
-        <table className="binv-lines">
-          <thead><tr><th>{t('bill.description')}</th><th className="num">{t('bill.amount')}</th></tr></thead>
-          <tbody>{x.lines.map((l, k) => <tr key={k}><td>{lineText(t, l, x.cycle)}</td><td className="num ltr">{money(l.amount)}</td></tr>)}</tbody>
-        </table>
-        <table className="binv-totals"><tbody>
-          <tr><td>{t('bill.subtotal')}</td><td className="num ltr">{money(x.subtotal)}</td></tr>
-          {Number(x.discount) > 0 && <tr><td>{t('bill.discountLine')}</td><td className="num ltr">−{money(x.discount)}</td></tr>}
-          <tr><td>{t('bill.vatLine', { rate: String(Number(x.vatRate)) })}</td><td className="num ltr">{money(x.vat)}</td></tr>
-          <tr className="grand"><td>{t('bill.total')}</td><td className="num ltr">{x.currency} {money(x.total)}</td></tr>
-        </tbody></table>
-        {(x.paidOn || x.voidReason) && <div className="binv-note">{x.paidOn && t('bill.paidOnN', { date: x.paidOn })}{x.voidReason}</div>}
-        <footer className="binv-foot">{t('bill.invoiceThanks', { seller: x.seller.sellerName })}</footer>
-      </div>
-    </main>
-  );
-}
+// ------------------------------------------------------------------ One invoice, printable (a ZATCA tax invoice: see BillingInvoice.tsx)
+export { BillingInvoicePage } from './BillingInvoice.tsx';

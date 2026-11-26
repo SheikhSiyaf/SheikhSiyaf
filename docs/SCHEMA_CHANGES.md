@@ -680,3 +680,10 @@ Every change below is covered by a test in `test/`.
 | New trigger `before_dashboard_layout()` (a layout keeps its company, kind, person and role; a role's default can only be for a role of the company's own firm) | Stops a default being pointed at another customer's role. |
 | New function `dashboard_my_role(company)` (security definer, fixed search path) | Lets a person read their role's default without opening the memberships table. |
 
+## 0082_invoice_zatca_layout.sql
+| Change | Why |
+|---|---|
+| `billing_settings` gains `seller_name_ar` (100 characters at most, so the QR field fits), `seller_address_ar` and `seller_cr`; `seller_vat`, when given, must be 15 digits | The invoice shows the seller in Arabic and English with its registration number, and the QR code needs a valid VAT number. |
+| `billing_invoices` gains `buyer_name_ar`, `buyer_vat`, `buyer_cr`, `buyer_address` | The buyer as it was on the day the invoice was made. |
+| New trigger `billing_invoice_buyer()` (before insert, security definer, fixed search path): copies those four from the customer's own company when the customer keeps its own books; a placeholder address is not copied | One place covers every way an invoice is made, and an issued invoice is still never changed afterwards (older invoices are not back-filled). |
+

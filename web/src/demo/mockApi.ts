@@ -4670,7 +4670,8 @@ interface MBillInv { id: string; firmId: string; customer: string; number: strin
   dueOn: string; currency: string; lines: MBillLine[]; subtotal: bigint; discount: bigint; vatRate: string; vat: bigint; total: bigint; status: 'open' | 'paid' | 'void';
   paidOn: string | null; paidRef: string | null; voidReason: string | null }
 const bdb = { plans: [] as MPlan[], subs: [] as MSub[], invoices: [] as MBillInv[],
-  settings: { sellerName: 'Nusuh Books', sellerVat: '300000000000003', sellerAddress: 'Riyadh, Saudi Arabia', currency: 'SAR', vatRate: '15', termsDays: 14 } };
+  settings: { sellerName: 'Nusuh Books', sellerNameAr: 'نصوح بوكس' as string | null, sellerVat: '300000000000003' as string | null, sellerCr: '1010123456' as string | null, sellerAddress: 'Riyadh, Saudi Arabia' as string | null,
+    sellerAddressAr: 'الرياض، المملكة العربية السعودية' as string | null, currency: 'SAR', vatRate: '15', termsDays: 14 } };
 const addDaysB = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const addMonthsB = (d: string, n: number) => { const [y, m, day] = d.split('-').map(Number) as [number, number, number]; return new Date(Date.UTC(y, m - 1 + n, day)).toISOString().slice(0, 10); };
 const planRow = (p: MPlan) => ({ ...p, monthlyPrice: s(p.monthlyPrice), yearlyPrice: s(p.yearlyPrice), extraCompanyPrice: s(p.extraCompanyPrice), extraUserPrice: s(p.extraUserPrice),
@@ -4776,8 +4777,9 @@ routes.push(
     const name = String(b?.sellerName ?? '').trim(); if (!name) fail(400, 'Enter the seller name shown on invoices.', 'err.sellerName');
     const rate = String(b?.vatRate ?? '').trim(); if (!/^\d{1,3}(\.\d{1,2})?$/.test(rate) || Number(rate) > 100) fail(400, 'Enter the VAT rate, for example 15.', 'err.vatRate');
     const terms = Number(b?.termsDays); if (!Number.isInteger(terms) || terms < 0 || terms > 90) fail(400, 'Payment terms are 0 to 90 days.', 'err.termsDays');
-    Object.assign(bdb.settings, { sellerName: name, sellerVat: String(b?.sellerVat ?? '').trim() || null, sellerAddress: String(b?.sellerAddress ?? '').trim() || null,
-      currency: String(b?.currency ?? 'SAR'), vatRate: rate, termsDays: terms });
+    const vat = String(b?.sellerVat ?? '').trim() || null; if (vat && !/^[0-9]{15}$/.test(vat)) fail(400, 'A VAT number has 15 digits.', 'err.sellerVat');
+    Object.assign(bdb.settings, { sellerName: name, sellerNameAr: String(b?.sellerNameAr ?? '').trim() || null, sellerVat: vat, sellerCr: String(b?.sellerCr ?? '').trim() || null, sellerAddress: String(b?.sellerAddress ?? '').trim() || null,
+      sellerAddressAr: String(b?.sellerAddressAr ?? '').trim() || null, currency: String(b?.currency ?? 'SAR'), vatRate: rate, termsDays: terms });
     return { ok: true };
   }],
   ['POST', /^\/api\/owner\/tenants\/([\w-]+)\/subscription$/, (m, b) => saveSubM(m[1]!, b)],
@@ -4802,7 +4804,9 @@ routes.push(
   }],
   ['GET', /^\/api\/billing\/invoices\/([\w-]+)$/, (m) => {
     const x = bdb.invoices.find((y) => y.id === m[1] && (isOwner() || (me().kind === 'admin' && y.firmId === currentFirm()))) ?? fail(404, 'Not found.', 'err.notFound');
-    return { ...invRowB(x), seller: bdb.settings };
+    const co = db.companies.find((c) => c.firmId === x.firmId);
+    return { ...invRowB(x), createdAt: `${x.issuedOn}T08:30:00Z`, buyerNameAr: co?.nameAr ?? null, buyerVat: co?.vatNumber ?? null, buyerCr: co?.crNumber ?? null,
+      buyerAddress: co ? [co.fields.address, co.city].filter(Boolean).join(', ') || null : null, seller: bdb.settings, bank: null };
   }],
   ['GET', /^\/api\/admin\/billing$/, () => { admin(); const firmId = currentFirm();
     const sub = bdb.subs.find((x) => x.firmId === firmId);

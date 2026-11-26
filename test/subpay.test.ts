@@ -1,13 +1,13 @@
 // Manual bank-transfer payments (migration 0089): the order, the "I paid" form, the review decisions, approval through the existing conversion,
 // the status machine, references, and the abuse cases. Trials here start on 1 October 2025, approvals run "on" 5 October 2025, like test/trialOrders.test.ts.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { as, owner, seed, type Fixture } from './helpers.js';
 import * as B from '../src/books/billingService.js';
 import * as O from '../src/books/trialOrders.js';
 import * as P from '../src/books/subpay.js';
 
 const d = (s: string) => new Date(s);
-let planId = '', original: Record<string, unknown> = {};
+let planId = '';
 const stamp = () => `${Date.now()}${Math.floor(Math.random() * 10000)}`;
 const PDF = Buffer.from('%PDF-1.4 slip').toString('base64');
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from('slip')]).toString('base64');
@@ -15,12 +15,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 beforeAll(async () => {
   planId = (await owner.query(`SELECT id FROM plans WHERE code = 'nusuh'`)).rows[0].id;
-  original = (await owner.query('SELECT bank_account_name, bank_name, bank_iban, bank_swift FROM billing_settings')).rows[0];
   await owner.query('UPDATE subpay.settings SET payments_enabled = true');
-});
-afterAll(async () => {
-  await owner.query('UPDATE subpay.settings SET payments_enabled = false');
-  await owner.query('UPDATE billing_settings SET bank_account_name = $1, bank_name = $2, bank_iban = $3, bank_swift = $4', [original.bank_account_name, original.bank_name, original.bank_iban, original.bank_swift]);
 });
 
 /** A customer in its trial that has placed its (trial) order. */
@@ -30,19 +25,25 @@ async function customer(modules: string[] = []): Promise<Fixture> {
   await as(f.admin, (db) => O.placeOrder(db, { modules }));
   return f;
 }
-/** Sets the bank details and places the payment order in ONE transaction, so other test files that clear the shared bank details cannot get in between. */
-async function place(f: Fixture): Promise<string> {
+/** Places the payment order. The bank details the order needs are set and put back INSIDE the same transaction, so no other test file ever sees them
+ *  (some of them expect the shared bank details to be empty). Returns the order id and, when asked, what the customer sees at that moment. */
+async function place(f: Fixture, read = false): Promise<string> {
   const c = await owner.connect();
   try {
     await c.query('BEGIN');
+    const was = (await c.query('SELECT bank_account_name, bank_name, bank_iban, bank_swift FROM billing_settings FOR UPDATE')).rows[0];
     await c.query(`UPDATE billing_settings SET bank_account_name = 'Nusuh Demo Co', bank_name = 'Demo Bank', bank_iban = 'SA0380000000608010167519', bank_swift = 'DEMOSARI'`);
     await c.query('SET LOCAL ROLE nusuh_app');
     await c.query(`SELECT set_config('app.user_id', $1, true)`, [f.admin]);
     const id = (await c.query('SELECT subpay.place_order() AS id')).rows[0].id as string;
+    if (read) seen = (await c.query('SELECT subpay.my_order() AS o')).rows[0].o;
+    await c.query('RESET ROLE');
+    await c.query('UPDATE billing_settings SET bank_account_name = $1, bank_name = $2, bank_iban = $3, bank_swift = $4', [was.bank_account_name, was.bank_name, was.bank_iban, was.bank_swift]);
     await c.query('COMMIT');
     return id;
   } catch (e) { await c.query('ROLLBACK').catch(() => undefined); throw e; } finally { c.release(); }
 }
+let seen: { bank?: Record<string, unknown>; [k: string]: unknown } | null = null;
 const pay = async (f: Fixture, id: string, x: P.SubmitInput = {}) => as(f.admin, async (db) => P.submit(db, id, { amount: P.fromHalalas(await total(id)), date: today(), senderBank: 'Al Demo Bank', bankRef: `TRF-${stamp()}`, ...x }));
 const status = async (id: string) => (await owner.query('SELECT status FROM subpay.orders WHERE id = $1', [id])).rows[0].status as string;
 async function staff(f: Fixture, roleName: string) {
@@ -84,14 +85,14 @@ describe('amounts and references', () => {
 describe('placing an order', () => {
   it('works out the amounts from the stored order and the VAT rate in halalas, never from the caller', async () => {
     const f = await customer(['Inventory', 'HRM']);
-    const id = await place(f);
+    const id = await place(f, true);
     const o = (await owner.query('SELECT o.*, t.one_time_total, t.yearly_total FROM subpay.orders o JOIN trial_orders t ON t.id = o.trial_order_id WHERE o.id = $1', [id])).rows[0];
     const sub = BigInt(Math.round(Number(o.one_time_total) * 100)) + BigInt(Math.round(Number(o.yearly_total) * 100));
     expect(BigInt(o.subtotal_halalas)).toBe(sub);
     expect(BigInt(o.vat_halalas)).toBe((sub * BigInt(Math.round(Number(o.vat_rate) * 100)) + 5000n) / 10000n);
     expect(BigInt(o.total_halalas)).toBe(sub + BigInt(o.vat_halalas));
     expect(o.currency.trim()).toBe('SAR'); expect(o.status).toBe('awaiting_payment');
-    const mine = await as(f.admin, (db) => P.myOrder(db));
+    const mine = seen!;
     expect(mine).toMatchObject({ id, status: 'awaiting_payment', reference: o.reference, bank: { accountName: 'Nusuh Demo Co', iban: 'SA0380000000608010167519' } });
     expect(mine.bank).not.toHaveProperty('swift');
     expect(Number(mine.totalHalalas)).toBe(Number(o.total_halalas));
@@ -106,11 +107,19 @@ describe('placing an order', () => {
 
   it('is refused when payments are switched off, for the platform owner, for a customer with nothing to buy, and when the bank details are missing', async () => {
     const f = await customer();
-    await owner.query('UPDATE subpay.settings SET payments_enabled = false');
-    try {
-      await expect(place(f)).rejects.toThrow(/not switched on/);
-      expect(await as(f.admin, (db) => P.myOrder(db))).toBeNull();
-    } finally { await owner.query('UPDATE subpay.settings SET payments_enabled = true'); }
+    {   // switched off: inside one transaction that is rolled back, so the other test files (which need it on) never see it
+      const c = await owner.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('UPDATE subpay.settings SET payments_enabled = false');
+        await c.query('SET LOCAL ROLE nusuh_app'); await c.query(`SELECT set_config('app.user_id', $1, true)`, [f.admin]);
+        await expect(c.query('SELECT subpay.place_order()')).rejects.toThrow(/not switched on/);
+        await c.query('ROLLBACK'); await c.query('BEGIN');
+        await c.query('UPDATE subpay.settings SET payments_enabled = false');
+        await c.query('SET LOCAL ROLE nusuh_app'); await c.query(`SELECT set_config('app.user_id', $1, true)`, [f.admin]);
+        expect((await c.query('SELECT subpay.my_order() AS o')).rows[0].o).toBeNull();
+      } finally { await c.query('ROLLBACK').catch(() => undefined); c.release(); }
+    }
     await expect(as(f.platformOwner, (db) => P.placeOrder(db))).rejects.toThrow(/Not allowed/);
     const none = await seed();
     await expect(as(none.admin, (db) => P.placeOrder(db))).rejects.toThrow(/Place an order first/);

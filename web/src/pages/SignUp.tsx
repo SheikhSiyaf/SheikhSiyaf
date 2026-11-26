@@ -1,29 +1,49 @@
-// Self-service sign-up and its e-mail confirmation. Two ways in: Google (coming soon) and e-mail with a password.
-// Nothing is created until the person opens the e-mailed link (src/books/signupService.ts).
+// Self-service sign-up. Two ways in: Google (when switched on), and e-mail with a password.
+// The e-mail way creates nothing until the person opens the e-mailed link; the Google way has Google's word for the e-mail, so it asks only for the company (src/books/signupService.ts).
 import { useState, type FormEvent } from 'react';
 import { ApiError, api, useApi } from '../api.ts';
 import { useI18n, type Key } from '../i18n.tsx';
 import { navigate } from '../router.ts';
 import { ErrorNote, PasswordInput } from '../ui.tsx';
 import { AuthShell, StrengthMeter } from './AuthShell.tsx';
+import { GoogleButton, pendingGoogle } from './GoogleButton.tsx';
 
 const SITE = 'https://nusuhbooks.com';
 
 const Shell = ({ children }: { children: React.ReactNode }) => <AuthShell variant="signup" wide>{children}</AuthShell>;
 
-export function SignUp() {
+export function SignUp({ onSignedIn }: { onSignedIn: () => void }) {
   const { t, lang } = useI18n();
-  const cfg = useApi<{ enabled: boolean; google: boolean }>('/api/signup/config');
+  const cfg = useApi<{ enabled: boolean; google: boolean; googleClientId?: string }>('/api/signup/config');
   const [f, setF] = useState({ fullName: '', email: '', password: '', companyName: '', country: 'SA', crNumber: '', city: '', acceptTerms: false, website: '' });
   const [error, setError] = useState<unknown>();
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<string>();
+  const [g, setG] = useState(() => { const p = pendingGoogle.current; if (p && 'needsCompany' in p) { pendingGoogle.current = undefined; return p; } return undefined; });
   const set = (k: keyof typeof f, v: string | boolean) => { setError(undefined); setF({ ...f, [k]: v }); };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true); setError(undefined);
     try { await api('/api/signup', { body: { ...f, lang } }); setSent(f.email); }
     catch (err) { setError(err); } finally { setBusy(false); }
+  };
+
+  /** Google's answer: signed in (the page changes), or the company step for a new person, or the code step of an existing one (the sign-in page). */
+  const google = async (credential: string, nonce: string) => {
+    setError(undefined);
+    try {
+      const r = await api<{ ok?: boolean; twoFactor?: boolean; needsCompany?: boolean; ticket?: string; email?: string; name?: string }>('/api/login/google', { body: { credential, nonce } });
+      if (r.needsCompany && r.ticket) { setG({ needsCompany: true, ticket: r.ticket, email: r.email ?? '', name: r.name ?? '' }); setF((x) => ({ ...x, fullName: x.fullName || r.name || '' })); }
+      else if (r.twoFactor && r.ticket) { pendingGoogle.current = { twoFactor: true, ticket: r.ticket }; navigate('/'); }
+      else onSignedIn();
+    } catch (err) { setError(err); }
+  };
+  const finishGoogle = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!g || !('needsCompany' in g)) return;
+    setBusy(true); setError(undefined);
+    try { await api('/api/signup/google', { body: { ticket: g.ticket, fullName: f.fullName, companyName: f.companyName, country: f.country, crNumber: f.crNumber, city: f.city, acceptTerms: f.acceptTerms, website: f.website, lang } }); onSignedIn(); }
+    catch (err) { setError(err); setBusy(false); if (err instanceof ApiError && err.key === 'err.googleExpired') setG(undefined); }
   };
 
   if (cfg.data && !cfg.data.enabled) {
@@ -46,17 +66,44 @@ export function SignUp() {
     );
   }
   const problem = error instanceof ApiError ? error.key : undefined;
+  if (g && 'needsCompany' in g) {
+    return (
+      <Shell>
+        <div className="card auth-card" id="google-company">
+          <h1>{t('google.company.title')}</h1>
+          <p className="auth-lead">{t('google.company.lead', { email: g.email })}</p>
+          {error !== undefined && <ErrorNote error={error} />}
+          <form onSubmit={finishGoogle} noValidate>
+            <label className="f">{t('signup.fullName')}<input id="gc-name" autoComplete="name" required maxLength={120} value={f.fullName} onChange={(e) => set('fullName', e.target.value)} aria-invalid={problem === 'err.signupName'} /></label>
+            <label className="f">{t('signup.company')}<input id="gc-company" autoComplete="organization" required maxLength={160} value={f.companyName} onChange={(e) => set('companyName', e.target.value)} aria-invalid={problem === 'err.signupCompany'} /></label>
+            <div className="auth-grid2">
+              <label className="f">{t('signup.country')}
+                <select id="gc-country" value={f.country} onChange={(e) => set('country', e.target.value)}>{(['SA', 'AE'] as const).map((c) => <option key={c} value={c}>{t(`signup.country.${c}` as Key)}</option>)}</select></label>
+              <label className="f">{t('signup.city')}<input id="gc-city" autoComplete="address-level2" required maxLength={60} value={f.city} onChange={(e) => set('city', e.target.value)} aria-invalid={problem === 'err.signupCity'} /></label>
+            </div>
+            <label className="f">{t(`signup.cr.${f.country}` as Key)}<input id="gc-cr" inputMode={f.country === 'SA' ? 'numeric' : 'text'} dir="ltr" required maxLength={30} value={f.crNumber} onChange={(e) => set('crNumber', e.target.value)} aria-invalid={problem === 'err.signupCr'} /></label>
+            <p className="hint">{t('signup.crHint')}</p>
+            <div className="hp" aria-hidden="true"><label>Website<input name="website" tabIndex={-1} autoComplete="off" value={f.website} onChange={(e) => set('website', e.target.value)} /></label></div>
+            <label className="check-one small auth-terms">
+              <input id="gc-terms" type="checkbox" checked={f.acceptTerms} onChange={(e) => set('acceptTerms', e.target.checked)} />
+              <span>{t('signup.terms')} <a href={`${SITE}/legal/terms/`} target="_blank" rel="noopener noreferrer">{t('signup.termsLink')}</a> · <a href={`${SITE}/legal/privacy/`} target="_blank" rel="noopener noreferrer">{t('signup.privacyLink')}</a></span>
+            </label>
+            <button className="b p" id="gc-submit" type="submit" disabled={busy || !f.fullName || !f.companyName || !f.crNumber || !f.city || !f.acceptTerms}>{t('google.company.submit')}</button>
+          </form>
+          <p className="small auth-foot auth-switch"><button className="link" id="gc-other" onClick={() => { setG(undefined); setError(undefined); }}>{t('google.company.other')}</button></p>
+        </div>
+      </Shell>
+    );
+  }
   return (
     <Shell>
       <div className="card auth-card" id="signup">
         <h1>{t('signup.title')}</h1>
         <p className="auth-lead">{t('signup.sub')}</p>
-        <button className="b google" id="signup-google" type="button" disabled title={t('signup.googleSoon')} aria-describedby="google-soon">
-          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9h12.4c-.5 2.9-2.2 5.3-4.6 7l7.2 5.6c4.3-3.9 7.1-9.7 7.1-17z"/><path fill="#FBBC05" d="M10.5 28.7a14.5 14.5 0 010-9.4l-7.9-6.1a24 24 0 000 21.6l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.2-5.6c-2 1.4-4.6 2.2-8.7 2.2-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
-          <span>{t('signup.google')}</span>
-        </button>
-        <p className="small mut auth-soon" id="google-soon">{t('signup.googleSoon')}</p>
-        <div className="or"><span>{t('signup.or')}</span></div>
+        {cfg.data?.google && cfg.data.googleClientId && <>
+          <GoogleButton clientId={cfg.data.googleClientId} text="signup_with" onCredential={google} />
+          <div className="or"><span>{t('signup.or')}</span></div>
+        </>}
         {error !== undefined && <ErrorNote error={error} />}
         <form onSubmit={submit} noValidate>
           <h2 className="auth-sec"><span className="sn">1</span>{t('signup.sec.you')}</h2>

@@ -12,11 +12,16 @@ import { HttpError } from './errors.js';
 import { routePath } from './context.js';
 import { JOBS } from '../jobs/runJob.js';
 
-export const CSP = [
-  "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self' data:",
-  "connect-src 'self'", "media-src 'self' blob:", "worker-src 'self' blob:", "frame-src 'self' blob:", "frame-ancestors 'none'",
-  "base-uri 'self'", "form-action 'self'", "object-src 'none'",
-].join('; ');
+const csp = (google: boolean) => {
+  // Sign in with Google loads Google's button script, frame and style from these exact addresses, and nothing else of Google's.
+  const g = (extra: string) => (google ? ` ${extra}` : '');
+  return [
+    "default-src 'self'", `script-src 'self'${g('https://accounts.google.com/gsi/client')}`, `style-src 'self' 'unsafe-inline'${g('https://accounts.google.com/gsi/style')}`,
+    "img-src 'self' data: blob:", "font-src 'self' data:", `connect-src 'self'${g('https://accounts.google.com/gsi/')}`, "media-src 'self' blob:", "worker-src 'self' blob:",
+    `frame-src 'self' blob:${g('https://accounts.google.com/gsi/')}`, "frame-ancestors 'none'", "base-uri 'self'", "form-action 'self'", "object-src 'none'",
+  ].join('; ');
+};
+export const CSP = csp(false);
 
 /** Requests per minute per address for routes that work without signing in. */
 export const LIMITS: [RegExp, number][] = [
@@ -41,7 +46,8 @@ class Window {
   }
 }
 
-export function registerHardening(app: FastifyInstance, o: { pool: pg.Pool; https: boolean; publicUrl?: string; redirectOldAddress?: boolean }) {
+export function registerHardening(app: FastifyInstance, o: { pool: pg.Pool; https: boolean; publicUrl?: string; redirectOldAddress?: boolean; google?: boolean }) {
+  const policy = csp(Boolean(o.google));
   const limits = new Window();
   const publicHost = (() => { try { return o.publicUrl ? new URL(o.publicUrl).host : ''; } catch { return ''; } })();
 
@@ -64,12 +70,12 @@ export function registerHardening(app: FastifyInstance, o: { pool: pg.Pool; http
   });
 
   app.addHook('onSend', async (req, reply, payload) => {
-    reply.header('content-security-policy', CSP);
+    reply.header('content-security-policy', policy);
     reply.header('x-content-type-options', 'nosniff');
     reply.header('x-frame-options', 'DENY');
     reply.header('referrer-policy', 'same-origin');
     reply.header('permissions-policy', 'camera=(self), microphone=(), geolocation=(), payment=()');
-    reply.header('cross-origin-opener-policy', 'same-origin');
+    reply.header('cross-origin-opener-policy', o.google ? 'same-origin-allow-popups' : 'same-origin');   // Google's sign-in window needs to talk back to this page
     if (o.https) reply.header('strict-transport-security', 'max-age=31536000; includeSubDomains');
     if (req.url.startsWith('/api/') && !reply.hasHeader('cache-control')) reply.header('cache-control', 'no-store');
     return payload;

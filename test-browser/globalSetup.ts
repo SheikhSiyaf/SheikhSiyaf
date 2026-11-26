@@ -7,6 +7,8 @@ import { seed } from '../src/db/seed.js';
 import { buildServer, WEB_DIST } from '../src/api/server.js';
 import { createPool } from '../src/db/session.js';
 import { existsSync } from 'node:fs';
+import { generateKeyPairSync } from 'node:crypto';
+import { GOOGLE_CLIENT_ID, GOOGLE_KEY_ENV } from './googleDouble.js';
 
 const ADMIN = process.env.TEST_PG_ADMIN_URL ?? 'postgres://postgres:postgres@localhost:5432/postgres';
 const DB = process.env.BROWSER_TEST_DB ?? 'nusuh_browser_test';
@@ -32,6 +34,11 @@ export default async function setup(): Promise<() => Promise<void>> {
   await migrate(url(), APP_PASSWORD);
   await seed(url());
 
+  // A key pair made for this run stands in for Google's: the server is told its public half, the checks sign with the private half (googleDouble.ts).
+  const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  process.env[GOOGLE_KEY_ENV] = pair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const googleKeys = { keys: [{ ...pair.publicKey.export({ format: 'jwk' }), kid: 'browser-key', alg: 'RS256', use: 'sig' }] };
+
   const pool = createPool(url('nusuh_app', APP_PASSWORD));
   const server = buildServer({
     pool,
@@ -41,6 +48,7 @@ export default async function setup(): Promise<() => Promise<void>> {
     // "encrypted with a different ENCRYPTION_KEY", which is the right error and the wrong setup.
     production: false,
     signup: { enabled: true, pepper: 'browser-checks-signup-pepper-0123456789abcdef' },
+    google: { clientId: GOOGLE_CLIENT_ID, fetchKeys: async () => googleKeys },
     publicUrl: `http://127.0.0.1:${PORT}`,
     cookieSecure: false,
     demoLogins: true,

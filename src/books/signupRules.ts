@@ -67,6 +67,12 @@ const clean = (v: unknown, min: number, max: number): string | null => {
   return s.length >= min && s.length <= max && !/[\u0000-\u001f<>]/.test(s) ? s : null;
 };
 
+/** The registration number cleaned, or null if it is not plausible. A Saudi commercial registration is exactly 10 digits; a UAE trade licence number varies: letters, digits and slashes, 4 to 20 characters. */
+const crOf = (raw: unknown, country: SignupCountry): string | null => {
+  const cr = typeof raw === 'string' ? raw.normalize('NFKC').replace(/[\s-]/g, '') : '';
+  return (country === 'SA' ? /^[0-9]{10}$/.test(cr) : /^[A-Za-z0-9/]{4,20}$/.test(cr)) ? cr : null;
+};
+
 export interface SignupInput { fullName: string; email: string; password: string; companyName: string; country: SignupCountry; crNumber: string; city: string; lang: 'en' | 'ar' }
 
 /** Every value is checked here; anything unexpected is refused with a plain key, never silently changed. */
@@ -80,12 +86,29 @@ export function parseSignup(b: Record<string, unknown>): { ok: true; value: Sign
   if (isDisposable(email)) return { ok: false, problem: 'err.signupDisposable' };
   if (typeof b.country !== 'string' || !(COUNTRIES as readonly string[]).includes(b.country)) return { ok: false, problem: 'err.signupCountry' };
   const country = b.country as SignupCountry;
-  const cr = typeof b.crNumber === 'string' ? b.crNumber.normalize('NFKC').replace(/[\s-]/g, '') : '';
-  // a Saudi commercial registration is exactly 10 digits; a UAE trade licence number varies: letters, digits and dashes, 4 to 20 characters
-  if (country === 'SA' ? !/^[0-9]{10}$/.test(cr) : !/^[A-Za-z0-9/]{4,20}$/.test(cr)) return { ok: false, problem: 'err.signupCr' };
+  const cr = crOf(b.crNumber, country);
+  if (cr === null) return { ok: false, problem: 'err.signupCr' };
   const city = clean(b.city, 2, 60);
   if (!city) return { ok: false, problem: 'err.signupCity' };
   if (passwordProblem(b.password, email)) return { ok: false, problem: 'err.signupPassword' };
   if (b.acceptTerms !== true) return { ok: false, problem: 'err.signupTerms' };
   return { ok: true, value: { fullName, email, password: b.password as string, companyName, country, crNumber: cr, city, lang: b.lang === 'ar' ? 'ar' : 'en' } };
+}
+
+export interface GoogleSignupInput { fullName: string; companyName: string; country: SignupCountry; crNumber: string; city: string; lang: 'en' | 'ar' }
+
+/** The company step after Google confirmed who the person is: the same checks as the e-mail form, without e-mail and password (Google gave the e-mail). */
+export function parseGoogleSignup(b: Record<string, unknown>): { ok: true; value: GoogleSignupInput } | { ok: false; problem: Problem } {
+  const fullName = clean(b.fullName, 2, 120);
+  if (!fullName) return { ok: false, problem: 'err.signupName' };
+  const companyName = clean(b.companyName, 2, 160);
+  if (!companyName) return { ok: false, problem: 'err.signupCompany' };
+  if (typeof b.country !== 'string' || !(COUNTRIES as readonly string[]).includes(b.country)) return { ok: false, problem: 'err.signupCountry' };
+  const country = b.country as SignupCountry;
+  const cr = crOf(b.crNumber, country);
+  if (cr === null) return { ok: false, problem: 'err.signupCr' };
+  const city = clean(b.city, 2, 60);
+  if (!city) return { ok: false, problem: 'err.signupCity' };
+  if (b.acceptTerms !== true) return { ok: false, problem: 'err.signupTerms' };
+  return { ok: true, value: { fullName, companyName, country, crNumber: cr, city, lang: b.lang === 'ar' ? 'ar' : 'en' } };
 }

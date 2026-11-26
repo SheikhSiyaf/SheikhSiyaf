@@ -687,3 +687,14 @@ Every change below is covered by a test in `test/`.
 | `billing_invoices` gains `buyer_name_ar`, `buyer_vat`, `buyer_cr`, `buyer_address` | The buyer as it was on the day the invoice was made. |
 | New trigger `billing_invoice_buyer()` (before insert, security definer, fixed search path): copies those four from the customer's own company when the customer keeps its own books; a placeholder address is not copied | One place covers every way an invoice is made, and an issued invoice is still never changed afterwards (older invoices are not back-filled). |
 
+
+## 0083_google_identity.sql
+| Change | Why |
+|---|---|
+| New table `google_identities` (Google's permanent id for an account, one per user and one user per Google id; deleted with the user). Row-level security on, no policy, no grant; audit trigger | Sign in with Google remembers the account by Google's id, so a later e-mail change on the Google side cannot open somebody else's account. |
+| New functions `google_sign_in_user(sub, email)` and `google_link_user(sub, user)` (security definer, fixed search path, server only, executable by `nusuh_app`, not by PUBLIC) | The only way the server reads or writes the table: finds the user by Google id, or links a verified matching e-mail the first time; refuses a user already linked to another Google account. |
+
+## 0084_signup_done_flags.sql
+| Change | Why |
+|---|---|
+| `signup_done()` replaced (same signature, same rights): the two owner flags (`same_company_name`, `same_address_often`) are added with `array_append` instead of `fl || 'text'`, which Postgres read as an array and refused ("malformed array literal") | A bug since 0077: a second company with the same name, or a third sign-up from one address within a week, failed at the last step with "Some values are not in the right format" and nothing was created. Found by the Google sign-up browser check; now covered by a test in `test/signup.test.ts`. |

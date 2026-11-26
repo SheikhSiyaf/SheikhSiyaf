@@ -13,7 +13,7 @@ import { saveSubscription } from './billingService.js';
 import { queue } from './emailService.js';
 import { riyadhDate } from './trialRules.js';
 import { SUPPORT } from './trialEmails.js';
-import { comparisonForm, isDisposable, parseSignup } from './signupRules.js';
+import { comparisonForm, isDisposable, normalizeEmail, parseGoogleSignup, parseSignup } from './signupRules.js';
 
 export interface SignupConfig { enabled: boolean; pepper: string }
 export const signupConfig = (env: NodeJS.ProcessEnv, fallbackSecret: string): SignupConfig => ({
@@ -113,4 +113,35 @@ export async function verifySignup(pool: pg.Pool, cfg: SignupConfig, token: unkn
     if ((e as { code?: string }).code === '23505') return { outcome: 'used' };
     throw e;
   }
+}
+
+/**
+ * Sign-up with a Google account. Google has already proved the e-mail address is the person's, so no e-mail link is needed; every other rule is the
+ * same as the e-mail way (one trial per mailbox in any spelling, one per registration number, no throwaway domains, limits per address), because it
+ * goes through the same two steps in the database. The password is random and nobody knows it (they can ask for a new one with "Forgot password").
+ */
+export async function googleSignup(pool: pg.Pool, cfg: SignupConfig, who: { sub: string; email: string; name: string }, body: Record<string, unknown>, ip: string): Promise<{ userId: string }> {
+  const parsed = parseGoogleSignup({ ...body, fullName: typeof body.fullName === 'string' && body.fullName.trim() ? body.fullName : who.name });
+  if (!parsed.ok) throw new HttpError(400, 'Please check what you entered.', parsed.problem);
+  const v = parsed.value;
+  const email = normalizeEmail(who.email);
+  if (!email) throw new HttpError(400, 'Please check what you entered.', 'err.signupEmail');
+  const ipKey = keyed(cfg, 'ip', ip || 'unknown');
+  if (isDisposable(email)) {
+    await pool.query('SELECT signup_log_event($1, $2, NULL, NULL, NULL, $3)', ['blocked_disposable', email, ipKey]).catch(() => undefined);
+    throw new HttpError(400, 'Please use your work e-mail address.', 'err.signupDisposable');
+  }
+  const passwordHash = await hashPassword(randomBytes(32).toString('base64url'));
+  const token = randomBytes(32).toString('base64url');
+  const emailKey = keyed(cfg, 'email', comparisonForm(email));
+  const crKey = keyed(cfg, 'cr', `${v.country}:${v.crNumber.toUpperCase()}`);
+  const outcome = (await pool.query('SELECT signup_begin($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) AS r',
+    [email, emailKey, crKey, v.fullName, v.companyName, v.country, v.crNumber, passwordHash, sha(token), ipKey, v.lang, v.city])).rows[0].r as string;
+  if (outcome === 'org_used') throw new HttpError(409, 'This company already has an account or a trial.', 'err.signupOrgUsed');
+  if (outcome === 'email_used') throw new HttpError(409, 'This e-mail address already has an account or has used its free trial. Write to us if you need help.', 'err.signupEmailUsed');
+  if (outcome === 'throttled' || outcome === 'quiet') throw new HttpError(429, 'Too many requests. Wait a few minutes and try again.', 'err.tooMany');
+  const r = await verifySignup(pool, cfg, token, ip);
+  if (r.outcome !== 'ok') throw new HttpError(409, 'This company already has an account or a trial.', 'err.signupOrgUsed');
+  await pool.query('SELECT google_link_user($1, $2)', [who.sub, r.userId]);
+  return { userId: r.userId };
 }

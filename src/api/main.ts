@@ -48,6 +48,7 @@ const app = buildServer({
   sessionSecret: config.sessionSecret,
   encryptionKey: config.encryptionKey,   // never SESSION_SECRET (src/config.ts)
   signup: signupConfig(process.env, config.sessionSecret),
+  google: /^[0-9A-Za-z._-]+\.apps\.googleusercontent\.com$/.test(process.env.GOOGLE_CLIENT_ID ?? '') ? { clientId: process.env.GOOGLE_CLIENT_ID! } : undefined,
   production: config.production,
   publicUrl: config.publicUrl,
   redirectOldAddress: config.redirectOldAddress,

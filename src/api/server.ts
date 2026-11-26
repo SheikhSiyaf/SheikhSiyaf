@@ -2,6 +2,7 @@
 // database's row-level security and role rules decide what the signed-in user can see and do.
 import { reportError } from '../log/errorReport.js';
 import { registerHardening } from './hardening.js';
+import { googleAvailable } from './google.js';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -69,7 +70,7 @@ export function buildServer(opts: ServerOptions): FastifyInstance {
   const { pool } = opts;
   app.decorateRequest('userId', null);
   app.decorateRequest('sessionVersion', null);
-  registerHardening(app, { pool, https: Boolean(opts.cookieSecure || opts.production), publicUrl: opts.publicUrl, redirectOldAddress: opts.redirectOldAddress });
+  registerHardening(app, { pool, https: Boolean(opts.cookieSecure || opts.production), publicUrl: opts.publicUrl, redirectOldAddress: opts.redirectOldAddress, google: googleAvailable(opts.google) });
 
   app.addHook('onRequest', async (req) => {
     const s = verifySession(opts.sessionSecret, readCookie(req.headers.cookie, SESSION_COOKIE));

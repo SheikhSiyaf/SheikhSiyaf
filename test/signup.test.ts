@@ -125,6 +125,24 @@ describe('Signing up', () => {
     expect(Number((await owner.query(`SELECT count(*) AS n FROM client_roles WHERE name = 'Owner' AND firm_id <> $1 AND permissions = $2::jsonb`, [firm.id, perms.permissions])).rows[0].n)).toBeLessThan(Number((await owner.query(`SELECT count(*) AS n FROM client_roles WHERE name = 'Owner'`)).rows[0].n));
   });
 
+  it('lets a third company sign up from the same address within a week, and a second with the same company name, and flags both for the owner', async () => {
+    // An accountant's office, or a shared mobile network, can sign several companies up from one address. They are allowed, and marked so the owner can look.
+    const ip = nextIp();
+    const name = `Same Name Co ${uniq()}`;
+    const made: string[] = [];
+    for (const [i, companyName] of [name, name, `Third Co ${uniq()}`].entries()) {
+      const b = form({ companyName });
+      expect((await post(b, ip)).statusCode, `request ${i + 1}`).toBe(200);
+      const v = await verify(await tokenOf(b.email), ip);
+      expect(v.statusCode, `confirm ${i + 1}: ${v.body}`).toBe(200);
+      made.push(b.email);
+    }
+    const flags = async (email: string) => (await owner.query(`SELECT flags FROM signup_events WHERE kind = 'verified' AND email_domain = 'throwaway-test.example.com' AND firm_id = (SELECT firm_id FROM users WHERE lower(email) = $1)`, [email])).rows[0]?.flags as string[];
+    expect(await flags(made[0]!)).toEqual([]);
+    expect(await flags(made[1]!)).toEqual(['same_company_name']);
+    expect(await flags(made[2]!)).toEqual(['same_address_often']);
+  });
+
   it('answers the same whether or not the address is already a customer, and tells only the mailbox owner', async () => {
     const a = form(); await post(a); await verify(await tokenOf(a.email));
     const again = await post(form({ email: a.email }));   // a new company with the same address

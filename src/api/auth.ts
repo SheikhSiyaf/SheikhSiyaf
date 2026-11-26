@@ -14,6 +14,7 @@ import { LOGIN_LIMITS, Throttle, accountKey } from '../auth/throttle.js';
 import * as E from '../books/emailService.js';
 import { emailChangeConfirm, emailChangedAlert } from '../email/templates.js';
 import { randomBytes } from 'node:crypto';
+import { googleAvailable, registerGoogleRoutes } from './google.js';
 
 export const MIN_PASSWORD = 10;
 export const hashInviteToken = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -49,7 +50,9 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: Ctx) {
     demoPassword: demo ? DEMO_PASSWORD : undefined,
     minPassword: MIN_PASSWORD,
     publicUrl: opts.publicUrl || '',
+    googleClientId: googleAvailable(opts.google) ? opts.google!.clientId : undefined,   // public by design: it only says which app asks Google
   }));
+  registerGoogleRoutes(app, ctx, sessionFor);
 
   app.get('/api/demo-users', async () => {
     if (!demo) throw new HttpError(404, 'Not found.', 'err.notFound');

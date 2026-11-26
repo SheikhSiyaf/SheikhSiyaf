@@ -10,6 +10,7 @@
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { FAKE_GOOGLE_SCRIPT, signFakeGoogleToken, type FakeGoogleUser } from './googleDouble.js';
 
 export const BASE = `http://127.0.0.1:${process.env.BROWSER_TEST_PORT ?? 3177}`;
 
@@ -22,6 +23,8 @@ export interface Page {
   screenshot(o: { path: string; fullPage?: boolean }): Promise<unknown>;
   waitForTimeout(ms: number): Promise<void>;
   reload(o?: { waitUntil?: string }): Promise<unknown>;
+  route(url: string, handler: (r: { fulfill(o: { contentType: string; body: string }): Promise<void> }) => unknown): Promise<void>;
+  exposeFunction(name: string, fn: (...a: never[]) => unknown): Promise<void>;
   on(event: string, fn: (x: { type(): string; text(): string; message?: string }) => void): void;
   url(): string;
 }
@@ -90,6 +93,9 @@ export async function newPage(width = 1280): Promise<{ page: Page; errors: strin
   // deviceScaleFactor is left alone on a phone width: a screenshot nobody looks at does not need to be sharp.
   const ctx = await b.newContext({ viewport: { width, height: 1000 }, ...(width > 500 ? { deviceScaleFactor: 2 } : {}) });
   const page = await ctx.newPage();
+  // Google is never contacted: its script is replaced by a stand-in that signs a token for whoever the check names (test-browser/googleDouble.ts).
+  await page.route('https://accounts.google.com/gsi/client', (r) => r.fulfill({ contentType: 'text/javascript', body: FAKE_GOOGLE_SCRIPT }));
+  await page.exposeFunction('__googleToken', ((nonce: string, who: FakeGoogleUser) => signFakeGoogleToken(nonce, who)) as never);
   const errors: string[] = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(e.message ?? String(e)));

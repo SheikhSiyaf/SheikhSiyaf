@@ -4,6 +4,7 @@ import { useI18n } from '../i18n.tsx';
 import { navigate } from '../router.ts';
 import { ErrorNote, PasswordInput } from '../ui.tsx';
 import { AuthShell } from './AuthShell.tsx';
+import { GoogleButton, pendingGoogle } from './GoogleButton.tsx';
 
 interface DemoUser { name: string; email: string; kind: string; role: string; company?: string; clientRole?: string }
 
@@ -28,7 +29,7 @@ function ForgotPassword({ initial }: { initial: string }) {
 
 export function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const { t } = useI18n();
-  const cfg = useApi<{ demoLogins: boolean; demoPassword?: string }>('/api/config');
+  const cfg = useApi<{ demoLogins: boolean; demoPassword?: string; googleClientId?: string }>('/api/config');
   const demo = useApi<DemoUser[]>(cfg.data?.demoLogins ? '/api/demo-users' : null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -36,7 +37,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [forgot, setForgot] = useState<string>();
   const [busy, setBusy] = useState(false);
 
-  const [ticket, setTicket] = useState<string>();
+  const [ticket, setTicket] = useState<string | undefined>(() => { const p = pendingGoogle.current; if (p && 'twoFactor' in p) { pendingGoogle.current = undefined; return p.ticket; } return undefined; });
   const [code, setCode] = useState('');
 
   const signIn = async (e: string, p: string) => {
@@ -51,6 +52,16 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
     } finally {
       setBusy(false);
     }
+  };
+  /** Google's answer: signed in, or the code step of someone with two-step sign-in, or a new person (their company details are asked for on the sign-up page). */
+  const google = async (credential: string, nonce: string) => {
+    setError(undefined);
+    try {
+      const r = await api<{ ok?: boolean; twoFactor?: boolean; needsCompany?: boolean; ticket?: string; email?: string; name?: string }>('/api/login/google', { body: { credential, nonce } });
+      if (r.needsCompany && r.ticket) { pendingGoogle.current = { needsCompany: true, ticket: r.ticket, email: r.email ?? '', name: r.name ?? '' }; navigate('/signup'); }
+      else if (r.twoFactor && r.ticket) { setTicket(r.ticket); setCode(''); }
+      else onSignedIn();
+    } catch (err) { setError(err); }
   };
   const verify = async (ev: FormEvent) => {
     ev.preventDefault();
@@ -84,7 +95,11 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
             <button className="b p" type="submit" disabled={busy || code.length !== 6}>{t('login.verify')}</button>
             <p className="auth-links"><button className="link" type="button" onClick={() => { setTicket(undefined); setError(undefined); }}>{t('login.back')}</button></p>
           </form>
-        ) : (
+        ) : (<>
+          {cfg.data?.googleClientId && <>
+            <GoogleButton clientId={cfg.data.googleClientId} text="signin_with" onCredential={google} />
+            <div className="or"><span>{t('signup.or')}</span></div>
+          </>}
           <form onSubmit={submit}>
             <label className="f">{t('login.email')}
               <input type="email" id="login-email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" placeholder="name@company.com" />
@@ -95,7 +110,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
             <button className="b p" type="submit" id="login-submit" disabled={busy || !email || !password}>{t('login.submit')}</button>
             <p className="auth-links"><button className="link small" type="button" id="forgot-open" onClick={() => setForgot(forgot === undefined ? email : undefined)}>{t('login.forgot')}</button></p>
           </form>
-        )}
+        </>)}
         {forgot !== undefined && !ticket && <ForgotPassword initial={forgot} />}
         {!ticket && <p className="small auth-foot auth-switch">{t('login.newHere')} <button className="link" id="login-signup" onClick={() => navigate('/signup')}>{t('login.startTrial')}</button></p>}
       </div>

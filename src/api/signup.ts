@@ -4,14 +4,15 @@ import type { FastifyInstance } from 'fastify';
 import { HttpError } from './errors.js';
 import { baseUrl, type Ctx } from './context.js';
 import { sessionCookie, signSession } from '../auth/session.js';
+import { googleAvailable } from './google.js';
 import { beginSignup, signupConfig, verifySignup } from '../books/signupService.js';
 
 export function registerSignupRoutes(app: FastifyInstance, { pool, opts, as }: Ctx) {
   const cfg = opts.signup ?? signupConfig({}, opts.sessionSecret);
   const off = () => { if (!cfg.enabled) throw new HttpError(403, 'Sign-up is not open yet. Write to us and we will set you up.', 'err.signupOff'); };
 
-  /** What the sign-up page needs to know: is it open, and is Google sign-in available (not yet). */
-  app.get('/api/signup/config', async () => ({ enabled: cfg.enabled, google: false }));
+  /** What the sign-up page needs to know: is it open, and is Google sign-in available. */
+  app.get('/api/signup/config', async () => ({ enabled: cfg.enabled, google: googleAvailable(opts.google), googleClientId: googleAvailable(opts.google) ? opts.google!.clientId : undefined }));
 
   app.post<{ Body: Record<string, unknown> }>('/api/signup', async (req) => {
     off();

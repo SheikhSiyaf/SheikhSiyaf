@@ -88,7 +88,7 @@ function Screens() {
     if (me.error.key === 'err.accountClosed') return <ClosedAccount onSignOut={me.reload} />;   // after the export window nothing is left to open
     if (me.error.status !== 401) return <main><ErrorNote error={me.error} onRetry={me.reload} /></main>;
     if (demoSite) return <DemoPicker />;   // the demo site has no passwords: its picker is the front door
-    if (path === '/signup') return <SignUp />;
+    if (path === '/signup') return <SignUp onSignedIn={() => { navigate('/'); me.reload(); }} />;
     return <Login onSignedIn={() => { navigate('/'); me.reload(); }} />;
   }
   if (!me.data) return null;

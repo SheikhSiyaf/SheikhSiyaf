@@ -9,6 +9,8 @@ export interface ServerOptions {
   pool: pg.Pool;
   /** Self-service sign-up (SIGNUP=on, SIGNUP_PEPPER): off unless set (src/books/signupService.ts). */
   signup?: { enabled: boolean; pepper: string };
+  /** Sign in with Google (GOOGLE_CLIENT_ID, public). fetchKeys is test-only: it replaces the call to Google's public keys. */
+  google?: { clientId: string; fetchKeys?: import('../auth/googleToken.js').GoogleKeyFetcher };
   /** Test-only: replaces the call that reads a PDF or picture into rows (src/books/documentExtract.ts). */
   extractFetch?: import('../books/documentExtract.js').Fetcher;
   sessionSecret: string;

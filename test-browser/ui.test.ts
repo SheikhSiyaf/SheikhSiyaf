@@ -272,7 +272,7 @@ describe('Ownership', () => {
     expect(errors.filter((e) => !/40[0-9]|favicon/.test(e))).toEqual([]);
   });
 
-  it('reads right to left in Arabic and fits a phone', async () => {
+  it('fits a phone without sideways scrolling', async () => {
     const { page: ar } = await newPage();
     await signIn(ar, accountant);
     await ar.goto(`${BASE}/c/${company}/Ownership/owners`, { waitUntil: 'networkidle' });
@@ -1136,8 +1136,7 @@ describe('Signing up from the website\'s "Start free trial" link', () => {
     const { page: p, errors: errs } = await newPage(1280);
     await p.goto(`${BASE}/signup`, { waitUntil: 'networkidle' });
     await p.locator('#signup').waitFor({ timeout: 15000 });
-    expect(await p.locator('#signup-google').isDisabled()).toBe(true);   // Google comes later; the e-mail way works now
-    expect(await p.locator('#signup-google').count()).toBe(1);
+    await p.locator('#fake-google').waitFor({ timeout: 15000 });         // Google's button is offered (the stand-in draws it); the e-mail way works too
     expect(await p.locator('#su-submit').isDisabled()).toBe(true);        // nothing to send yet
     await screenshotTo(p, 'signup-form');
     await fill(p, { email, company, crNumber });
@@ -1236,6 +1235,90 @@ describe('Signing up from the website\'s "Start free trial" link', () => {
     expect(table).toContain('Refused');
     expect(table).not.toContain('Correct-Horse');
     expect(table).not.toContain(`visitor.${stamp}@`);
+  });
+});
+
+describe('Signing in and signing up with Google (a stand-in for Google; the real server checks the token)', () => {
+  const stamp = Date.now().toString(36);
+  const cr = () => String(Math.floor(1e9 + Math.random() * 9e9));
+  const as_ = (p: Page, who: { email: string; name?: string; sub?: string; verified?: boolean }) => p.evaluate((w: never) => { (window as unknown as { __gwho: unknown }).__gwho = w; }, who);
+
+  // every browser check comes from one address, and a sign-up address may ask only 6 times an hour: the earlier sign-up checks used some, so age them
+  beforeAll(async () => { await db.query(`UPDATE signup_requests SET created_at = created_at - interval '3 hours'`); });
+
+  it('a new visitor continues with Google, gives only the company, and lands in the setup wizard of a 15-day trial; next time one click signs them in', async () => {
+    const email = `gvisitor.${stamp}@browser-google.example.com`, name = 'Gina Google', companyName = `Google Browser Co ${stamp}`;
+    const { page: p, errors } = await newPage(1280);
+    await p.goto(`${BASE}/signup`, { waitUntil: 'networkidle' });
+    await p.locator('#fake-google').waitFor({ timeout: 15000 });
+    await as_(p, { email, name });
+    await p.locator('#fake-google').click();
+    await p.locator('#google-company').waitFor({ timeout: 15000 });
+    expect(await p.locator('#google-company').innerText()).toContain(email);
+    expect(await p.locator('#gc-name').inputValue()).toBe(name);                       // Google's name is offered, and can be changed
+    expect((await db.query('SELECT count(*)::int AS n FROM users WHERE lower(email) = $1', [email])).rows[0].n).toBe(0);   // nothing exists yet
+    expect(await p.locator('#gc-submit').isVisible()).toBe(true);
+    await screenshotTo(p, 'google-company-step');
+    await p.locator('#gc-company').fill(companyName);
+    await p.locator('#gc-city').fill('Jeddah');
+    await p.locator('#gc-cr').fill(cr());
+    await p.locator('#gc-terms').check();
+    await p.locator('#gc-submit').click();
+    await p.locator('#wiz').waitFor({ timeout: 30000 }).catch(async (e) => { throw new Error(`${e.message}\nThe page showed: ${(await p.locator('body').innerText()).slice(0, 700)}`); });
+    expect((await db.query(`SELECT s.status FROM subscriptions s JOIN firms f ON f.id = s.firm_id WHERE f.name = $1`, [companyName])).rows[0].status).toBe('trial');
+    expect((await db.query(`SELECT count(*)::int AS n FROM google_identities g JOIN users u ON u.id = g.user_id WHERE lower(u.email) = $1`, [email])).rows[0].n).toBe(1);
+    await p.locator('#trial-bar').waitFor({ timeout: 15000 });
+    // another browser: the sign-in page, one click, straight in
+    const { page: again, errors: errs2 } = await newPage(1280);
+    await again.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await again.locator('#fake-google').waitFor({ timeout: 15000 });
+    await as_(again, { email, name });
+    await again.locator('#fake-google').click();
+    await again.locator('#trial-bar').waitFor({ timeout: 30000 });
+    expect(errors.filter((e) => !/favicon|Failed to load resource/i.test(e))).toEqual([]);
+    expect(errs2.filter((e) => !/favicon|Failed to load resource/i.test(e))).toEqual([]);
+  });
+
+  it('an existing person signs in with Google when it vouches for their e-mail; Google not confirming the address is refused in plain words', async () => {
+    const { page: p } = await newPage(1280);
+    await p.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await p.locator('#fake-google').waitFor({ timeout: 15000 });
+    await as_(p, { email: accountant, verified: false });
+    await p.locator('#fake-google').click();
+    await waitForText(p, 'Google has not confirmed this e-mail address');
+    await p.locator('#fake-google').waitFor({ timeout: 15000 });                       // the button is made ready again after an answer
+    await as_(p, { email: accountant, name: 'Demo Accountant', sub: `sub-browser-${stamp}` });
+    await p.locator('#fake-google').click();
+    await p.locator('.side').first().waitFor({ timeout: 30000 });                  // inside the software
+    expect((await db.query(`SELECT count(*)::int AS n FROM google_identities g JOIN users u ON u.id = g.user_id WHERE lower(u.email) = lower($1)`, [accountant])).rows[0].n).toBe(1);
+    await db.query(`DELETE FROM google_identities g USING users u WHERE u.id = g.user_id AND lower(u.email) = lower($1)`, [accountant]);   // leave the demo data as it was
+  });
+
+  it('a person who is not a customer and tries the sign-in page is taken to the company step, not turned away', async () => {
+    const email = `gnew.${stamp}@browser-google.example.com`;
+    const { page: p } = await newPage(1280);
+    await p.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await p.locator('#fake-google').waitFor({ timeout: 15000 });
+    await as_(p, { email, name: 'New Person' });
+    await p.locator('#fake-google').click();
+    await p.locator('#google-company').waitFor({ timeout: 15000 });
+    expect(p.url()).toContain('/signup');
+    expect(await p.locator('#google-company').innerText()).toContain(email);
+    await p.locator('#gc-other').click();                                              // "use a different way" goes back to the normal form
+    await p.locator('#su-submit').waitFor({ timeout: 15000 });
+  });
+
+  it('fits a phone without sideways scrolling', async () => {
+    const { page: p } = await newPage(390);
+    await p.goto(`${BASE}/signup`, { waitUntil: 'networkidle' });
+    await p.locator('#fake-google').waitFor({ timeout: 15000 });
+    const overflow = await p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+    expect(overflow).toBe(false);
+    await as_(p, { email: `gphone.${stamp}@browser-google.example.com`, name: 'Phone Person' });
+    await p.locator('#fake-google').click();
+    await p.locator('#google-company').waitFor({ timeout: 15000 });
+    expect(await p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
+    await screenshotTo(p, 'google-company-step-phone');
   });
 });
 

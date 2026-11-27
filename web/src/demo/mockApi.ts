@@ -442,7 +442,7 @@ function saveDraftM(companyId: string, b: Record<string, unknown>, id?: string):
   let currency: string | null = null;
   try { currency = foreignCurrency(b.currency as string, company.currency); }
   catch { fail(400, 'A currency is three letters, such as USD or EUR.', 'err.currencyCode'); }
-  if (currency && (isExpense || type === 'claim')) fail(400, 'An expense or an employee claim is recorded in the company\u2019s own currency.', 'err.fxNotHere');
+  if (currency && type === 'claim') fail(400, 'An employee claim is recorded in the company\u2019s own currency.', 'err.fxNotHere');
   let rateScaled: bigint | null = null;
   if (currency) {
     try { rateScaled = rateToScaled(String(b.fxRate ?? '')); }

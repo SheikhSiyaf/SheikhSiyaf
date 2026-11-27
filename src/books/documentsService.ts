@@ -176,8 +176,8 @@ export async function saveDraft(db: Db, companyId: string, d: DocumentInput, id?
   // Another currency (0058): the prices typed in are in THAT currency, so each line is priced twice — once as it is
   // written on the document, and once converted at the document's rate, which is what posts to the ledger.
   const currency = currencyOf(d.currency, company.currency);
-  if (currency && (isExpense || type === 'claim')) {
-    bad('An expense or an employee claim is recorded in the company\'s own currency.', 'err.fxNotHere');
+  if (currency && type === 'claim') {
+    bad('An employee claim is recorded in the company\'s own currency.', 'err.fxNotHere');
   }
   const rateScaled = currency ? ratePart(d.fxRate) : null;
   // Each set of figures is a document in its own right, so each gets ZATCA's rounding: the VAT of a category is

@@ -180,7 +180,7 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
   // Another currency (0058). The prices above are read in the chosen currency, so the company-currency totals that
   // will post to the ledger are worked out the same way the server does it: the rate on each unit price, then the
   // ordinary line arithmetic. Showing both means nobody issues an invoice without seeing what it books.
-  const canFx = !isExpense && !isClaim;
+  const canFx = !isClaim;   // an expense can be in another currency (0093); an employee claim stays in the company's
   const docCur = canFx ? form?.currency ?? '' : '';
   const rateOk = (() => { try { return docCur ? rateToScaled(form!.fxRate) : null; } catch { return null; } })();
   const suggested = useApi<{ rate: { rate: string; rateDate: string; source: string } | null }>(

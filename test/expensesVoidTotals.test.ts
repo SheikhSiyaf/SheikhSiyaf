@@ -67,8 +67,39 @@ describe('voiding an expense', () => {
     expect(await spent('2026-04-01', '2026-04-30')).toBe('50.00');
   });
 
-  it('an expense cannot be written in another currency, so there is no foreign-currency expense to void (the bill route is for that)', async () => {
-    await expect(as(f.staff, (db) => S.saveDraft(db, f.a.id, { type: 'expense', payee: 'IT supplier', paidFromAccountId: f.a.cash, issueDate: '2026-03-05', currency: 'USD', fxRate: '3.75',
-      lines: [{ description: 'IT expenses', quantity: '1', unitPrice: '20.00', accountId: f.a.rent, vatCode: 'standard' as const }] }))).rejects.toThrow(/own currency/);
+  const usd = (over: Record<string, unknown> = {}) => ({ type: 'expense' as const, payee: 'US software vendor', paidFromAccountId: f.a.cash, issueDate: '2026-05-05', currency: 'USD', fxRate: '3.75',
+    lines: [{ description: 'IT expenses', quantity: '1', unitPrice: '20.00', accountId: f.a.rent, vatCode: 'standard' as const }], ...over });
+  const entryOf = async (docId: string) => (await owner.query(`SELECT a.code, l.debit::text AS debit, l.credit::text AS credit FROM documents d JOIN journal_lines l ON l.entry_id = d.journal_entry_id JOIN accounts a ON a.id = l.account_id WHERE d.id = $1 ORDER BY a.code`, [docId])).rows;
+
+  it('an expense can be written in another currency: it shows as typed, and books the converted amounts at the entered rate', async () => {
+    const id = await as(f.staff, async (db) => { const d = await S.saveDraft(db, f.a.id, usd()); await S.issueDocument(db, d); return d; });
+    const d = (await owner.query(`SELECT currency, fx_rate::text AS rate, fx_net_total::text AS fxnet, fx_vat_total::text AS fxvat, fx_gross_total::text AS fxgross, net_total::text AS net, vat_total::text AS vat, gross_total::text AS gross, status FROM documents WHERE id = $1`, [id])).rows[0];
+    expect(d).toMatchObject({ currency: 'USD', rate: '3.75000000', fxnet: '20.00', fxvat: '3.00', fxgross: '23.00', net: '75.00', vat: '11.25', gross: '86.25', status: 'issued' });   // USD 20 + 3 VAT = USD 23; SAR 75 + 11.25 = 86.25
+    expect((await entryOf(id)).map((r) => [r.code, r.debit, r.credit])).toEqual([['1000', '0.00', '86.25'], ['1200', '11.25', '0.00'], ['5000', '75.00', '0.00']]);
+    expect(await spent('2026-05-01', '2026-05-31')).toBe('75.00');
+    expect(await pnlExpenses('2026-05-01', '2026-05-31')).toBe('75.00');
+  });
+
+  it('voiding an expense written in another currency reverses the same converted amounts: the month nets to zero everywhere', async () => {
+    const before = await spent('2026-06-01', '2026-06-30');
+    const id = await as(f.staff, async (db) => { const d = await S.saveDraft(db, f.a.id, usd({ issueDate: '2026-06-10', fxRate: '3.7512' })); await S.issueDocument(db, d); return d; });
+    expect(await spent('2026-06-01', '2026-06-30')).toBe('75.02');   // 20 x 3.7512 = 75.024 -> 75.02
+    await as(f.staff, (db) => E.voidExpense(db, id));
+    const rev = (await owner.query(`SELECT a.code, l.debit::text AS debit, l.credit::text AS credit FROM documents d JOIN journal_lines l ON l.entry_id = d.void_entry_id JOIN accounts a ON a.id = l.account_id WHERE d.id = $1 ORDER BY a.code`, [id])).rows;
+    const orig = await entryOf(id);
+    expect(rev.map((r) => [r.code, r.debit, r.credit])).toEqual(orig.map((r) => [r.code, r.credit, r.debit]));   // the same figures, sides swapped
+    expect(await spent('2026-06-01', '2026-06-30')).toBe(before);
+    expect(await pnlExpenses('2026-06-01', '2026-06-30')).toBe(before);
+  });
+
+  it('an expense in another currency needs a rate, a real currency code and a positive rate; claims still stay in the company currency', async () => {
+    for (const [patch, why] of [[{ fxRate: '' }, 'no rate'], [{ fxRate: '0' }, 'zero rate'], [{ fxRate: '-3' }, 'negative rate'], [{ currency: 'US' }, 'short code'], [{ currency: '$$$' }, 'not letters']] as const) {
+      await expect(as(f.staff, (db) => S.saveDraft(db, f.a.id, usd(patch as never))), why).rejects.toThrow();
+    }
+    const staffMember = await as(f.staff, (db) => S.saveContact(db, f.a.id, { isSupplier: true, name: 'Staff member' }));
+    await expect(as(f.staff, (db) => S.saveDraft(db, f.a.id, { type: 'claim', contactId: staffMember, issueDate: '2026-05-05', currency: 'USD', fxRate: '3.75',
+      lines: [{ description: 'Taxi', quantity: '1', unitPrice: '20.00', accountId: f.a.rent, vatCode: 'standard' as const }] } as never))).rejects.toThrow(/own currency/);
+    const own = await as(f.staff, async (db) => { const d = await S.saveDraft(db, f.a.id, usd({ currency: null, fxRate: null })); await S.issueDocument(db, d); return d; });
+    expect((await owner.query('SELECT currency, fx_rate FROM documents WHERE id = $1', [own])).rows[0]).toEqual({ currency: null, fx_rate: null });   // company-currency expenses are as before
   });
 });

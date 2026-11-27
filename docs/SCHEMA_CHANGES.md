@@ -751,3 +751,8 @@ Every change below is covered by a test in `test/`.
 | New `order_intents` (secret token kept only as a hash, module names, clean-up flag, address key, 7-day expiry, claimed by one customer), RLS on, no grant | The website's Order button hands the visitor to the software with only a module selection. The software keeps it on the server so it survives sign-up, the e-mailed link and sign-in. It is never a price. |
 | New `terms_acceptances` (customer, person, terms version, time; changes refused by trigger), RLS on, no grant; `signup_requests` gets `intent_hash`, `terms_version`, `terms_at` | Records which terms version a person accepted at sign-up, and when. |
 | Functions `order_intent_create` (20 an hour per address, 2,000 an hour in all), `order_intent_peek`, `signup_attach_meta`, `signup_finish_meta`, `order_intent_claim` (customers only; first claim wins; unknown, expired and someone else's look the same), `my_order_intent` | The only way to reach those tables. Reversible: drop the functions and the two tables and the three columns. |
+
+## 0093_expense_currency.sql
+| Change | Why |
+|---|---|
+| `doc_fx_type` now also allows `expense` | An expense can be written in another currency (with the rate typed on it), like a bill. The ledger still holds the converted amounts in the company's currency, the bank leaves the converted amount, and a void reverses the same figures. Employee claims stay in the company's currency. Reversible once no expense is in another currency. |

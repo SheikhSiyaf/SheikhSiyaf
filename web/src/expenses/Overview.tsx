@@ -55,6 +55,7 @@ export function ExpensesOverview({ books }: { books: CompanyBooks }) {
         <h2>{t('exp.topCategories')}</h2>
         {x.topCategories.length === 0 ? <div className="mut">{t('exp.nothingThisMonth')}</div> : <Bars rows={x.topCategories} cur={cur} />}
       </div>
+      <p className="mut small" id="exp-counts-note">{t('exp.countsNote')}</p>
     </>
   );
 }

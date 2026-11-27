@@ -137,16 +137,17 @@ describe('A document written in another currency', () => {
     await expect(owner.query(`UPDATE documents SET currency = 'EUR' WHERE id = $1`, [id])).rejects.toThrow();
   });
 
-  it('an opening balance and an expense stay in the company\'s currency', async () => {
+  it('an opening balance and an employee claim stay in the company\'s currency', async () => {
     const open = await as(f.staff, (db) => S.addOpeningDocument(db, f.a.id, {
       type: 'invoice', contactId: customer, number: 'OLD-FX-1', issueDate: '2026-01-01', dueDate: '2026-02-01', amount: '100.00',
     }));
     await expect(owner.query(`UPDATE documents SET currency = 'USD', fx_rate = 3.75, fx_net_total = 100, fx_vat_total = 0, fx_gross_total = 100 WHERE id = $1`, [open]))
       .rejects.toThrow();
+    // an employee claim stays in the company's currency (an expense may be written in another one since 0093; see test/expensesVoidTotals.test.ts)
     await expect(as(f.staff, (db) => S.saveDraft(db, f.a.id, {
-      type: 'expense', issueDate: '2026-03-10', payee: 'Taxi', paidFromAccountId: bank,
+      type: 'claim', contactId: customer, issueDate: '2026-03-10', paidFromAccountId: bank,
       lines: [costLine()] as never, currency: 'USD', fxRate: '3.75',
-    }))).rejects.toThrow();
+    }))).rejects.toThrow(/own currency/);
   });
 });
 

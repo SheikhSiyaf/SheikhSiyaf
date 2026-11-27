@@ -3789,6 +3789,12 @@ routes.push(
   ['GET', /^\/api\/staff\/payments\/bank$/, () => { owner();
     return { delayHours: 24, live: { accountName: 'Demo Company Ltd', bank: 'Demo Bank', iban: 'SA0380000000608010167519', swift: 'DEMOSARI', changedAt: new Date().toISOString() }, pending: null, history: [] }; }],
   ['POST', /^\/api\/staff\/payments\/bank(\/.*)?$/, () => { owner(); return { ok: true, immediate: false }; }],
+  // Payment review (demo: one fixed payment waiting; actions are accepted but nothing is kept)
+  ['GET', /^\/api\/staff\/payments$/, () => { owner(); return { reviewTargetHours: 4, enabled: false, orders: [{ id: 'demo-pay-1', reference: 'NB-DEMO-0001-A', status: 'under_review', firmId: 'demo', firm: 'Demo Trading Co', totalHalalas: 1897500, enteredHalalas: 1897500, flags: [], recommended: false, hasFile: false, waitingSince: new Date().toISOString(), hoursWaiting: 1.5, overdue: false }] }; }],
+  ['GET', /^\/api\/staff\/payments\/demo-pay-1$/, () => { owner(); const now = new Date().toISOString(); return { id: 'demo-pay-1', reference: 'NB-DEMO-0001-A', status: 'under_review', firm: 'Demo Trading Co', firmId: 'demo', currency: 'SAR', subtotalHalalas: 1650000, vatRate: '15.00', vatHalalas: 247500, totalHalalas: 1897500, createdAt: now, recommendedBy: null,
+    submissions: [{ id: 'demo-sub-1', amountHalalas: 1897500, date: now.slice(0, 10), senderBank: 'Demo Bank', bankRef: 'DEMO-REF-1', note: null, flags: [], at: now, file: null }],
+    timeline: [{ at: now, status: 'awaiting_payment', by: null, clientNote: null, staffNote: null }, { at: now, status: 'under_review', by: null, clientNote: null, staffNote: null }] }; }],
+  ['POST', /^\/api\/staff\/payments\/[^/]+\/(recommend|reject|need-info|approve)$/, () => { owner(); return { ok: true, invoice: { number: 'DEMO-INV-0001' } }; }],
   // Internal users (demo: a fixed picture of the staff page; changes are accepted but nothing is kept)
   ['GET', /^\/api\/owner\/staff$/, () => { owner();
     const perm = (code: string, workspace: string, labelEn: string, labelAr: string) => ({ code, workspace, labelEn, labelAr });

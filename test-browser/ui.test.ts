@@ -1166,6 +1166,35 @@ describe('The free trial on screen', () => {
     expect(await ph.locator('#pay-c-told').innerText()).toContain('BROWSER-PAY-1');
     expect(await ph.locator('#pay-c-timeline li').count()).toBeGreaterThanOrEqual(2);
     expect((await db.query(`SELECT status FROM subpay.orders WHERE firm_id = $1 ORDER BY created_at DESC LIMIT 1`, [firm])).rows[0].status).toBe('under_review');
+    // the review desk: the Owner sees it in the queue, side by side, and decides
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    const ref = await text(ph, '#pay-c-ref').catch(() => '');
+    const { page: rv } = await newPage(1280);
+    await signIn(rv, platform);
+    await rv.goto(`${BASE}/owner/review`, { waitUntil: 'networkidle' });
+    await rv.locator('#rv-queue').waitFor({ timeout: 15000 });
+    const orderRef = (await db.query(`SELECT reference FROM subpay.orders WHERE firm_id = $1 ORDER BY created_at DESC LIMIT 1`, [firm])).rows[0].reference as string;
+    expect(ref === '' || ref === orderRef).toBe(true);
+    await rv.locator(`#rv-open-${orderRef}`).click();
+    await rv.locator('#rv-compare').waitFor({ timeout: 15000 });
+    expect((await text(rv, '#rv-entered')).replace(/[^\d.]/g, '')).toBe((await text(rv, '#rv-due')).replace(/[^\d.]/g, ''));   // same amount both sides
+    expect(await rv.locator('#rv-flags').count()).toBe(0);
+    // approving needs the tick "I saw the money"; the reject button needs a reason the customer will read
+    await rv.locator('#rv-act-approve').click();
+    expect(await rv.locator('#rv-go').isDisabled()).toBe(true);
+    await rv.locator('#rv-saw').check();
+    expect(await rv.locator('#rv-go').isDisabled()).toBe(false);
+    await rv.locator('#rv-act-reject').click();
+    expect(await rv.locator('#rv-go').isDisabled()).toBe(true);
+    await rv.locator('#rv-text').fill('We could not find this transfer in our bank.');
+    await rv.locator('#rv-go').click();
+    await rv.locator('#rv-done').waitFor({ timeout: 15000 });
+    expect((await db.query(`SELECT status FROM subpay.orders WHERE reference = $1`, [orderRef])).rows[0].status).toBe('rejected');
+    // the customer reads the reason
+    await ph.reload({ waitUntil: 'networkidle' });
+    await ph.locator('#pay-c-timeline').waitFor({ timeout: 15000 });
+    expect(await ph.locator('#pay-c-timeline').innerText()).toContain('We could not find this transfer');
+    expect(await ph.locator('#pay-c-start').count()).toBe(1);                      // and can start again
     // leave shared settings as they were
     await db.query(`UPDATE subpay.settings SET payments_enabled = false`);
     await db.query(`UPDATE subpay.bank_live SET account_name = NULL, bank = NULL, iban = NULL, swift = NULL, first_entry = true`);

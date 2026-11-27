@@ -75,7 +75,7 @@ function Screens() {
     const token = getIntentToken();
     if (!token || !user || user.kind === 'owner' || path.startsWith('/order')) return;
     clearIntentToken();
-    void api<{ fresh?: boolean }>('/api/pay/intent/claim', { body: { token } }).then((r) => { if (r.fresh) navigate('/buy'); }).catch(() => undefined);
+    void api<{ fresh?: boolean }>('/api/pay/intent/claim', { body: { token } }).then((r) => { trial.reload(); if (r.fresh) navigate('/buy'); }).catch(() => undefined);   // reload: the buy screen must show the claimed selection, not the one fetched a moment earlier
   }, [user, path]);
 
   // A sign-in link works whether or not someone is signed in on this device.

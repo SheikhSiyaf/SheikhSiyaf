@@ -1230,6 +1230,8 @@ describe('The free trial on screen', () => {
 
   it('/order offers both ways: the free trial and order-and-pay-now; pay now is remembered on the server and changes the sign-up heading', async () => {
     const { page: p } = await newPage();
+    // The sign-up routes allow 20 requests a minute per address and the Google checks later in this file use most of them: this test never asks the server for the sign-up settings.
+    await p.route('**/api/signup/config', (r) => r.abort());
     await p.goto(`${BASE}/order?m=HRM&mode=pay`, { waitUntil: 'networkidle' });
     await p.locator('#order-ways').waitFor({ timeout: 15000 });
     expect(await text(p, '#order-way-trial')).toContain('Free trial for 15 days');
@@ -1243,6 +1245,7 @@ describe('The free trial on screen', () => {
     expect((await db.query(`SELECT count(*)::int AS n FROM order_intents WHERE pay_first`)).rows[0].n).toBe(before + 1);
     // the trial way on a fresh visit leaves pay_first off and keeps the usual heading
     const { page: t } = await newPage();
+    await t.route('**/api/signup/config', (r) => r.abort());
     await t.goto(`${BASE}/order?m=CRM`, { waitUntil: 'networkidle' });
     await t.locator('#order-start').click();
     await t.waitForURL(`${BASE}/signup`);

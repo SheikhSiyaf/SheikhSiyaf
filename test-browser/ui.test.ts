@@ -1126,6 +1126,52 @@ describe('The free trial on screen', () => {
     await db.query(`UPDATE trial_orders SET status = 'cancelled' WHERE firm_id = $1 AND status = 'waiting'`, [firm]);
   });
 
+  it('paying by bank transfer: order with VAT, our bank with copy buttons, the "I paid" form, then waiting for review; the older form shows while payments are off', async () => {
+    await setState('trial', `now() - interval '2 days'`, dayEnd(28));
+    await db.query(`UPDATE trial_orders SET status = 'cancelled' WHERE firm_id = $1 AND status = 'waiting'`, [firm]);
+    await db.query(`UPDATE subpay.orders SET status = 'expired' WHERE firm_id = $1 AND status IN ('awaiting_payment')`, [firm]).catch(() => undefined);
+    await db.query(`UPDATE subpay.bank_live SET account_name = 'Nusuh Demo Co', bank = 'Demo Bank', iban = 'SA0380000000608010167519', swift = 'DEMOSARI', changed_at = now() - interval '30 days', first_entry = true`);
+    await db.query(`UPDATE subpay.settings SET payments_enabled = false`);
+    const { page: ph } = await newPage(390);
+    await ph.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await ph.locator('input[type=email]').fill(accountant);
+    await ph.locator('input[type=password]').fill('demo1234');
+    await ph.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await ph.locator('#buy-place').waitFor({ timeout: 30000 });
+    await ph.locator('#buy-place').click();
+    await ph.locator('#buy-waiting-title').waitFor({ timeout: 15000 });          // payments off: the older form
+    expect(await ph.locator('#pay-c-form').count()).toBe(0);
+    await db.query(`UPDATE subpay.settings SET payments_enabled = true`);
+    await ph.reload({ waitUntil: 'networkidle' });
+    await ph.locator('#pay-c-start').waitFor({ timeout: 15000 });
+    await ph.locator('#pay-c-start').click();
+    await ph.locator('#pay-c-iban').waitFor({ timeout: 15000 });
+    expect(await text(ph, '#pay-c-ref')).toMatch(/^NB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]$/);
+    expect(await text(ph, '#pay-c-total')).toMatch(/^SAR [\d,]+\.\d{2}$/);
+    expect(await ph.locator('#pay-c-iban').innerText()).toContain('SA0380000000608010167519');
+    expect(await ph.locator('#pay-c-changed').count()).toBe(0);                  // the account did not change recently
+    const sideways = await ph.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(sideways, `sideways by ${sideways}px`).toBeLessThanOrEqual(2);
+    // a bad amount is explained; the right amount is accepted
+    expect(await ph.locator('#pay-c-send').isDisabled()).toBe(true);
+    await ph.locator('#pay-c-amount').fill('abc');
+    await ph.locator('#pay-c-send').click();
+    await ph.locator('#pay-c-form-error').waitFor({ timeout: 15000 });
+    const total = (await text(ph, '#pay-c-total')).replace('SAR ', '').replace(/,/g, '');
+    await ph.locator('#pay-c-amount').fill(total);
+    await ph.locator('#pay-c-bankref').fill('BROWSER-PAY-1');
+    await ph.locator('#pay-c-send').click();
+    await ph.locator('#pay-c-wait').waitFor({ timeout: 15000 });
+    expect(await ph.locator('#pay-c-form').count()).toBe(0);                     // no second form while it is being checked
+    expect(await ph.locator('#pay-c-told').innerText()).toContain('BROWSER-PAY-1');
+    expect(await ph.locator('#pay-c-timeline li').count()).toBeGreaterThanOrEqual(2);
+    expect((await db.query(`SELECT status FROM subpay.orders WHERE firm_id = $1 ORDER BY created_at DESC LIMIT 1`, [firm])).rows[0].status).toBe('submitted');
+    // leave shared settings as they were
+    await db.query(`UPDATE subpay.settings SET payments_enabled = false`);
+    await db.query(`UPDATE subpay.bank_live SET account_name = NULL, bank = NULL, iban = NULL, swift = NULL, first_entry = true`);
+    await db.query(`UPDATE trial_orders SET status = 'cancelled' WHERE firm_id = $1 AND status = 'waiting'`, [firm]);
+  });
+
   it('the Administrator sees the same screen, told that the books are exported by company users', async () => {
     const adminEmail = (await db.query(`SELECT email FROM users WHERE firm_id = $1 AND kind = 'admin' AND status = 'active' LIMIT 1`, [firm])).rows[0]?.email as string | undefined;
     if (!adminEmail) return;   // the demo seed always has one; nothing to check otherwise

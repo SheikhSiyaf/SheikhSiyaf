@@ -42,6 +42,10 @@ describe('payment routes', () => {
     // anonymous: nothing at all
     for (const [m, u] of [['GET', '/api/pay/order'], ['POST', '/api/pay/order'], ['GET', '/api/staff/payments'], ['GET', '/api/staff/payments-settings']] as const) expect((await call(undefined, m, u)).statusCode, u).toBe(401);
 
+    // the customer screen asks whether transfers are switched on: just a yes/no, and an order only when there is one
+    const early = (await call(customer, 'GET', '/api/pay/order')).json() as { enabled: boolean; order: unknown };
+    expect(early.enabled).toBe(true); expect(early.order).toBeNull();
+
     // the customer places the order; whatever they send about price is ignored (the route reads no body)
     const placedRes = await call(customer, 'POST', '/api/pay/order', { total: 1, totalHalalas: 1, status: 'approved', amount: '1.00' });
     expect(placedRes.statusCode, placedRes.body).toBe(200);

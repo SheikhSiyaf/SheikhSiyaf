@@ -739,3 +739,8 @@ Every change below is covered by a test in `test/`.
 | `subpay.bank_live` (the details customers see) and `subpay.bank_changes` (requests: pending, applied or cancelled; one pending at a time); `subpay.settings.bank_change_delay_hours` (default 24, 1 to 168) | A changed bank account never shows at once: this blocks the "attacker swaps the IBAN" attack. The first details ever entered show at once. |
 | Functions `bank_get`, `bank_request` (Owner role only), `bank_cancel` (Owner role), `iban_valid` (Saudi IBAN: SA and 22 digits, mod-97 check), `apply_due`; `settings_set` now has a fourth value (the delay) and refuses switching payments on without bank details | The delay, the validation and the on switch are enforced in the database. |
 | `my_order` and `place_order` replaced: they read `bank_live` (not the old billing_settings lines), apply a change whose waiting time is over, and `my_order` says when the account changed in the last 7 days | Customers of the new flow only ever see protected details. |
+
+## 0091_subpay_customer.sql
+| Change | Why |
+|---|---|
+| `GRANT EXECUTE ON FUNCTION subpay.enabled() TO nusuh_app` (reversible: REVOKE) | The customer screen needs one yes/no: are payments by bank transfer switched on. Nothing else is exposed. |

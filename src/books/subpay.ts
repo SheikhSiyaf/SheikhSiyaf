@@ -20,6 +20,7 @@ export const fromHalalas = (h: bigint | number | string): string => { const n = 
 
 export interface SubmitInput { amount?: unknown; date?: unknown; senderBank?: unknown; bankRef?: unknown; note?: unknown; fileName?: unknown; fileType?: unknown; fileBase64?: unknown }
 
+export const enabled = async (db: Db) => (await db.query('SELECT subpay.enabled() AS e')).rows[0].e === true;
 export const myOrder = async (db: Db) => (await db.query('SELECT subpay.my_order() AS o')).rows[0].o ?? null;
 export const placeOrder = async (db: Db) => { const id = (await db.query('SELECT subpay.place_order() AS id')).rows[0].id as string; return { id, order: await myOrder(db) }; };
 

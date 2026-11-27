@@ -7,6 +7,7 @@ import { api, useApi } from '../api.ts';
 import { useI18n, type Key } from '../i18n.tsx';
 import { ErrorNote, errorText } from '../ui.tsx';
 import type { TrialInfo } from './TrialScreens.tsx';
+import { TransferGate } from './TransferPanel.tsx';
 
 export const OPTIONAL = ['Inventory', 'Restaurant', 'Rooms', 'Assets', 'Rentals', 'Projects', 'HRM', 'CRM'] as const;
 
@@ -69,7 +70,9 @@ export function BuyPanel({ trial }: { trial: TrialInfo }) {
       </section>
     );
   }
-  return <Waiting order={o} lang={lang} modName={modName} trial={trial} onChange={() => setEditing(true)} onSent={order.reload} />;
+  const waiting = <Waiting order={o} lang={lang} modName={modName} trial={trial} onChange={() => setEditing(true)} onSent={order.reload} />;
+  // When payments by bank transfer are switched on, the transfer panel takes over (it falls back to the older form while they are off).
+  return o.confirmed ? waiting : <TransferGate>{waiting}</TransferGate>;
 }
 
 function Waiting({ order: o, modName, trial, onChange, onSent }: { order: Order; lang: string; modName: (m: string) => string; trial: TrialInfo; onChange: () => void; onSent: () => void }) {

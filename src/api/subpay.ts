@@ -9,7 +9,7 @@ export function registerSubpayRoutes(app: FastifyInstance, ctx: Ctx) {
   const { as, opts } = ctx;
   const confirmIdentity = identityChecker(ctx);
   // The customer
-  app.get('/api/pay/order', async (req) => as(req, async (db) => ({ order: await P.myOrder(db) })));
+  app.get('/api/pay/order', async (req) => as(req, async (db) => ({ enabled: await P.enabled(db), order: await P.myOrder(db) })));
   app.post('/api/pay/order', async (req) => as(req, (db) => P.placeOrder(db)));   // sends nothing: the order is worked out from the customer's waiting order
   app.post<{ Params: { id: string }; Body: P.SubmitInput }>('/api/pay/order/:id/submit', { bodyLimit: 8 * 1024 * 1024 }, async (req) => as(req, (db) => P.submit(db, uuidParam(req.params.id), req.body ?? {})));
 

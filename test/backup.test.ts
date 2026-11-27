@@ -4,7 +4,11 @@
 // a new empty database, and compares the two table by table, then checks the things that matter most to a client:
 // every ledger line, the debit and credit totals, the row-level security that keeps companies apart, and that the
 // application's own login can read the restored data and sees only what it should.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+
+// Each of these runs the real backup script (a full database dump and an encryption). The shared test database holds everything the other test files
+// wrote, so on a busy runner a dump can pass the usual 20 seconds; that timeout failed the go-live checks once.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';

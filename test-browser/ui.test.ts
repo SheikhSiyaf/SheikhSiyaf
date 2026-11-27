@@ -1829,6 +1829,13 @@ describe('The sign-in and sign-up pages', () => {
     expect(await q.locator('#staff-home').innerText()).toContain('Viewer');
     expect(await q.locator('#own-tab-customers').count()).toBe(0);
     expect(await q.locator('#own-tab-staff').count()).toBe(0);
+    // a Viewer may see the payment queue but cannot decide anything
+    expect(await q.locator('#own-tab-review').count()).toBe(1);
+    await q.locator('#own-tab-review').click();
+    await q.locator('#rv').waitFor({ timeout: 15000 });
+    expect(await q.locator('#rv-act-approve').count()).toBe(0);
+    expect(await q.locator('#rv-act-reject').count()).toBe(0);
+    expect(await q.locator('#own-tab-payments').count()).toBe(0);
     expect(await overflowOf(q)).toBeLessThanOrEqual(2);
     await screenshotTo(q, 'staff-restricted-home');
     // Arabic and right to left

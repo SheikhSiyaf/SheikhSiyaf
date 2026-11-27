@@ -48,7 +48,7 @@ export function OwnerConsole({ me, path, onSignOut }: { me: Me; path: string; on
   return (
     <div className="app">
       <Sidebar subtitle={t('own.console')} user={me.user} roleLabel={t('own.role')} onSignOut={onSignOut}>
-        {(full ? OWNER_TABS : mayReview ? [['customers', '/owner'], ['review', '/owner/review']] as const : []).map(([k, to]) => <button key={k} id={`own-tab-${k}`} className={k === tab ? 'on' : ''} aria-current={k === tab ? 'page' : undefined} onClick={() => navigate(to)}>{!full && k === 'customers' ? t('staff.home.page') : t(`own.tab.${k}`)}{k === 'support' && unread > 0 && <span className="fab-badge inline">{unread}</span>}</button>)}
+        {(full ? OWNER_TABS : mayReview ? [['customers', '/owner'], ['review', '/owner/review']] as const : []).map(([k, to]) => <button key={k} id={!full && k === 'customers' ? 'own-tab-access' : `own-tab-${k}`} className={k === tab ? 'on' : ''} aria-current={k === tab ? 'page' : undefined} onClick={() => navigate(to)}>{!full && k === 'customers' ? t('staff.home.page') : t(`own.tab.${k}`)}{k === 'support' && unread > 0 && <span className="fab-badge inline">{unread}</span>}</button>)}
         <button id="demo-mode" className="side-extra" onClick={() => void openDemo()}>▶ {t('demoSite.button')}</button>
       </Sidebar>
       <main>

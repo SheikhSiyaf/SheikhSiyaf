@@ -21,6 +21,7 @@ async function login(userId: string) {
 
 beforeAll(async () => {
   planId = (await owner.query(`SELECT id FROM plans WHERE code = 'nusuh'`)).rows[0].id;
+  await owner.query(`UPDATE subpay.bank_live SET account_name = 'Nusuh Demo Co', bank = 'Demo Bank', iban = 'SA0380000000608010167519', swift = 'DEMOSARI', changed_at = now(), first_entry = true`);
   await owner.query('UPDATE subpay.settings SET payments_enabled = true');
   server = buildServer({ pool: appPool, sessionSecret: 'test-secret-subpay' });
 });
@@ -41,27 +42,10 @@ describe('payment routes', () => {
     // anonymous: nothing at all
     for (const [m, u] of [['GET', '/api/pay/order'], ['POST', '/api/pay/order'], ['GET', '/api/staff/payments'], ['GET', '/api/staff/payments-settings']] as const) expect((await call(undefined, m, u)).statusCode, u).toBe(401);
 
-    // the customer places the order. (The bank details it needs are set and put back inside one transaction, because other test files expect the shared
-    // bank details to be empty. Placing over HTTP is covered below for what it refuses.)
-    const placed = { statusCode: 200, body: '', json: () => ({ order: null as unknown, id: '' }) };
-    {
-      const c = await owner.connect();
-      try {
-        await c.query('BEGIN');
-        const was = (await c.query('SELECT bank_account_name, bank_name, bank_iban, bank_swift FROM billing_settings FOR UPDATE')).rows[0];
-        await c.query(`UPDATE billing_settings SET bank_account_name = 'Nusuh Demo Co', bank_name = 'Demo Bank', bank_iban = 'SA0380000000608010167519', bank_swift = 'DEMOSARI'`);
-        await c.query('SET LOCAL ROLE nusuh_app'); await c.query(`SELECT set_config('app.user_id', $1, true)`, [f.admin]);
-        placed.json = () => ({ id: id0, order: o0 });
-        var id0 = (await c.query('SELECT subpay.place_order() AS id')).rows[0].id as string;
-        var o0 = (await c.query('SELECT subpay.my_order() AS o')).rows[0].o;
-        await c.query('RESET ROLE');
-        await c.query('UPDATE billing_settings SET bank_account_name = $1, bank_name = $2, bank_iban = $3, bank_swift = $4', [was.bank_account_name, was.bank_name, was.bank_iban, was.bank_swift]);
-        await c.query('COMMIT');
-      } catch (e) { await c.query('ROLLBACK').catch(() => undefined); throw e; } finally { c.release(); }
-    }
-    // whatever a customer sends about price over HTTP is ignored: the same order comes back
-    const again = await call(customer, 'POST', '/api/pay/order', { total: 1, totalHalalas: 1, status: 'approved', amount: '1.00' });
-    expect(again.statusCode, again.body).toBe(400);   // (no bank details are committed right now, so this refuses; it never trusts the body)
+    // the customer places the order; whatever they send about price is ignored (the route reads no body)
+    const placedRes = await call(customer, 'POST', '/api/pay/order', { total: 1, totalHalalas: 1, status: 'approved', amount: '1.00' });
+    expect(placedRes.statusCode, placedRes.body).toBe(200);
+    const placed = { json: () => placedRes.json() as { order: unknown; id: string } };
     const order = placed.json().order as { status: string; totalHalalas: number; reference: string }; const id = placed.json().id as string;
     expect(order.status).toBe('awaiting_payment'); expect(order.totalHalalas).toBeGreaterThan(100);
     expect(order.reference).toMatch(/^NB-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]$/);

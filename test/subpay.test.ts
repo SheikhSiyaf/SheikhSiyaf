@@ -26,6 +26,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 beforeAll(async () => {
   planId = (await owner.query(`SELECT id FROM plans WHERE code = 'nusuh'`)).rows[0].id;
+  await bankReady();
   await owner.query('UPDATE subpay.settings SET payments_enabled = true');
 });
 
@@ -36,23 +37,15 @@ async function customer(modules: string[] = []): Promise<Fixture> {
   await as(f.admin, (db) => O.placeOrder(db, { modules }));
   return f;
 }
-/** Places the payment order. The bank details the order needs are set and put back INSIDE the same transaction, so no other test file ever sees them
- *  (some of them expect the shared bank details to be empty). Returns the order id and, when asked, what the customer sees at that moment. */
+/** Makes sure the live bank details exist (the first entry shows at once; no other test file changes them without rolling back). */
+async function bankReady() {
+  await owner.query(`UPDATE subpay.bank_live SET account_name = 'Nusuh Demo Co', bank = 'Demo Bank', iban = 'SA0380000000608010167519', swift = 'DEMOSARI', changed_at = now(), first_entry = true`);
+}
+/** Places the payment order, and (when asked) remembers what the customer sees at that moment. */
 async function place(f: Fixture, read = false): Promise<string> {
-  const c = await owner.connect();
-  try {
-    await c.query('BEGIN');
-    const was = (await c.query('SELECT bank_account_name, bank_name, bank_iban, bank_swift FROM billing_settings FOR UPDATE')).rows[0];
-    await c.query(`UPDATE billing_settings SET bank_account_name = 'Nusuh Demo Co', bank_name = 'Demo Bank', bank_iban = 'SA0380000000608010167519', bank_swift = 'DEMOSARI'`);
-    await c.query('SET LOCAL ROLE nusuh_app');
-    await c.query(`SELECT set_config('app.user_id', $1, true)`, [f.admin]);
-    const id = (await c.query('SELECT subpay.place_order() AS id')).rows[0].id as string;
-    if (read) seen = (await c.query('SELECT subpay.my_order() AS o')).rows[0].o;
-    await c.query('RESET ROLE');
-    await c.query('UPDATE billing_settings SET bank_account_name = $1, bank_name = $2, bank_iban = $3, bank_swift = $4', [was.bank_account_name, was.bank_name, was.bank_iban, was.bank_swift]);
-    await c.query('COMMIT');
-    return id;
-  } catch (e) { await c.query('ROLLBACK').catch(() => undefined); throw e; } finally { c.release(); }
+  const id = await as(f.admin, async (db) => (await db.query('SELECT subpay.place_order() AS id')).rows[0].id as string);
+  if (read) seen = await as(f.admin, (db) => P.myOrder(db));
+  return id;
 }
 let seen: { bank?: Record<string, unknown>; [k: string]: unknown } | null = null;
 const pay = async (f: Fixture, id: string, x: P.SubmitInput = {}) => as(f.admin, async (db) => P.submit(db, id, { amount: P.fromHalalas(await total(id)), date: today(), senderBank: 'Al Demo Bank', bankRef: `TRF-${stamp()}`, ...x }));
@@ -104,7 +97,7 @@ describe('placing an order', () => {
     expect(BigInt(o.total_halalas)).toBe(sub + BigInt(o.vat_halalas));
     expect(o.currency.trim()).toBe('SAR'); expect(o.status).toBe('awaiting_payment');
     const mine = seen!;
-    expect(mine).toMatchObject({ id, status: 'awaiting_payment', reference: o.reference, bank: { accountName: 'Nusuh Demo Co', iban: 'SA0380000000608010167519' } });
+    expect(mine).toMatchObject({ id, status: 'awaiting_payment', reference: o.reference, bank: { accountName: 'Nusuh Demo Co', iban: 'SA0380000000608010167519', changedRecently: false } });
     expect(mine.bank).not.toHaveProperty('swift');
     expect(Number(mine.totalHalalas)).toBe(Number(o.total_halalas));
   });
@@ -138,7 +131,7 @@ describe('placing an order', () => {
     const c = await owner.connect();
     try {
       await c.query('BEGIN');
-      await c.query(`UPDATE billing_settings SET bank_account_name = NULL, bank_name = NULL, bank_iban = NULL, bank_swift = NULL`);
+      await c.query(`UPDATE subpay.bank_live SET account_name = NULL, bank = NULL, iban = NULL, swift = NULL`);
       await c.query('SET LOCAL ROLE nusuh_app'); await c.query(`SELECT set_config('app.user_id', $1, true)`, [f.admin]);
       await expect(c.query('SELECT subpay.place_order()')).rejects.toThrow(/bank details are not ready/);
     } finally { await c.query('ROLLBACK').catch(() => undefined); c.release(); }
@@ -149,7 +142,7 @@ describe('placing an order', () => {
     const c = await owner.connect();
     try {
       await c.query('BEGIN');
-      await c.query(`UPDATE billing_settings SET currency = 'AED', bank_account_name = 'N', bank_name = 'B', bank_iban = 'SA0380000000608010167519', bank_swift = 'DEMOSARI'`);
+      await c.query(`UPDATE billing_settings SET currency = 'AED'`);
       await c.query('SET LOCAL ROLE nusuh_app'); await c.query(`SELECT set_config('app.user_id', $1, true)`, [f.admin]);
       await expect(c.query('SELECT subpay.place_order()')).rejects.toThrow(/Saudi riyals/);
     } finally { await c.query('ROLLBACK').catch(() => undefined); c.release(); }
@@ -333,7 +326,6 @@ describe('approval', () => {
 
   it('if anything fails after the conversion, nothing at all changes', async () => {
     const f = await customer(); const id = await place(f); await pay(f, id);
-    await owner.query(`UPDATE billing_settings SET seller_name = seller_name`);   // (keeps the shared row warm; the failure below is the point)
     const c = await owner.connect();
     try {
       await c.query('BEGIN');
@@ -391,7 +383,7 @@ describe('the database rules (hit directly, as the owner connection)', () => {
     await expect(as(f.platformOwner, (db) => P.saveSettings(db, { enabled: true, reviewTargetHours: 0, orderOpenDays: 14 }))).rejects.toThrow();
     await expect(as(f.platformOwner, (db) => P.saveSettings(db, { enabled: 'yes', reviewTargetHours: 4, orderOpenDays: 14 }))).rejects.toThrow();
     await as(f.platformOwner, (db) => P.saveSettings(db, { enabled: true, reviewTargetHours: 4, orderOpenDays: 14 }));
-    expect(await as(reviewer, (db) => P.settings(db))).toEqual({ enabled: true, reviewTargetHours: 4, orderOpenDays: 14 });
+    expect(await as(reviewer, (db) => P.settings(db))).toMatchObject({ enabled: true, reviewTargetHours: 4, orderOpenDays: 14, bankReady: true });
   });
 
   it('an unpaid order that has run out of time is closed, and cannot be paid', async () => {

@@ -1759,4 +1759,77 @@ describe('The sign-in and sign-up pages', () => {
     // Arabic and right to left
     await p.locator('button.lang, #lang').first().click().catch(() => undefined);
   });
+  it('Payments screen: the Owner switches payments on and off, sets the rules, enters the bank details, and a changed account waits (and can be cancelled)', async () => {
+    const platform = (await db.query(`SELECT email FROM users WHERE kind = 'owner' AND status = 'active' LIMIT 1`)).rows[0].email as string;
+    // a clean start for this check: no bank details, payments off, nothing pending
+    await db.query(`UPDATE subpay.bank_live SET account_name = NULL, bank = NULL, iban = NULL, swift = NULL, first_entry = true`);
+    await db.query(`UPDATE subpay.bank_changes SET state = 'cancelled', decided_at = now() WHERE state = 'pending'`);
+    await db.query(`UPDATE subpay.settings SET payments_enabled = false, bank_change_delay_hours = 24`);
+    const { page: p } = await newPage(1280);
+    await signIn(p, platform);
+    await p.goto(`${BASE}/owner/payments`, { waitUntil: 'networkidle' });
+    await p.locator('#pay-switch').waitFor({ timeout: 15000 });
+    expect(await p.locator('#pay-state').innerText()).toBe('Off');
+    expect(await p.locator('#pay-need-bank').count()).toBe(1);                         // cannot switch on without bank details
+    expect(await p.locator('#pay-toggle').isDisabled()).toBe(true);
+    // the first details show at once; a wrong password changes nothing
+    await p.locator('#pay-bank-change').click();
+    await p.locator('#pay-bank-name').fill('Nusuh Books Co');
+    await p.locator('#pay-bank-bank').fill('Demo Bank');
+    await p.locator('#pay-bank-iban').fill('SA03 8000 0000 6080 1016 7519');
+    await p.locator('#pay-bank-password').fill('not-my-password');
+    await p.locator('#pay-bank-save').click();
+    await p.locator('#pay-error').waitFor({ timeout: 15000 });
+    expect((await db.query(`SELECT iban FROM subpay.bank_live`)).rows[0].iban).toBeNull();
+    await p.locator('#pay-bank-password').fill('demo1234');
+    await p.locator('#pay-bank-iban').fill('SA0380000000608010167518');                // wrong check digits
+    await p.locator('#pay-bank-save').click();
+    await waitForText(p, 'valid Saudi IBAN');
+    await p.locator('#pay-bank-iban').fill('SA03 8000 0000 6080 1016 7519');
+    await p.locator('#pay-bank-save').click();
+    await waitForText(p, 'show to customers now');
+    expect((await db.query(`SELECT iban FROM subpay.bank_live`)).rows[0].iban).toBe('SA0380000000608010167519');
+    expect(await p.locator('#pay-bank-live').innerText()).toContain('SA03 8000 0000 6080 1016 7519');
+    // switch on (asks first), then the rules
+    expect(await p.locator('#pay-toggle').isDisabled()).toBe(false);
+    await p.locator('#pay-toggle').click();
+    await p.getByRole('button', { name: 'Yes, continue' }).click();
+    await p.locator('#pay-state').waitFor({ timeout: 15000 });
+    await waitForText(p, 'Saved.');
+    expect((await db.query(`SELECT payments_enabled FROM subpay.settings`)).rows[0].payments_enabled).toBe(true);
+    await p.locator('#pay-hours').fill('6');
+    await p.locator('#pay-delay').fill('0');
+    await p.locator('#pay-rules-save').click();
+    await p.waitForTimeout(600);                                                       // a delay of 0 hours is stopped by the form itself
+    expect((await db.query(`SELECT bank_change_delay_hours AS d, review_target_hours AS h FROM subpay.settings`)).rows[0]).toEqual({ d: 24, h: 4 });
+    await p.locator('#pay-delay').fill('12');
+    await p.locator('#pay-rules-save').click();
+    await waitForText(p, 'Saved.');
+    expect((await db.query(`SELECT review_target_hours AS h, bank_change_delay_hours AS d FROM subpay.settings`)).rows[0]).toEqual({ h: 6, d: 12 });
+    // a CHANGE of the account waits; customers keep the old one; it can be cancelled
+    await p.locator('#pay-bank-change').click();
+    await p.locator('#pay-bank-iban').fill('SA4420000001234567891234');
+    await p.locator('#pay-bank-password').fill('demo1234');
+    await p.locator('#pay-bank-save').click();
+    await p.locator('#pay-bank-pending').waitFor({ timeout: 15000 });
+    expect(await p.locator('#pay-bank-live').innerText()).toContain('SA03 8000 0000 6080 1016 7519');
+    expect(await p.locator('#pay-bank-pending').innerText()).toContain('SA44 2000 0001 2345 6789 1234');
+    expect((await db.query(`SELECT iban FROM subpay.bank_live`)).rows[0].iban).toBe('SA0380000000608010167519');
+    await screenshotTo(p, 'payments-pending-change');
+    expect(await overflowOf(p)).toBeLessThanOrEqual(2);
+    await p.locator('#pay-bank-cancel').click();
+    await p.getByRole('button', { name: 'Yes, continue' }).click();
+    await waitForText(p, 'The change was cancelled.');
+    expect(await p.locator('#pay-bank-pending').count()).toBe(0);
+    expect((await db.query(`SELECT count(*)::int AS n FROM subpay.bank_changes WHERE state = 'pending'`)).rows[0].n).toBe(0);
+    // phone width
+    const { page: ph } = await newPage(390);
+    await signIn(ph, platform);
+    await ph.goto(`${BASE}/owner/payments`, { waitUntil: 'networkidle' });
+    await ph.locator('#pay-bank').waitFor({ timeout: 15000 });
+    expect(await overflowOf(ph)).toBeLessThanOrEqual(2);
+    // leave the shared database as other checks expect: payments off
+    await db.query(`UPDATE subpay.settings SET payments_enabled = false, bank_change_delay_hours = 24`);
+    await db.query(`UPDATE email_outbox SET status = 'failed', last_error = 'test: not sent' WHERE status = 'queued' AND subject LIKE 'Staff change%'`);
+  });
 });

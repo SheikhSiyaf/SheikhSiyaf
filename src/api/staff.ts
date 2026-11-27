@@ -28,7 +28,7 @@ async function overview(db: Db) {
 }
 
 /** Every other active Owner gets an e-mail about a change to staff or roles, so nothing happens silently. */
-async function tellOwners(db: Db, what: { en: string; ar: string }) {
+export async function tellOwners(db: Db, what: { en: string; ar: string }) {
   const me = (await db.query('SELECT full_name AS name FROM users WHERE id = app_user_id()')).rows[0]?.name ?? '';
   const owners = (await db.query(`SELECT id, full_name AS name, email FROM staff_members() WHERE is_full AND status = 'active' AND NOT is_me`)).rows as { name: string; email: string }[];
   const platform = (await db.query(`SELECT id FROM firms WHERE kind = 'platform'`)).rows[0]?.id as string | undefined;

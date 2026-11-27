@@ -3783,6 +3783,12 @@ function seedReview(companyId: string, poster: string) {
 
 // ---------------------------------------------------------------- owner (same rules as src/api/owner.ts)
 routes.push(
+  // Payments (demo: a fixed picture of the Payments screen; changes are accepted but nothing is kept)
+  ['GET', /^\/api\/staff\/payments-settings$/, () => { owner(); return { enabled: false, reviewTargetHours: 4, orderOpenDays: 14, bankChangeDelayHours: 24, bankReady: true }; }],
+  ['POST', /^\/api\/staff\/payments-settings$/, () => { owner(); return { ok: true }; }],
+  ['GET', /^\/api\/staff\/payments\/bank$/, () => { owner();
+    return { delayHours: 24, live: { accountName: 'Demo Company Ltd', bank: 'Demo Bank', iban: 'SA0380000000608010167519', swift: 'DEMOSARI', changedAt: new Date().toISOString() }, pending: null, history: [] }; }],
+  ['POST', /^\/api\/staff\/payments\/bank(\/.*)?$/, () => { owner(); return { ok: true, immediate: false }; }],
   // Internal users (demo: a fixed picture of the staff page; changes are accepted but nothing is kept)
   ['GET', /^\/api\/owner\/staff$/, () => { owner();
     const perm = (code: string, workspace: string, labelEn: string, labelAr: string) => ({ code, workspace, labelEn, labelAr });

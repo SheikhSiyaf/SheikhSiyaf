@@ -21,6 +21,14 @@ export function listOf<T>(v: unknown, what = 'list'): T[] {
 }
 
 const RAISED: [RegExp, string][] = [
+  [/Enter the bank details before switching payments on/, 'err.payNeedBank'],
+  [/not a valid Saudi IBAN/, 'err.payIban'],
+  [/These are the details customers see now/, 'err.payBankSame'],
+  [/no waiting change to cancel/, 'err.payNoChange'],
+  [/Check the settings: review time/, 'err.paySettings'],
+  [/Only the Owner role changes the bank details/, 'err.payOwnerOnly'],
+  [/Enter the account name and the bank/, 'err.payBankText'],
+  [/SWIFT code looks wrong/, 'err.paySwift'],
   [/at least one active person with the Owner role/, 'err.staffLastOwner'],
   [/cannot change your own/, 'err.staffSelf'],
   [/Built-in roles/, 'err.staffBuiltIn'],

@@ -732,3 +732,10 @@ Every change below is covered by a test in `test/`.
 | Status machine trigger `subpay.before_order_status`: only listed moves; amounts, reference, customer and currency never change | The database, not the app, decides what is allowed. |
 | Functions (the app role can run only these; the tables have no grant and no policy): `place_order`, `my_order`, `submit`, `queue`, `order_detail`, `file_get`, `recommend`, `reject`, `need_info`, `begin_approve`, `finish_approve`, `settings_get`, `settings_set`, `expire_stale`, `ref_valid` | Customers act on their own order only; people with `payments.view` read; `payments.review` recommends, rejects or asks for more; only the Owner role approves; nobody reviews a payment they placed. |
 | Audit triggers on orders, submissions, settings; `order_events` refuses UPDATE and DELETE | Every action is recorded and the trail cannot be changed. |
+
+## 0090_subpay_bank.sql
+| Change | Why |
+|---|---|
+| `subpay.bank_live` (the details customers see) and `subpay.bank_changes` (requests: pending, applied or cancelled; one pending at a time); `subpay.settings.bank_change_delay_hours` (default 24, 1 to 168) | A changed bank account never shows at once: this blocks the "attacker swaps the IBAN" attack. The first details ever entered show at once. |
+| Functions `bank_get`, `bank_request` (Owner role only), `bank_cancel` (Owner role), `iban_valid` (Saudi IBAN: SA and 22 digits, mod-97 check), `apply_due`; `settings_set` now has a fourth value (the delay) and refuses switching payments on without bank details | The delay, the validation and the on switch are enforced in the database. |
+| `my_order` and `place_order` replaced: they read `bank_live` (not the old billing_settings lines), apply a change whose waiting time is over, and `my_order` says when the account changed in the last 7 days | Customers of the new flow only ever see protected details. |

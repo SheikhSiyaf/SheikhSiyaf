@@ -63,8 +63,18 @@ export async function approve(db: Db, id: string, x: { override?: unknown }, now
 }
 
 export const settings = async (db: Db) => (await db.query('SELECT subpay.settings_get() AS s')).rows[0].s;
-export async function saveSettings(db: Db, x: { enabled?: unknown; reviewTargetHours?: unknown; orderOpenDays?: unknown }) {
-  const h = Number(x.reviewTargetHours), d = Number(x.orderOpenDays);
+export async function saveSettings(db: Db, x: { enabled?: unknown; reviewTargetHours?: unknown; orderOpenDays?: unknown; bankChangeDelayHours?: unknown }) {
+  const h = Number(x.reviewTargetHours), d = Number(x.orderOpenDays), delay = x.bankChangeDelayHours === undefined ? NaN : Number(x.bankChangeDelayHours);
   if (typeof x.enabled !== 'boolean' || !Number.isInteger(h) || !Number.isInteger(d)) bad('Check the settings.', 'err.invalid');
-  await db.query('SELECT subpay.settings_set($1, $2, $3)', [x.enabled, h, d]);
+  const keep = Number.isNaN(delay) ? Number((await settings(db)).bankChangeDelayHours) : delay;
+  if (!Number.isInteger(keep)) bad('Check the settings.', 'err.invalid');
+  await db.query('SELECT subpay.settings_set($1, $2, $3, $4)', [x.enabled, h, d, keep]);
 }
+
+export interface BankInput { accountName?: unknown; bank?: unknown; iban?: unknown; swift?: unknown }
+export const bankGet = async (db: Db) => (await db.query('SELECT subpay.bank_get() AS b')).rows[0].b;
+export async function bankRequest(db: Db, x: BankInput) {
+  const t = (v: unknown, n: number) => String(v ?? '').trim().slice(0, n);
+  return (await db.query('SELECT subpay.bank_request($1, $2, $3, $4) AS r', [t(x.accountName, 200), t(x.bank, 200), t(x.iban, 60), t(x.swift, 30)])).rows[0].r as { immediate: boolean; id: string; effectiveAt: string };
+}
+export const bankCancel = (db: Db, id: string) => db.query('SELECT subpay.bank_cancel($1)', [id]);

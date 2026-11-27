@@ -34,6 +34,7 @@ function BankDetails() {
     <div className="card" id="bank-details" style={{ marginTop: 12 }}>
       <h2>{t('bank.title')}</h2>
       <div className="small mut" style={{ marginBottom: 8 }}>{t('bankd.hint')}</div>
+      <div className="notice warn small" id="bank-legacy-note" style={{ marginBottom: 8 }}>{t('bankd.legacy')}</div>
       {msg.ok && <div className="notice" id="bank-msg">{msg.ok}</div>}
       {msg.bad && <div className="notice bad" role="alert" id="bank-error">{msg.bad}</div>}
       <form onSubmit={(e) => { e.preventDefault(); void save(); }}>

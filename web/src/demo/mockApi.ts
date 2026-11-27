@@ -1809,9 +1809,10 @@ const routes: [string, RegExp, Handler][] = [
     if (d.type !== 'expense') fail(400, 'Only expenses can be voided.', 'err.format');
     if (d.status === 'voided') fail(400, 'This expense has already been voided.', 'err.alreadyVoided');
     if (d.status !== 'issued') fail(400, 'Only recorded expenses can be voided.', 'err.notIssued');
-    reverse(session!, d.journalEntryId!, String(b?.date ?? today()));
+    const when = String(b?.date ?? d.issueDate ?? today());   // like the server: the expense's own day unless a date is given
+    reverse(session!, d.journalEntryId!, when);
     d.status = 'voided'; d.voidedAt = new Date().toISOString();
-    return { ok: true };
+    return { ok: true, date: when };
   }],
   ['GET', /^\/api\/companies\/([\w-]+)\/recurring$/, (m) => { const id = inCo(m[1]!); return sdb.recurring.filter((r) => r.companyId === id)
     .sort((a, b) => Number(b.active) - Number(a.active) || a.nextDate.localeCompare(b.nextDate)).map(recRow); }],

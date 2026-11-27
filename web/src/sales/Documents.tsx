@@ -65,6 +65,7 @@ export function DocList({ books, type, filter }: { books: CompanyBooks; type: Do
         <input type="search" placeholder={t('doc.search')} value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: '1 1 220px' }} aria-label={t('search')} />
         {canCreate && <button className="b p" onClick={() => go(m, page, 'new')}>{t(`doc.new.${type}` as Key)}</button>}
       </div>
+      {type === 'expense' && <p className="small mut" id="exp-bills-note">{t('exp.billsNote')} <button className="link" id="exp-bills-link" onClick={() => go('Purchases', 'bills')}>{t('exp.billsLink')}</button></p>}
       <div className="chips" role="tablist" style={{ marginBottom: 10 }}>
         {FILTERS[type]!.map((s) => (
           <button key={s} role="tab" aria-selected={s === status} className={`b small ${s === status ? 'p' : ''}`} onClick={() => setStatus(s)}>
@@ -469,7 +470,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
           go(m, x.type === 'invoice' ? 'credit-notes' : 'supplier-credits', r.id);
         })}>{t(x.type === 'invoice' ? 'doc.createCredit' : 'doc.createSupplierCredit')}</button>}
         {books.canPost && isExpense && x.status === 'issued' && !confirmVoid && (
-          <button className="b" disabled={busy || isLocked(books, today())} title={isLocked(books, today()) ? t('journal.reverseLocked') : undefined}
+          <button className="b" disabled={busy || (isLocked(books, x.issueDate) && isLocked(books, today()))} title={isLocked(books, x.issueDate) && isLocked(books, today()) ? t('journal.reverseLocked') : undefined}
             onClick={() => setConfirmVoid(true)}>{t('exp.void')}</button>
         )}
         {books.canPost && isClaim && x.status === 'submitted' && !rejecting && (
@@ -528,7 +529,7 @@ export function DocView({ books, id }: { books: CompanyBooks; id: string }) {
         </div>
       )}
       {confirmVoid && <ConfirmBar message={t('exp.voidConfirm')} busy={busy} onNo={() => setConfirmVoid(false)}
-        onYes={() => { setConfirmVoid(false); void run(() => api(`/api/documents/${x.id}/void`, { body: { date: today() } })); }} />}
+        onYes={() => { setConfirmVoid(false); void run(() => api(`/api/documents/${x.id}/void`, { body: {} })); }} />}
 
       <div className="card paper">
         <div className="paper-head">

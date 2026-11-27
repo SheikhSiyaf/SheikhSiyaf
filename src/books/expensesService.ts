@@ -12,15 +12,26 @@ const notFound = (): never => { throw new HttpError(404, 'Not found.', 'err.notF
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const today = () => new Date().toISOString().slice(0, 10);
 
-/** Voids a recorded expense: posts the reversing entry and marks it voided. Nothing else changes. */
-export async function voidExpense(db: Db, id: string, date: string): Promise<void> {
-  const { rows } = await db.query(`SELECT type, status, journal_entry_id FROM documents WHERE id = $1 FOR UPDATE`, [id]);
+/** Voids a recorded expense: posts the reversing entry and marks it voided. Nothing else changes.
+ *  Unless a date is given, the reversal is dated the same day as the expense when that month is still open, so the expense and its reversal
+ *  net to zero in the month's totals, Profit and Loss and the trial balance. If that month is closed the reversal is dated today (a closed
+ *  month never changes), and the Expenses total then shows the reversal in the month it is posted in. Returns the date used. */
+export async function voidExpense(db: Db, id: string, date?: string): Promise<string> {
+  const { rows } = await db.query(`SELECT d.type, d.status, d.journal_entry_id, e.entry_date::text AS entry_date, d.company_id
+                                     FROM documents d LEFT JOIN journal_entries e ON e.id = d.journal_entry_id WHERE d.id = $1 FOR UPDATE OF d`, [id]);
   const d = rows[0] ?? notFound();
   if (d.type !== 'expense') bad('Only expenses can be voided. Use a credit note for invoices and bills.', 'err.format');
   if (d.status === 'voided') bad('This expense has already been voided.', 'err.alreadyVoided');
   if (d.status !== 'issued') bad('Only recorded expenses can be voided. Delete the draft instead.', 'err.notIssued');
-  const rev = await reverseEntry(db, d.journal_entry_id, date, 'Void expense');
+  let when: string = date ?? today();
+  if (!date && d.entry_date) {
+    const closed = (await db.query(
+      `SELECT 1 FROM periods WHERE company_id = $1 AND $2::date BETWEEN start_date AND end_date AND locked_at IS NOT NULL`, [d.company_id, d.entry_date])).rowCount === 1;
+    if (!closed) when = d.entry_date as string;
+  }
+  const rev = await reverseEntry(db, d.journal_entry_id, when, 'Void expense');
   await db.query(`UPDATE documents SET status = 'voided', voided_at = now(), void_entry_id = $2 WHERE id = $1`, [id, rev]);
+  return when;
 }
 
 // ------------------------------------------------------------------ recurring expenses

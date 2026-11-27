@@ -24,8 +24,8 @@ export function registerExpenseRoutes(app: FastifyInstance, { as }: Ctx) {
   };
 
   app.post<{ Params: P; Body: { date?: string } }>('/api/documents/:id/void', async (req) => as(req, async (db) => {
-    await E.voidExpense(db, uuidParam(req.params.id), dateParam(req.body?.date, today()));
-    return { ok: true };
+    const date = await E.voidExpense(db, uuidParam(req.params.id), req.body?.date ? dateParam(req.body.date, today()) : undefined);
+    return { ok: true, date };
   }));
 
   app.get<{ Params: P }>('/api/companies/:id/recurring', async (req) => inCompany(req, req.params.id, (db, c) => E.listRecurring(db, c)));

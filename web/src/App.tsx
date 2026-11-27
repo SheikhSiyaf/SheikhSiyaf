@@ -78,6 +78,15 @@ function Screens() {
     void api<{ fresh?: boolean }>('/api/pay/intent/claim', { body: { token } }).then((r) => { trial.reload(); if (r.fresh) navigate('/buy'); }).catch(() => undefined);   // reload: the buy screen must show the claimed selection, not the one fetched a moment earlier
   }, [user, path]);
 
+  // Someone who chose "Order and pay now" on the /order page lands on the buy screen once per visit while their account is still unpaid (a paid
+  // customer is never sent there). The choice is kept on the server with their selection, so it survives the e-mail link.
+  useEffect(() => {
+    const t = trial.data;
+    if (!user || user.kind !== 'client' || !t?.trialing || !t.intent?.payFirst) return;
+    try { if (window.sessionStorage.getItem('nb_payfirst')) return; window.sessionStorage.setItem('nb_payfirst', '1'); } catch { /* then it happens on every load, which is harmless */ }
+    if (!path.startsWith('/buy')) navigate('/buy');
+  }, [user, trial.data]);
+
   // A sign-in link works whether or not someone is signed in on this device.
   // A link to an emailed document opens it for anyone holding the link.
   // The demo keeps "?paid=" in its in-memory path; the real app has it in the address.

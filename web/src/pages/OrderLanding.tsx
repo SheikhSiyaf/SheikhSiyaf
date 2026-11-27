@@ -1,13 +1,13 @@
 // /order: where the website's Order button lands. It carries only module names (and the clean-up flag), never a price. The selection is kept on the
-// server; the person then starts their free trial (or signs in), and the buy screen opens with these modules ticked. Prices shown here are
-// the owner's, read from the software; the order is priced again by the server.
+// server. The person then chooses how to start: the 15-day free trial, or order and pay now (the buy screen opens straight after sign-up, with these
+// modules ticked). Either way they pay by bank transfer and the order is priced again by the server. Prices shown here are the owner's, read from the software.
 import { useEffect, useState } from 'react';
 import { api, useApi } from '../api.ts';
 import { useI18n, type Key } from '../i18n.tsx';
 import { ErrorNote, Loading, errorText } from '../ui.tsx';
 import { navigate } from '../router.ts';
 import { AuthShell } from './AuthShell.tsx';
-import { setIntentToken } from '../orderIntent.ts';
+import { getIntentToken, setIntentToken } from '../orderIntent.ts';
 
 interface Site { currency: string; lines: { key: string; amount: number | string }[] }
 const cents = (a: number | string) => Math.round(Number(a) * 100);
@@ -16,6 +16,7 @@ export function OrderLanding() {
   const { t, has } = useI18n();
   const [sel, setSel] = useState<{ modules: string[]; cleanup: boolean }>();
   const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
   const site = useApi<Site>('/api/public/site-data');
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
@@ -24,10 +25,19 @@ export function OrderLanding() {
         const r = await api<{ token: string; modules: string[]; cleanup: boolean }>('/api/public/order-intent', { body: { modules: q.get('m') ?? '', cleanup: q.get('c') === '1' } });
         setIntentToken(r.token);
         setSel({ modules: r.modules, cleanup: r.cleanup });
+        try { window.sessionStorage.setItem('nb_order_mode', q.get('mode') === 'pay' ? 'pay' : 'trial'); } catch { /* the page still works */ }
         window.history.replaceState(null, '', '/order');   // the address no longer carries the selection
       } catch (e) { setError(errorText(t, has, e)); }
     })();
   }, []);
+  /** Records the choice under the secret token (the trial, or pay now), then goes to sign-up. A failure never stops the person: the trial is the default. */
+  const choose = async (payFirst: boolean) => {
+    setBusy(true);
+    const token = getIntentToken();
+    if (token) await api('/api/public/order-intent/mode', { body: { token, payFirst } }).catch(() => undefined);
+    navigate('/signup');
+  };
+  const wantsPay = (() => { try { return window.sessionStorage.getItem('nb_order_mode') === 'pay'; } catch { return false; } })();
   const modName = (m: string) => (has(`mod.${m}`) ? t(`mod.${m}` as Key) : m);
   if (error) return <AuthShell variant="signup"><h1>{t('order.title')}</h1><div className="notice bad" role="alert" id="order-error">{error}</div><div className="actions"><button className="b p" onClick={() => navigate('/signup')}>{t('order.start')}</button></div></AuthShell>;
   if (!sel || site.loading) return <main><Loading /></main>;
@@ -47,10 +57,19 @@ export function OrderLanding() {
         <tr className="tot"><th scope="row">{t('buy.sum.sub')}</th><td className="ltr">{money(once + yearly)}</td></tr>
       </tbody></table>
       <p className="small mut">{t('order.vat')}</p>
-      <p className="small">{t('order.how')}</p>
-      <div className="actions">
-        <button className="b p big" id="order-start" onClick={() => navigate('/signup')}>{t('order.start')}</button>
-        <button className="b big" id="order-signin" onClick={() => navigate('/')}>{t('order.signin')}</button>
+      <div className="order-ways" id="order-ways">
+        <section className={`order-way${wantsPay ? '' : ' pick'}`} id="order-way-trial">
+          <h2>{t('order.trialTitle')}</h2>
+          <p className="small">{t('order.trialText')}</p>
+          <button className={`b ${wantsPay ? '' : 'p '}big`} id="order-start" disabled={busy} onClick={() => void choose(false)}>{t('order.start')}</button>
+        </section>
+        <section className={`order-way${wantsPay ? ' pick' : ''}`} id="order-way-pay">
+          <h2>{t('order.payTitle')}</h2>
+          <p className="small">{t('order.payText')}</p>
+          <button className={`b ${wantsPay ? 'p ' : ''}big`} id="order-pay" disabled={busy} onClick={() => void choose(true)}>{t('order.payBtn')}</button>
+        </section>
       </div>
+      <p className="small">{t('order.how')}</p>
+      <div className="actions"><button className="b big" id="order-signin" onClick={() => navigate('/')}>{t('order.signin')}</button></div>
     </AuthShell>);
 }

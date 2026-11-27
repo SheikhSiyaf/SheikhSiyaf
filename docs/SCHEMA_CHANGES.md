@@ -778,3 +778,10 @@ Every change below is covered by a test in `test/`.
 | `attachments` gets `booking_id` (the registered Ejar contract): PDF only, only on a long-term rental, kept for good; the owner-of-attachment check now counts five kinds; `before_attachment_change` extended (same rules as 0024) | The registered contract PDF is attached, never generated; a picture (an ID photo) is refused by the database. |
 | New function `room_log_identity_access` | Viewing a guest check and exporting the registration record are written to the audit log. |
 
+## 0096_order_intent_pay_first.sql
+| Change | Why |
+|---|---|
+| `order_intents` gets `pay_first` (default false) | The /order page now offers two ways to start: the 15-day free trial, or order and pay now. The choice only decides where the new customer lands after confirming the e-mail (the buy screen, or home). It changes nothing that is priced or owed. |
+| New function `order_intent_set_mode(token_hash, pay_first)`: only an unclaimed, unexpired selection changes; unknown, expired and claimed look the same | The /order page records the choice under the secret token. |
+| `order_intent_peek`, `order_intent_claim` and `my_order_intent` also return `payFirst` | The screens need it. |
+

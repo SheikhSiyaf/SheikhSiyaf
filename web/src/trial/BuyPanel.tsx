@@ -49,6 +49,7 @@ export function BuyPanel({ trial }: { trial: TrialInfo }) {
     return (
       <section className="buy" id="buy-panel">
         <h2>{t('buy.title')}</h2>
+        {trial.intent?.payFirst && <div className="notice" id="buy-pay-now">{t('buy.payNowNote')}</div>}
         <p className="small mut">{t('buy.intro')}</p>
         <h3>{t('buy.modules.title')}</h3>
         <p className="small mut">{t('buy.modules.hint', { price: money(price('perModule')) })}</p>

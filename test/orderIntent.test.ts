@@ -47,7 +47,7 @@ describe('the hand-over from the website', () => {
     const stored = (await owner.query('SELECT modules, cleanup FROM order_intents WHERE token_hash = $1', [sha(r.json().token)])).rows;
     expect(stored).toEqual([{ modules: ['HRM', 'CRM'], cleanup: true }]);
     const p = await peek(r.json().token);
-    expect(p.json()).toEqual({ modules: ['HRM', 'CRM'], cleanup: true });
+    expect(p.json()).toEqual({ modules: ['HRM', 'CRM'], cleanup: true, payFirst: false });
   });
 
   it('takes a comma list from the address, a missing or odd body, and 500 junk entries, without failing or keeping anything unlisted', async () => {
@@ -95,8 +95,8 @@ describe('claiming it as a signed-in customer', () => {
     expect((await claim(ownerCookie, t)).statusCode).toBeGreaterThanOrEqual(400);
     const first = await claim(a, t);
     expect(first.statusCode, first.body).toBe(200);
-    expect(first.json()).toEqual({ modules: ['Projects'], cleanup: false, fresh: true });
-    expect((await claim(a, t)).json()).toEqual({ modules: ['Projects'], cleanup: false, fresh: false });
+    expect(first.json()).toEqual({ modules: ['Projects'], cleanup: false, payFirst: false, fresh: true });
+    expect((await claim(a, t)).json()).toEqual({ modules: ['Projects'], cleanup: false, payFirst: false, fresh: false });
     const other = await claim(b, t);
     const stranger = await claim(b, 'x'.repeat(43));
     expect(other.statusCode).toBe(404);
@@ -104,7 +104,7 @@ describe('claiming it as a signed-in customer', () => {
     expect(other.json().key).toBe(stranger.json().key);
     for (const bad of [undefined, null, 5, {}, [], "'; --", 'x'.repeat(44)]) expect((await claim(a, bad)).statusCode, JSON.stringify(bad)).toBe(404);
     const mine = await as(f.admin, async (db) => (await db.query('SELECT my_order_intent() AS r')).rows[0].r);
-    expect(mine).toEqual({ modules: ['Projects'], cleanup: false });
+    expect(mine).toEqual({ modules: ['Projects'], cleanup: false, payFirst: false });
     expect(await as(f2.admin, async (db) => (await db.query('SELECT my_order_intent() AS r')).rows[0].r)).toBeNull();   // the other customer never sees it
   });
 });
@@ -123,7 +123,7 @@ describe('through sign-up and the e-mailed link', () => {
     expect(v.statusCode, v.body).toBe(200);
     const cookie = String(v.headers['set-cookie']).split(';')[0]!;
     const trial = await server.inject({ method: 'GET', url: '/api/trial', headers: { cookie } });
-    expect(trial.json().intent).toEqual({ modules: ['Rooms', 'HRM'], cleanup: true });   // in the software's own order
+    expect(trial.json().intent).toEqual({ modules: ['Rooms', 'HRM'], cleanup: true, payFirst: false });   // in the software's own order
     const firm = (await owner.query('SELECT id FROM firms WHERE name = $1', [b.companyName])).rows[0].id as string;
     const acc = (await owner.query('SELECT version, source FROM terms_acceptances WHERE firm_id = $1', [firm])).rows;
     expect(acc).toEqual([{ version: TERMS_VERSION, source: 'signup' }]);
@@ -162,5 +162,65 @@ describe('through sign-up and the e-mailed link', () => {
     expect(va.statusCode).toBe(200); expect(vb.statusCode).toBe(200);
     const have = await Promise.all([va, vb].map(async (v) => (await server.inject({ method: 'GET', url: '/api/trial', headers: { cookie: String(v.headers['set-cookie']).split(';')[0]! } })).json().intent));
     expect(have.filter(Boolean).length).toBe(1);
+  });
+});
+
+describe('two ways to start: the free trial, or order and pay now (migration 0096)', () => {
+  const mode = (token: unknown, payFirst: unknown, ip = nextIp()) => server.inject({ method: 'POST', url: '/api/public/order-intent/mode', payload: { token, payFirst } as never, headers: { 'x-forwarded-for': ip } });
+  const form = (o: Record<string, unknown> = {}) => { const s = uniq(); return { fullName: 'Pay First', email: `pf.${s}@throwaway-test.example.com`, password: GOOD, companyName: `Pay First Co ${s}`, country: 'SA', crNumber: cr(), city: 'Riyadh', acceptTerms: true, ...o }; };
+  const begin = (body: unknown) => server.inject({ method: 'POST', url: '/api/signup', payload: body as never, headers: { 'x-forwarded-for': nextIp() } });
+  const tokenOf = async (to: string) => /\/verify\/([A-Za-z0-9_-]{43})/.exec((await owner.query(`SELECT body_text FROM email_outbox WHERE to_email = $1 AND kind = 'signup' ORDER BY created_at`, [to])).rows.map((m) => m.body_text).join('\n'))![1]!;
+  const verify = (token: string) => server.inject({ method: 'POST', url: '/api/signup/verify', payload: { token }, headers: { 'x-forwarded-for': nextIp() } });
+
+  it('the trial is the default; the choice is recorded under the secret token and can be changed until it is claimed', async () => {
+    const t = await mkToken({ modules: ['HRM'], cleanup: false });
+    expect((await peek(t)).json()).toEqual({ modules: ['HRM'], cleanup: false, payFirst: false });
+    expect((await mode(t, true)).statusCode).toBe(200);
+    expect((await peek(t)).json().payFirst).toBe(true);
+    expect((await mode(t, false)).statusCode).toBe(200);
+    expect((await peek(t)).json().payFirst).toBe(false);
+    for (const odd of ['yes', 1, null, undefined, {}]) { expect((await mode(t, odd)).statusCode).toBe(200); expect((await peek(t)).json().payFirst, JSON.stringify(odd)).toBe(false); }   // only true means pay now
+  });
+
+  it('an unknown, malformed or expired token is the same plain 404, and nothing else is read from the request', async () => {
+    for (const bad of [undefined, null, 5, {}, [], "'; --", 'x'.repeat(43), 'x'.repeat(44)]) expect((await mode(bad, true)).statusCode, JSON.stringify(bad)).toBe(404);
+    const t = await mkToken();
+    await owner.query(`UPDATE order_intents SET expires_at = now() - interval '1 minute' WHERE token_hash = $1`, [sha(t)]);
+    expect((await mode(t, true)).statusCode).toBe(404);
+  });
+
+  it('is limited like the rest of the hand-over: 20 an hour from one address', async () => {
+    const ip = nextIp();
+    const t = await mkToken();
+    const codes: number[] = [];
+    for (let i = 0; i < 24; i++) codes.push((await mode(t, i % 2 === 0, ip)).statusCode);
+    expect(codes.slice(0, 20).every((c) => c === 200)).toBe(true);
+    expect(codes.slice(20).every((c) => c === 429)).toBe(true);
+  });
+
+  it('pay now survives sign-up and the e-mail link, and shows on the new customer\'s data; the trial customer gets false', async () => {
+    const pay = await mkToken({ modules: ['Rooms'], cleanup: true });
+    await mode(pay, true);
+    const b = form({ intent: pay });
+    expect((await begin(b)).statusCode).toBe(200);
+    const v = await verify(await tokenOf(b.email));
+    expect(v.statusCode, v.body).toBe(200);
+    const cookie = String(v.headers['set-cookie']).split(';')[0]!;
+    expect((await server.inject({ method: 'GET', url: '/api/trial', headers: { cookie } })).json().intent).toEqual({ modules: ['Rooms'], cleanup: true, payFirst: true });
+    const trialTok = await mkToken({ modules: ['CRM'], cleanup: false });
+    const b2 = form({ intent: trialTok });
+    await begin(b2);
+    const v2 = await verify(await tokenOf(b2.email));
+    const c2 = String(v2.headers['set-cookie']).split(';')[0]!;
+    expect((await server.inject({ method: 'GET', url: '/api/trial', headers: { cookie: c2 } })).json().intent).toEqual({ modules: ['CRM'], cleanup: false, payFirst: false });
+  });
+
+  it('once a customer has claimed a selection nobody can change its choice, and it changes nothing that is priced or owed', async () => {
+    const t = await mkToken({ modules: ['Projects'], cleanup: false });
+    const a = await login(f.admin);
+    expect((await claim(a, t)).statusCode).toBe(200);
+    expect((await mode(t, true)).statusCode).toBe(404);   // claimed: closed
+    expect((await owner.query('SELECT pay_first FROM order_intents WHERE token_hash = $1', [sha(t)])).rows[0].pay_first).toBe(false);
+    expect((await owner.query(`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_name = 'order_intents' AND column_name IN ('price', 'amount', 'total', 'plan_id')`)).rows[0].n).toBe(0);
   });
 });

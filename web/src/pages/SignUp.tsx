@@ -99,7 +99,7 @@ export function SignUp({ onSignedIn }: { onSignedIn: () => void }) {
   return (
     <Shell>
       <div className="card auth-card" id="signup">
-        <h1>{t('signup.title')}</h1>
+        <h1>{(() => { try { return window.sessionStorage.getItem('nb_order_mode') === 'pay' ? t('signup.titlePay') : t('signup.title'); } catch { return t('signup.title'); } })()}</h1>
         <p className="auth-lead">{t('signup.sub')}</p>
         {cfg.data?.google && cfg.data.googleClientId && <>
           <GoogleButton clientId={cfg.data.googleClientId} text="signup_with" onCredential={google} />

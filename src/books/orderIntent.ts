@@ -30,7 +30,7 @@ export async function createIntent(pool: pg.Pool, cfg: SignupConfig, body: unkno
   return { token, ...sel };
 }
 
-export async function peekIntent(pool: pg.Pool, token: unknown): Promise<{ modules: string[]; cleanup: boolean } | null> {
+export async function peekIntent(pool: pg.Pool, token: unknown): Promise<{ modules: string[]; cleanup: boolean; payFirst: boolean } | null> {
   if (typeof token !== 'string' || !TOKEN.test(token)) return null;
   return (await pool.query('SELECT order_intent_peek($1) AS r', [sha(token)])).rows[0].r ?? null;
 }
@@ -38,9 +38,16 @@ export async function peekIntent(pool: pg.Pool, token: unknown): Promise<{ modul
 /** For the sign-up: the token the visitor holds, if any. Anything that is not a well-formed token is ignored. */
 export const intentHash = (token: unknown): string | null => (typeof token === 'string' && TOKEN.test(token) ? sha(token) : null);
 
-export async function claimIntent(db: Db, token: unknown): Promise<{ modules: string[]; cleanup: boolean; fresh: boolean } | null> {
+export async function claimIntent(db: Db, token: unknown): Promise<{ modules: string[]; cleanup: boolean; payFirst: boolean; fresh: boolean } | null> {
   if (typeof token !== 'string' || !TOKEN.test(token)) return null;
   return (await db.query('SELECT order_intent_claim($1) AS r', [sha(token)])).rows[0].r ?? null;
 }
 
-export const myIntent = async (db: Db): Promise<{ modules: string[]; cleanup: boolean } | null> => (await db.query('SELECT my_order_intent() AS r')).rows[0].r ?? null;
+export const myIntent = async (db: Db): Promise<{ modules: string[]; cleanup: boolean; payFirst: boolean } | null> => (await db.query('SELECT my_order_intent() AS r')).rows[0].r ?? null;
+
+/** The /order page records which way the visitor chose: the free trial (false) or order and pay now (true). Only an unclaimed selection changes.
+ *  Returns false for an unknown, expired or already-claimed token (they look the same). */
+export async function setIntentMode(pool: pg.Pool, token: unknown, payFirst: unknown): Promise<boolean> {
+  if (typeof token !== 'string' || !TOKEN.test(token)) return false;
+  return (await pool.query('SELECT order_intent_set_mode($1, $2) AS ok', [sha(token), payFirst === true])).rows[0].ok === true;
+}

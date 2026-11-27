@@ -865,6 +865,12 @@ a.b.big { font-size: 17px; padding: 13px 30px; border-radius: 12px; box-shadow: 
 .buy-mods { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 8px 0; }
 .check { display: flex; align-items: center; gap: 8px; font-weight: 500; }
 .check input { width: auto; }
+.order-ways { display: grid; gap: 12px; margin: 14px 0; }
+.order-way { border: 1px solid var(--line, #cfdbe1); border-radius: 12px; padding: 14px; }
+.order-way.pick { border-color: var(--accent, #0f8f7c); box-shadow: 0 0 0 1px var(--accent, #0f8f7c) inset; }
+.order-way h2 { margin: 0 0 4px; font-size: 1.05rem; }
+.order-way .b { width: 100%; margin-top: 6px; }
+@media (min-width: 720px) { .order-ways { grid-template-columns: 1fr 1fr; } }
 .buy-sum { width: 100%; max-width: 420px; margin: 12px 0 4px; border-collapse: collapse; }
 .buy-sum th { text-align: start; font-weight: 500; padding: 6px 0; }
 .buy-sum td { text-align: end; padding: 6px 0; font-variant-numeric: tabular-nums; }

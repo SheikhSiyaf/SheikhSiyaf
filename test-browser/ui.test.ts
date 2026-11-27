@@ -1228,6 +1228,28 @@ describe('The free trial on screen', () => {
     expect(await text(p, '#buy-sub')).toBe('SAR 16,500.00');                                                  // 14,000 once + 2,500 a year
   });
 
+  it('/order offers both ways: the free trial and order-and-pay-now; pay now is remembered on the server and changes the sign-up heading', async () => {
+    const { page: p } = await newPage();
+    await p.goto(`${BASE}/order?m=HRM&mode=pay`, { waitUntil: 'networkidle' });
+    await p.locator('#order-ways').waitFor({ timeout: 15000 });
+    expect(await text(p, '#order-way-trial')).toContain('Free trial for 15 days');
+    expect(await text(p, '#order-way-pay')).toContain('Order and pay now');
+    expect(await p.locator('#order-start').isVisible() && await p.locator('#order-pay').isVisible()).toBe(true);
+    expect(await p.locator('#order-way-pay.pick').count()).toBe(1);                         // the button pressed on the website is highlighted, both stay
+    const before = (await db.query(`SELECT count(*)::int AS n FROM order_intents WHERE pay_first`)).rows[0].n as number;
+    await p.locator('#order-pay').click();
+    await p.waitForURL(`${BASE}/signup`);
+    expect(await text(p, 'h1')).toBe('Create your account to order and pay');
+    expect((await db.query(`SELECT count(*)::int AS n FROM order_intents WHERE pay_first`)).rows[0].n).toBe(before + 1);
+    // the trial way on a fresh visit leaves pay_first off and keeps the usual heading
+    const { page: t } = await newPage();
+    await t.goto(`${BASE}/order?m=CRM`, { waitUntil: 'networkidle' });
+    await t.locator('#order-start').click();
+    await t.waitForURL(`${BASE}/signup`);
+    expect(await text(t, 'h1')).toBe('Start your 15-day free trial');
+    expect((await db.query(`SELECT count(*)::int AS n FROM order_intents WHERE pay_first`)).rows[0].n).toBe(before + 1);
+  });
+
   it('the Administrator sees the same screen, told that the books are exported by company users', async () => {
     const adminEmail = (await db.query(`SELECT email FROM users WHERE firm_id = $1 AND kind = 'admin' AND status = 'active' LIMIT 1`, [firm])).rows[0]?.email as string | undefined;
     if (!adminEmail) return;   // the demo seed always has one; nothing to check otherwise

@@ -3,7 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { HttpError } from './errors.js';
 import type { Ctx } from './context.js';
 import { signupConfig } from '../books/signupService.js';
-import { claimIntent, createIntent, peekIntent } from '../books/orderIntent.js';
+import { claimIntent, createIntent, peekIntent, setIntentMode } from '../books/orderIntent.js';
 
 export function registerOrderIntentRoutes(app: FastifyInstance, { pool, opts, as }: Ctx) {
   const cfg = opts.signup ?? signupConfig({}, opts.sessionSecret);
@@ -16,6 +16,12 @@ export function registerOrderIntentRoutes(app: FastifyInstance, { pool, opts, as
     const r = await peekIntent(pool, req.params.token);
     if (!r) throw new HttpError(404, 'This link is not valid any more.', 'err.notFound');
     return r;
+  });
+
+  /** Public. The /order page records the visitor's choice: the free trial, or order and pay now. Changes nothing that is priced or owed. */
+  app.post<{ Body: { token?: unknown; payFirst?: unknown } }>('/api/public/order-intent/mode', async (req) => {
+    if (!(await setIntentMode(pool, req.body?.token, req.body?.payFirst))) throw new HttpError(404, 'This link is not valid any more.', 'err.notFound');
+    return { ok: true };
   });
 
   /** A signed-in customer claims the selection they arrived with. */

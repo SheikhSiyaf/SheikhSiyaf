@@ -1165,7 +1165,7 @@ describe('The free trial on screen', () => {
     expect(await ph.locator('#pay-c-form').count()).toBe(0);                     // no second form while it is being checked
     expect(await ph.locator('#pay-c-told').innerText()).toContain('BROWSER-PAY-1');
     expect(await ph.locator('#pay-c-timeline li').count()).toBeGreaterThanOrEqual(2);
-    expect((await db.query(`SELECT status FROM subpay.orders WHERE firm_id = $1 ORDER BY created_at DESC LIMIT 1`, [firm])).rows[0].status).toBe('submitted');
+    expect((await db.query(`SELECT status FROM subpay.orders WHERE firm_id = $1 ORDER BY created_at DESC LIMIT 1`, [firm])).rows[0].status).toBe('under_review');
     // leave shared settings as they were
     await db.query(`UPDATE subpay.settings SET payments_enabled = false`);
     await db.query(`UPDATE subpay.bank_live SET account_name = NULL, bank = NULL, iban = NULL, swift = NULL, first_entry = true`);

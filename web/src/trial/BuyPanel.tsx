@@ -33,8 +33,8 @@ export function BuyPanel({ trial }: { trial: TrialInfo }) {
   const modName = (m: string) => (has(`mod.${m}`) ? t(`mod.${m}` as Key) : m);
   if (order.error) return <ErrorNote error={order.error} onRetry={order.reload} />;
   const o = order.data?.order ?? null;
-  const picked = pick ?? (o ? o.modules : trial.modules ?? []);
-  const wantsCleanup = cleanup ?? (o ? o.cleanup : false);
+  const picked = pick ?? (o ? o.modules : trial.intent?.modules ?? trial.modules ?? []);   // the website's selection comes first, then what the trial has on
+  const wantsCleanup = cleanup ?? (o ? o.cleanup : trial.intent?.cleanup ?? false);
   const toggle = (m: string) => { setError(undefined); setPick(picked.includes(m) ? picked.filter((x) => x !== m) : [...picked, m]); };
   const once = price('implementation') + (wantsCleanup ? price('cleanup') : 0);
   const yearly = price('annualCore') + price('perModule') * picked.length;

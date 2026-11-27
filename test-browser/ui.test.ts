@@ -1201,6 +1201,33 @@ describe('The free trial on screen', () => {
     await db.query(`UPDATE trial_orders SET status = 'cancelled' WHERE firm_id = $1 AND status = 'waiting'`, [firm]);
   });
 
+  it('website hand-over: /order keeps only module names (tricks in the address change nothing), and an existing customer who signs in lands on the buy screen with them ticked', async () => {
+    await setState('trial', dayEnd(10), dayEnd(40));
+    await db.query(`UPDATE trial_orders SET status = 'cancelled' WHERE firm_id = $1 AND status = 'waiting'`, [firm]);
+    const { page: p } = await newPage(390);
+    const evil = encodeURIComponent('<img src=x onerror=window.__x=1>,HRM,CRM');
+    await p.goto(`${BASE}/order?m=${evil}&c=1&price=1&amount=0.01&next=https://evil.example&redirect=//evil.example`, { waitUntil: 'networkidle' });
+    await p.locator('#order-selection').waitFor({ timeout: 15000 });
+    const shown = await text(p, '#order-selection');
+    expect(shown).toContain('HRM'); expect(shown).toContain('CRM'); expect(shown).not.toContain('<img');
+    expect(await p.evaluate(() => (window as unknown as { __x?: number }).__x)).toBeUndefined();           // nothing in the address ran
+    expect(p.url()).toBe(`${BASE}/order`);                                                                   // the address no longer carries the choice
+    expect(await text(p, '#order-once')).toBe('SAR 14,000.00');                                              // 9,000 + 5,000 clean-up: from the owner's prices, not from the address
+    expect(await text(p, '#order-year')).toBe('SAR 2,500.00');                                               // 1,500 + 2 x 500
+    expect(await overflowOf(p)).toBeLessThanOrEqual(2);
+    await p.locator('#order-signin').click();
+    await p.locator('input[type=email]').fill(accountant);
+    await p.locator('input[type=password]').fill('demo1234');
+    await p.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await p.locator('#buy-panel').waitFor({ timeout: 30000 });
+    expect(new URL(p.url()).host).toBe(new URL(BASE).host);                                                  // never sent anywhere else
+    expect(await p.locator('#buy-mod-HRM').isChecked()).toBe(true);
+    expect(await p.locator('#buy-mod-CRM').isChecked()).toBe(true);
+    expect(await p.locator('#buy-mod-Inventory').isChecked()).toBe(false);
+    expect(await p.locator('#buy-cleanup').isChecked()).toBe(true);
+    expect(await text(p, '#buy-sub')).toBe('SAR 16,500.00');                                                  // 14,000 once + 2,500 a year
+  });
+
   it('the Administrator sees the same screen, told that the books are exported by company users', async () => {
     const adminEmail = (await db.query(`SELECT email FROM users WHERE firm_id = $1 AND kind = 'admin' AND status = 'active' LIMIT 1`, [firm])).rows[0]?.email as string | undefined;
     if (!adminEmail) return;   // the demo seed always has one; nothing to check otherwise

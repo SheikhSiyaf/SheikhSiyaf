@@ -12,6 +12,7 @@ import * as O from '../books/trialOrders.js';
 import type { Access, Level, SubState } from '../books/trialRules.js';
 import { accessOf } from '../books/trialRules.js';
 import { SUPPORT } from '../books/trialEmails.js';
+import { myIntent } from '../books/orderIntent.js';
 
 type Allow = [method: string, path: RegExp];
 const UUID = '[0-9a-f-]{36}';
@@ -73,10 +74,11 @@ export function registerTrialRoutes(app: FastifyInstance, { as, opts }: Ctx) {
     if (a.level === 'full' && !a.trialing) return summary(a);   // a paying customer, or none with a trial: nothing more to say
     const more = await as(req, async (db) => ({
       modules: (await db.query('SELECT my_trial_modules() AS m')).rows[0].m as string[],
+      intent: await myIntent(db),   // the modules they arrived with from the website, if any (migration 0092)
       prices: (await db.query('SELECT public_site_data() AS d')).rows[0].d as { currency: string; lines: { key: string; name: string; nameAr: string; amount: number | string }[]; testimonials: { items: unknown[] } },
     }));
     // the customers' own words that the owner has added in Owner > Website (none until there are real ones): up to three
-    return { ...summary(a), modules: more.modules, prices: { currency: more.prices.currency, lines: more.prices.lines }, testimonials: more.prices.testimonials.items.slice(0, 3), support: SUPPORT,
+    return { ...summary(a), modules: more.modules, intent: more.intent, prices: { currency: more.prices.currency, lines: more.prices.lines }, testimonials: more.prices.testimonials.items.slice(0, 3), support: SUPPORT,
       buyUrl: `${SUPPORT.website}/order/` };
   });
 

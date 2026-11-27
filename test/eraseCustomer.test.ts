@@ -235,3 +235,17 @@ describe('Nobody but the owner', () => {
     expect(await n('SELECT count(*) AS n FROM firms WHERE id = $1', [x.firmId])).toBe(1);
   });
 });
+
+describe('Erase a customer that arrived from the website', () => {
+  it('its saved module selection and its terms acceptance do not stop the erase, and are gone with it', async () => {
+    const c = await newCustomer('FromWebsite');
+    const user = (await owner.query('SELECT id FROM users WHERE firm_id = $1 ORDER BY created_at LIMIT 1', [c.firmId])).rows[0].id as string;
+    await owner.query(`INSERT INTO order_intents (token_hash, modules, cleanup, ip_key, expires_at, claimed_firm_id, claimed_at) VALUES ($1, '{HRM}', false, 'erase-test', now() + interval '1 day', $2, now())`, [`erase-${c.firmId}`, c.firmId]);
+    await owner.query(`INSERT INTO terms_acceptances (firm_id, user_id, version, accepted_at, source) VALUES ($1, $2, '2026-11', now(), 'signup')`, [c.firmId, user]);
+    await remove(c.firmId);
+    const ok = await erase(c.firmId, c.name);
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect((await owner.query('SELECT count(*)::int AS n FROM terms_acceptances WHERE firm_id = $1', [c.firmId])).rows[0].n).toBe(0);
+    expect((await owner.query('SELECT count(*)::int AS n FROM order_intents WHERE claimed_firm_id = $1', [c.firmId])).rows[0].n).toBe(0);
+  });
+});

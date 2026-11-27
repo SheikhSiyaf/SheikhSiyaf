@@ -1,3 +1,5 @@
+import { OrderLanding } from './pages/OrderLanding.tsx';
+import { clearIntentToken, getIntentToken } from './orderIntent.ts';
 import { OwnerConsole } from './admin/OwnerConsole.tsx';
 import { BillingInvoicePage } from './admin/Billing.tsx';
 import { PublicDocument } from './pages/PublicDocument.tsx';
@@ -55,7 +57,7 @@ function Screens() {
   useEffect(() => {
     if (!user) return;
     if (path === '/demo') return;   // the demo site's client-type picker is reachable while signed in
-    if (path.startsWith('/invite/') || path.startsWith('/confirm-email/') || path.startsWith('/i/') || path.startsWith('/pay/') || path === '/security') return;
+    if (path.startsWith('/order') || path.startsWith('/invite/') || path.startsWith('/confirm-email/') || path.startsWith('/i/') || path.startsWith('/pay/') || path === '/security') return;
     if (user.kind === 'owner') {
       if (path.startsWith('/admin') && !getActingTenant()) navigate('/owner');
       else if (!path.startsWith('/owner') && !path.startsWith('/admin')) navigate('/owner');
@@ -67,10 +69,20 @@ function Screens() {
     if (user.kind === 'client' && !path.startsWith('/c/') && !path.startsWith('/admin') && me.data!.companies[0]) navigate(`/c/${me.data!.companies[0].id}/Home`);
   }, [user, path, me.data]);
 
+  // Someone who arrived from the website's Order button and has now signed in: claim the selection they came with. An existing customer then goes
+  // straight to the buy screen; a brand-new sign-up already had it claimed when the e-mail link was opened, so it just waits, pre-ticked, on the buy screen.
+  useEffect(() => {
+    const token = getIntentToken();
+    if (!token || !user || user.kind === 'owner' || path.startsWith('/order')) return;
+    clearIntentToken();
+    void api<{ fresh?: boolean }>('/api/pay/intent/claim', { body: { token } }).then((r) => { if (r.fresh) navigate('/buy'); }).catch(() => undefined);
+  }, [user, path]);
+
   // A sign-in link works whether or not someone is signed in on this device.
   // A link to an emailed document opens it for anyone holding the link.
   // The demo keeps "?paid=" in its in-memory path; the real app has it in the address.
   if (path === '/demo') return <DemoPicker />;
+  if (path === '/order' || path.startsWith('/order?')) return <OrderLanding key="order" />;
   const shared = /^\/i\/([\w-]+)(?:\?paid=([\w-]+))?$/.exec(path);
   if (shared) return <PublicDocument key={path} token={shared[1]!} paid={shared[2] ?? new URLSearchParams(window.location.search).get('paid')} />;
   const sandboxPay = /^\/pay\/sandbox\/([\w-]+)$/.exec(path);

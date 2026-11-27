@@ -13,6 +13,7 @@ export interface TrialInfo {
   trialing: boolean; daysLeft: number | null; softDay?: boolean; softEndsAt?: string | null;
   trialEndsAt: string | null; graceEndsAt: string | null; exportUntil: string | null; deleteNotBefore: string | null;
   modules?: string[];
+  intent?: { modules: string[]; cleanup: boolean } | null;   // what they chose on the website, if they came from its Order button
   prices?: { currency: string; lines: { key: string; name: string; nameAr: string; amount: number | string }[] };
   support?: { email: string; phone: string; hours: string; website: string };
   buyUrl?: string;

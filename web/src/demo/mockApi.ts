@@ -3790,6 +3790,9 @@ routes.push(
   ['GET', /^\/api\/staff\/payments\/bank$/, () => { owner();
     return { delayHours: 24, live: { accountName: 'Demo Company Ltd', bank: 'Demo Bank', iban: 'SA0380000000608010167519', swift: 'DEMOSARI', changedAt: new Date().toISOString() }, pending: null, history: [] }; }],
   ['POST', /^\/api\/staff\/payments\/bank(\/.*)?$/, () => { owner(); return { ok: true, immediate: false }; }],
+  // Website hand-over (demo: nothing is kept)
+  ['POST', /^\/api\/public\/order-intent$/, (_m, b) => ({ token: 'demo-intent-token-0000000000000000000000000'.slice(0, 43).padEnd(43, '0'), modules: String((b as { modules?: unknown })?.modules ?? '').split(',').filter(Boolean), cleanup: false })],
+  ['POST', /^\/api\/pay\/intent\/claim$/, () => ({ modules: [], cleanup: false, fresh: false })],
   // Payment review (demo: one fixed payment waiting; actions are accepted but nothing is kept)
   ['GET', /^\/api\/staff\/payments$/, () => { owner(); return { reviewTargetHours: 4, enabled: false, orders: [{ id: 'demo-pay-1', reference: 'NB-DEMO-0001-A', status: 'under_review', firmId: 'demo', firm: 'Demo Trading Co', totalHalalas: 1897500, enteredHalalas: 1897500, flags: [], recommended: false, hasFile: false, waitingSince: new Date().toISOString(), hoursWaiting: 1.5, overdue: false }] }; }],
   ['GET', /^\/api\/staff\/payments\/demo-pay-1$/, () => { owner(); const now = new Date().toISOString(); return { id: 'demo-pay-1', reference: 'NB-DEMO-0001-A', status: 'under_review', firm: 'Demo Trading Co', firmId: 'demo', currency: 'SAR', subtotalHalalas: 1650000, vatRate: '15.00', vatHalalas: 247500, totalHalalas: 1897500, createdAt: now, recommendedBy: null,

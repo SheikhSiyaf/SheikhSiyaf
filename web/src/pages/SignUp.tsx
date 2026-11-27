@@ -1,5 +1,6 @@
 // Self-service sign-up. Two ways in: Google (when switched on), and e-mail with a password.
 // The e-mail way creates nothing until the person opens the e-mailed link; the Google way has Google's word for the e-mail, so it asks only for the company (src/books/signupService.ts).
+import { getIntentToken } from '../orderIntent.ts';
 import { useState, type FormEvent } from 'react';
 import { ApiError, api, useApi } from '../api.ts';
 import { useI18n, type Key } from '../i18n.tsx';
@@ -24,7 +25,7 @@ export function SignUp({ onSignedIn }: { onSignedIn: () => void }) {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true); setError(undefined);
-    try { await api('/api/signup', { body: { ...f, lang } }); setSent(f.email); }
+    try { await api('/api/signup', { body: { ...f, lang, intent: getIntentToken() ?? undefined } }); setSent(f.email); }
     catch (err) { setError(err); } finally { setBusy(false); }
   };
 

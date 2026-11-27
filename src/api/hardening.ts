@@ -34,6 +34,7 @@ export const LIMITS: [RegExp, number][] = [
   [/^\/api\/email-change\//, 20],
   [/^\/api\/password-reset$/, 10],   // the database also allows 3 an hour per email and 20 per sender's address
   [/^\/api\/me\/two-factor\//, 30],
+  [/^\/api\/public\/order-intent/, 20],   // the website's hand-over: the database also allows 20 an hour per address
   [/^\/api\/public\//, 120],
   [/^\/api\/demo\//, 60],
   [/^\/health$/, 120],

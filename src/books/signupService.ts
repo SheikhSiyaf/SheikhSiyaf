@@ -2,6 +2,7 @@
 // begin: checks the request, remembers it, e-mails a link. Nothing exists until the link is opened.
 // verify: opens the link once, then in ONE transaction makes the customer, its company, its books, its only user (job title Owner, who can
 // also manage users) and its 15-day trial. The server does the work as the platform owner would, so the same rules and audit trail apply.
+import { intentHash, TERMS_VERSION } from './orderIntent.js';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { HttpError } from '../api/errors.js';
@@ -77,6 +78,7 @@ export async function beginSignup(pool: pg.Pool, cfg: SignupConfig, body: Record
       link: `${base}/`, enButton: 'Go to sign in', arButton: 'الذهاب إلى تسجيل الدخول' }) });
     await pool.query('SELECT signup_mail_log($1, $2)', [emailKey, id2]);
   }
+  if (outcome === 'sent') await pool.query('SELECT signup_attach_meta($1, $2, $3)', [emailKey, intentHash(body.intent), TERMS_VERSION]).catch(() => undefined);   // never lets a problem here stop the sign-up
   return { status: 'sent' };
 }
 
@@ -106,6 +108,7 @@ export async function verifySignup(pool: pg.Pool, cfg: SignupConfig, token: unkn
     if (!planId) throw new HttpError(500, 'Something went wrong. Please try again.', 'err.server');
     await saveSubscription(db, firmId, { planId, cycle: 'yearly', startOn: riyadhDate(new Date()), trial: true, notes: 'Self-service sign-up' });
     await db.query('SELECT signup_done($1, $2, $3, $4, $5, $6)', [r.email_key, firmId, r.email, r.company_name, r.country, ipKey]);
+    await db.query('SELECT signup_finish_meta($1, $2, $3)', [r.email_key, firmId, userId]);
     return { outcome: 'ok' as const, userId, firmId, companyId };
   });
   } catch (e) {

@@ -21,6 +21,7 @@ const ABOUT_ME: Allow[] = [['GET', /^\/api\/me$/], ['GET', /^\/api\/trial$/]];
 /** What a customer can still reach while its trial has ended and it is waiting to buy. */
 const WHEN_LOCKED: Allow[] = [...ABOUT_ME, EXPORT,
   ['GET', /^\/api\/trial\/order$/], ['POST', /^\/api\/trial\/order$/], ['POST', /^\/api\/trial\/order\/payment$/],
+  ['GET', /^\/api\/pay\/order$/], ['POST', /^\/api\/pay\/order$/], ['POST', new RegExp(`^/api/pay/order/${UUID}/submit$`)],   // paying by bank transfer
   ['GET', /^\/api\/admin\/billing$/], ['GET', new RegExp(`^/api/billing/invoices/${UUID}$`)],
   ['*', /^\/api\/support(\/.*)?$/]];
 /** After closing: only getting the data out. */

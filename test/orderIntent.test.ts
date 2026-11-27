@@ -15,7 +15,8 @@ const GOOD = 'Correct-Horse-9';
 let n = 0;
 const uniq = () => `${Date.now().toString(36)}${(n++).toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 const cr = () => String(Math.floor(1e9 + Math.random() * 9e9));
-let ipn = 40;
+// random addresses per run: the sign-in limit and the hand-over limit are kept in the shared test database and last 15 minutes and an hour
+let ipn = Math.floor(Math.random() * 50000);
 const nextIp = () => `10.88.${(ipn >> 8) & 255}.${ipn++ & 255}`;
 let server: FastifyInstance; let f: Fixture; let f2: Fixture;
 
@@ -71,7 +72,7 @@ describe('the hand-over from the website', () => {
   });
 
   it('is limited: 20 an hour from one address, then "too many"', async () => {
-    const ip = '10.99.1.1';
+    const ip = `10.99.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
     const codes: number[] = [];
     for (let i = 0; i < 22; i++) codes.push((await intent({ modules: ['CRM'] }, ip)).statusCode);
     expect(codes.slice(0, 20).every((c) => c === 200)).toBe(true);

@@ -1172,7 +1172,7 @@ describe('The free trial on screen', () => {
     const { page: rv } = await newPage(1280);
     await signIn(rv, platform);
     await rv.goto(`${BASE}/owner/review`, { waitUntil: 'networkidle' });
-    await rv.locator('#rv-queue').waitFor({ timeout: 15000 });
+    await rv.locator('#rv-queue').waitFor({ timeout: 15000 }).catch(async (e) => { throw new Error(`review desk did not show the queue; page says: ${(await rv.locator('main').innerText()).slice(0, 400)} | ${e}`); });
     const orderRef = (await db.query(`SELECT reference FROM subpay.orders WHERE firm_id = $1 ORDER BY created_at DESC LIMIT 1`, [firm])).rows[0].reference as string;
     expect(ref === '' || ref === orderRef).toBe(true);
     await rv.locator(`#rv-open-${orderRef}`).click();

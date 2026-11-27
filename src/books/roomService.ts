@@ -9,6 +9,8 @@ import { issueDocument, nextNumber, recordPayment, saveContact, saveDraft } from
 import { postEntry } from '../ledger/ledger.js';
 import * as Adv from './advanceService.js';
 import { addDays, extraLine, groupNights, nights, nightsLine, type Season } from './rooms.js';
+import * as RC from './roomContractService.js';
+import { chargeAmount, CONTRACT_TYPES, guestPriceLines, type ContractType } from './roomContracts.js';
 
 const bad = (message: string, key?: string): never => { throw new HttpError(400, message, key); };
 const notFound = (): never => { throw new HttpError(404, 'Not found.', 'err.notFound'); };
@@ -85,7 +87,8 @@ export async function deleteSeason(db: Db, id: string) {
 export interface GuestInput { name?: string; phone?: string; email?: string; vatNumber?: string; address?: string; buildingNumber?: string; district?: string;
   city?: string; postalCode?: string }
 export interface BookingInput { contactId?: string | null; guest?: GuestInput | null; roomId?: string; arrival?: string; departure?: string; adults?: number | string;
-  children?: number | string; agreedRate?: string | null; source?: string | null; reference?: string | null; notes?: string | null }
+  children?: number | string; agreedRate?: string | null; source?: string | null; reference?: string | null; notes?: string | null;
+  contractType?: ContractType | string; guestCheck?: RC.GuestCheckInput | null; rental?: RC.RentalInput | null }
 
 async function guestFor(db: Db, companyId: string, x: BookingInput): Promise<string> {
   if (x.contactId) return x.contactId;
@@ -102,13 +105,22 @@ function dates(x: BookingInput) {
 
 export async function createBooking(db: Db, companyId: string, x: BookingInput): Promise<string> {
   if (!x.roomId) bad('Choose the room.', 'err.roomChoose');
+  const type = (x.contractType ?? 'short_stay') as ContractType;
+  if (!CONTRACT_TYPES.includes(type)) bad('Choose the contract type: short stay or long-term rental.', 'err.roomContractType');
   const { arrival, departure } = dates(x);
+  if (type === 'long_term' && !x.rental) bad('A long-term rental needs its contract details: landlord, tenant, rent, deposit and Ejar status.', 'err.roomContractMissing');
   const contactId = await guestFor(db, companyId, x);
   const number = await nextNumber(db, companyId, 'booking', 'BKG-');
-  return (await db.query(`INSERT INTO bookings (company_id, number, contact_id, room_id, arrival, departure, adults, children, agreed_rate, source, reference, notes, created_by)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, app_user_id()) RETURNING id`,
+  const terms = await RC.termsSnapshot(db, companyId);
+  const id = (await db.query(`INSERT INTO bookings (company_id, number, contact_id, room_id, arrival, departure, adults, children, agreed_rate, source, reference, notes, created_by,
+      contract_type, terms_en, terms_ar, cancellation_en, cancellation_ar, governing_language)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, app_user_id(), $13,$14,$15,$16,$17,$18) RETURNING id`,
     [companyId, number, contactId, x.roomId, arrival, departure, whole(x.adults, 1, 50, 1), whole(x.children, 0, 50, 0), money(x.agreedRate),
-      txt(x.source, 40), txt(x.reference, 80), txt(x.notes, 1000)])).rows[0].id;
+      txt(x.source, 40), txt(x.reference, 80), txt(x.notes, 1000), type, terms.termsEn, terms.termsAr, terms.cancellationEn, terms.cancellationAr, terms.governingLanguage])).rows[0].id as string;
+  // A short stay may be booked before the guest arrives: the identity is then checked at check-in. If any identity detail is given now, all of it is needed.
+  if (type === 'short_stay' && x.guestCheck && Object.values(x.guestCheck).some((v) => String(v ?? '').trim())) await RC.saveGuestCheck(db, id, x.guestCheck);
+  if (type === 'long_term') await RC.saveRental(db, id, x.rental!);
+  return id;
 }
 
 export async function updateBooking(db: Db, id: string, x: BookingInput): Promise<void> {
@@ -134,6 +146,7 @@ export async function checkIn(db: Db, id: string, day = today()): Promise<void> 
   if (b.arrival > day) bad('The guest can check in from the arrival day. Change the arrival date first if they came early.', 'err.roomEarly');
   if (day >= b.departure) bad('The stay is already over: change the departure date first.', 'err.roomLate');
   if (b.roomStatus !== 'active') bad('This room is not in service: move the booking to another room.', 'err.roomOutOfService');
+  await RC.requireGuestCheck(db, id);
   await setStatus(db, id, ['reserved'], 'in_house', 'Only a reserved booking is checked in.', 'err.roomNotReserved');
 }
 export async function cancel(db: Db, id: string) { await setStatus(db, id, ['reserved'], 'cancelled', 'Only a reserved booking is cancelled.', 'err.roomNotReserved'); }
@@ -146,7 +159,8 @@ export async function noShow(db: Db, id: string, day = today()) {
 // ------------------------------------------------------------------ extras
 export interface ExtraInput { date?: string; description?: string; quantity?: string | number; unitPrice?: string; accountId?: string | null }
 export async function addExtra(db: Db, bookingId: string, x: ExtraInput): Promise<string> {
-  const b = (await db.query('SELECT company_id, arrival::text AS arrival FROM bookings WHERE id = $1', [bookingId])).rows[0] ?? notFound();
+  const b = (await db.query('SELECT company_id, arrival::text AS arrival, contract_type FROM bookings WHERE id = $1', [bookingId])).rows[0] ?? notFound();
+  if (b.contract_type === 'long_term') bad('A long-term rental is billed by instalment: add no extras.', 'err.roomLongTerm');
   const description = txt(x.description) ?? bad('Say what the extra is (for example Laundry).', 'err.roomExtra');
   const q = String(x.quantity ?? '1').trim();
   if (!/^\d{1,8}(\.\d{1,3})?$/.test(q) || Number(q) <= 0) bad('Enter the quantity, more than 0.', 'err.quantity');
@@ -162,14 +176,14 @@ export async function deleteExtra(db: Db, id: string) {
 // ------------------------------------------------------------------ the guest bill
 interface Charge { description: string; quantity: string; unitPrice: string; accountId: string; quoted: string; total: string; difference: string }
 /** What the next bill would hold: the nights not yet billed before `upTo` (not included) and every unbilled extra. */
-async function charges(db: Db, bookingId: string, upTo?: string) {
+async function charges(db: Db, bookingId: string, upTo?: string, whole = false) {
   const b = (await db.query(`SELECT b.id, b.company_id, b.room_id, b.arrival::text AS arrival, b.departure::text AS departure, b.agreed_rate::text AS "agreedRate",
       r.number AS room, t.id AS "typeId", t.name AS "typeName", t.rate::text AS "typeRate", t.income_account_id AS "accountId", co.vat_rate::text AS "vatRate",
       (SELECT max(nights_to)::text FROM booking_bills x WHERE x.booking_id = b.id) AS "billedTo"
     FROM bookings b JOIN rooms r ON r.id = b.room_id JOIN room_types t ON t.id = r.room_type_id JOIN companies co ON co.id = b.company_id WHERE b.id = $1`, [bookingId])).rows[0] ?? notFound();
   const seasons: Season[] = (await db.query(`SELECT from_date::text AS "from", to_date::text AS "to", rate::text AS rate FROM room_rates WHERE room_type_id = $1 ORDER BY from_date`,
     [b.typeId])).rows;
-  const from = b.billedTo ?? b.arrival;
+  const from = whole ? b.arrival : (b.billedTo ?? b.arrival);
   const to = upTo && upTo < b.departure ? (upTo > from ? upTo : from) : b.departure;
   const out: Charge[] = [];
   for (const g of groupNights(from, to, b.typeRate, seasons, b.agreedRate)) {
@@ -178,7 +192,7 @@ async function charges(db: Db, bookingId: string, upTo?: string) {
       quantity: String(g.nights), unitPrice: p.unitPrice, accountId: b.accountId, quoted: p.quoted, total: p.total, difference: p.difference });
   }
   const extras = (await db.query(`SELECT id, extra_date::text AS date, description, quantity::text AS quantity, unit_price::text AS price, account_id AS "accountId"
-    FROM booking_extras WHERE booking_id = $1 AND bill_id IS NULL ORDER BY extra_date, created_at`, [bookingId])).rows;
+    FROM booking_extras WHERE booking_id = $1 AND (bill_id IS NULL OR $2::boolean) ORDER BY extra_date, created_at`, [bookingId, whole])).rows;
   for (const e of extras) {
     const p = extraLine(e.quantity, e.price, b.vatRate);
     out.push({ description: `${e.description}, ${e.date}`, quantity: p.quantityText, unitPrice: p.unitPrice, accountId: e.accountId, quoted: p.quoted, total: p.total, difference: p.difference });
@@ -186,11 +200,22 @@ async function charges(db: Db, bookingId: string, upTo?: string) {
   return { booking: b, from, to, charges: out, extraIds: extras.map((e) => e.id as string) };
 }
 
+/** The administrator's optional extra charges (for example a municipal or tourism charge) as invoice lines: a percent of the price before VAT of the
+ *  room and extra lines on this bill, to the halala. None are active until the administrator switches one on; no rate is built in. */
+async function extraChargeLines(db: Db, companyId: string, lines: { quantity: string; unitPrice: string }[]) {
+  const active = await RC.activeCharges(db, companyId);
+  if (!active.length) return [];
+  const net = lines.reduce((sum, l) => sum + toMinor(l.unitPrice) * BigInt(Math.round(Number(l.quantity) * 1000)) / 1000n, 0n);
+  return active.map((a) => ({ description: `${a.name} (${a.rate}%)`, quantity: '1', unitPrice: fromMinor(chargeAmount(net, a.rate)), accountId: a.accountId, vatCode: a.vatCode as 'standard' | 'zero' | 'exempt' | 'out_of_scope' }))
+    .filter((l) => toMinor(l.unitPrice) > 0n);
+}
+
 /** Bills the nights up to `upTo` (not included; the departure by default) and all unbilled extras into one invoice
  *  for the guest: a draft, or issued straight away. Returns the invoice. */
 export async function bill(db: Db, bookingId: string, o: { upTo?: string; issueDate?: string; issue?: boolean } = {}): Promise<string> {
-  const st = (await db.query('SELECT status FROM bookings WHERE id = $1', [bookingId])).rows[0] ?? notFound();
+  const st = (await db.query('SELECT status, contract_type FROM bookings WHERE id = $1', [bookingId])).rows[0] ?? notFound();
   if (!['reserved', 'in_house'].includes(st.status)) bad('This booking is finished and no longer changes.', 'err.roomFinished');
+  if (st.contract_type === 'long_term') bad('A long-term rental is billed by instalment, not by the night.', 'err.roomLongTerm');
   const c = await charges(db, bookingId, o.upTo ? date(o.upTo) : undefined);
   if (!c.charges.length) bad('Nothing to bill: every night and extra is billed.', 'err.roomNothing');
   const b = c.booking;
@@ -200,7 +225,8 @@ export async function bill(db: Db, bookingId: string, o: { upTo?: string; issueD
   const documentId = await saveDraft(db, b.company_id, {
     type: 'invoice', contactId: k.contact_id, issueDate: issued, dueDate: addDaysDoc(issued, Number(k.terms)), reference: k.reference || k.number,
     notes: `Booking ${k.number}, room ${b.room}, ${b.arrival} to ${b.departure}`,
-    lines: c.charges.map((x) => ({ description: x.description, quantity: x.quantity, unitPrice: x.unitPrice, accountId: x.accountId, vatCode: 'standard' as const })),
+    lines: [...c.charges.map((x) => ({ description: x.description, quantity: x.quantity, unitPrice: x.unitPrice, accountId: x.accountId, vatCode: 'standard' as const })),
+      ...(await extraChargeLines(db, b.company_id, c.charges))],
   });
   const billId = (await db.query(`INSERT INTO booking_bills (company_id, booking_id, document_id, nights_from, nights_to) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
     [b.company_id, bookingId, documentId, c.from, c.to])).rows[0].id;
@@ -223,6 +249,10 @@ export async function checkOut(db: Db, id: string, o: { day?: string; issue?: bo
   const day = o.day ?? today();
   const b = (await db.query(`SELECT status, arrival::text AS arrival, departure::text AS departure FROM bookings WHERE id = $1`, [id])).rows[0] ?? notFound();
   if (b.status !== 'in_house') bad('Only a guest in house checks out.', 'err.roomNotInHouse');
+  if ((await db.query(`SELECT contract_type FROM bookings WHERE id = $1`, [id])).rows[0].contract_type === 'long_term') {
+    await setStatus(db, id, ['in_house'], 'departed', 'Only a guest in house checks out.', 'err.roomNotInHouse');   // a rental has no nightly bill
+    return null;
+  }
   if (day < b.departure) {
     const leave = day > b.arrival ? day : addDays(b.arrival, 1);   // at least one night
     if (leave < b.departure) await updateBooking(db, id, { departure: leave });
@@ -237,18 +267,20 @@ export async function checkOut(db: Db, id: string, o: { day?: string; issue?: bo
 const BOOKING_COLS = `b.id, b.number, b.status, b.contact_id AS "contactId", c.name AS guest, c.name_ar AS "guestAr", c.phone, c.vat_number AS "guestVat",
   b.room_id AS "roomId", r.number AS room, t.name AS "typeName", t.name_ar AS "typeNameAr", b.arrival::text AS arrival, b.departure::text AS departure,
   (b.departure - b.arrival) AS nights, b.adults, b.children, b.agreed_rate::text AS "agreedRate", b.source, b.reference, b.notes,
-  b.checked_in_at AS "checkedInAt", b.checked_out_at AS "checkedOutAt", (SELECT max(nights_to)::text FROM booking_bills x WHERE x.booking_id = b.id) AS "billedTo",
+  b.contract_type AS "contractType", b.cancellation_en AS "cancellationEn", b.cancellation_ar AS "cancellationAr", b.terms_en AS "termsEn", b.terms_ar AS "termsAr",
+  b.governing_language AS "governingLanguage", b.checked_in_at AS "checkedInAt", b.checked_out_at AS "checkedOutAt", (SELECT max(nights_to)::text FROM booking_bills x WHERE x.booking_id = b.id) AS "billedTo",
   booking_deposit_held(b.id)::text AS "depositHeld"`;
 const BOOKING_FROM = `FROM bookings b JOIN contacts c ON c.id = b.contact_id JOIN rooms r ON r.id = b.room_id JOIN room_types t ON t.id = r.room_type_id`;
 
 export async function listBookings(db: Db, companyId: string, f: { from?: string; to?: string; status?: string } = {}) {
-  return (await db.query(`SELECT ${BOOKING_COLS} ${BOOKING_FROM}
+  return maskGuests(db, companyId, (await db.query(`SELECT ${BOOKING_COLS} ${BOOKING_FROM}
     WHERE b.company_id = $1 AND ($2::date IS NULL OR b.departure > $2) AND ($3::date IS NULL OR b.arrival <= $3) AND ($4::text IS NULL OR b.status = $4)
-    ORDER BY b.arrival DESC, r.number LIMIT 500`, [companyId, f.from || null, f.to || null, f.status || null])).rows;
+    ORDER BY b.arrival DESC, r.number LIMIT 500`, [companyId, f.from || null, f.to || null, f.status || null])).rows);
 }
 
 export async function getBooking(db: Db, id: string) {
-  const b = (await db.query(`SELECT ${BOOKING_COLS}, b.company_id AS "companyId" ${BOOKING_FROM} WHERE b.id = $1`, [id])).rows[0] ?? notFound();
+  const b0 = (await db.query(`SELECT ${BOOKING_COLS}, b.company_id AS "companyId" ${BOOKING_FROM} WHERE b.id = $1`, [id])).rows[0] ?? notFound();
+  const b = (await maskGuests(db, b0.companyId, [b0]))[0]!;
   const extras = (await db.query(`SELECT e.id, e.extra_date::text AS date, e.description, e.quantity::text AS quantity, e.unit_price::text AS "unitPrice",
       e.account_id AS "accountId", e.bill_id IS NOT NULL AS billed FROM booking_extras e WHERE e.booking_id = $1 ORDER BY e.extra_date, e.created_at`, [id])).rows;
   const bills = (await db.query(`SELECT x.id, x.document_id AS "documentId", x.nights_from::text AS "nightsFrom", x.nights_to::text AS "nightsTo", d.number, d.status,
@@ -261,8 +293,8 @@ export async function getBooking(db: Db, id: string) {
 
 /** The front desk on a day: arrivals, departures, guests in house, and how full the hotel is. */
 export async function frontDesk(db: Db, companyId: string, day = today()) {
-  const rows = (await db.query(`SELECT ${BOOKING_COLS} ${BOOKING_FROM}
-    WHERE b.company_id = $1 AND ((b.status = 'reserved' AND b.arrival <= $2) OR (b.status = 'in_house')) ORDER BY r.number`, [companyId, day])).rows;
+  const rows = await maskGuests(db, companyId, (await db.query(`SELECT ${BOOKING_COLS} ${BOOKING_FROM}
+    WHERE b.company_id = $1 AND ((b.status = 'reserved' AND b.arrival <= $2) OR (b.status = 'in_house')) ORDER BY r.number`, [companyId, day])).rows);
   const rooms = (await db.query(`SELECT count(*) FILTER (WHERE status = 'active')::int AS active, count(*) FILTER (WHERE status = 'out_of_service')::int AS out
     FROM rooms WHERE company_id = $1`, [companyId])).rows[0];
   const occupied = (await db.query(`SELECT count(*)::int AS n FROM bookings WHERE company_id = $1 AND status IN ('reserved', 'in_house', 'departed') AND arrival <= $2 AND departure > $2`,
@@ -286,7 +318,29 @@ export async function calendar(db: Db, companyId: string, from: string, days = 1
   const bookings = (await db.query(`SELECT b.id, b.number, b.status, b.room_id AS "roomId", c.name AS guest, b.arrival::text AS arrival, b.departure::text AS departure
     FROM bookings b JOIN contacts c ON c.id = b.contact_id
     WHERE b.company_id = $1 AND b.status IN ('reserved', 'in_house', 'departed') AND b.arrival < $3 AND b.departure > $2 ORDER BY b.arrival`, [companyId, from, to])).rows;
-  return { from, to, nights: nights(from, to), rooms: rooms.filter((r) => r.status !== 'retired'), bookings };
+  const seen = await RC.canSeeIdentity(db, companyId);
+  return { from, to, nights: nights(from, to), rooms: seen ? rooms.filter((r) => r.status !== 'retired') : rooms.filter((r) => r.status !== 'retired').map((r) => ({ ...r, number: null })),
+    bookings: seen ? bookings : bookings.map((b) => ({ ...b, guest: null, restricted: true })) };
+}
+
+// ------------------------------------------------------------------ the guest receipt (price with tax shown, cancellation terms)
+/** What the guest sees for the whole stay: the room price before tax, the tax as its own line, each active extra charge, the total, and the cancellation
+ *  and refund terms agreed when the booking was made. The ZATCA invoice is separate and never changed by this. */
+export async function guestReceipt(db: Db, bookingId: string) {
+  const c = await charges(db, bookingId, undefined, true);
+  const total = fromMinor(c.charges.reduce((sum, x) => sum + toMinor(x.total), 0n));
+  const active = await RC.activeCharges(db, c.booking.company_id);
+  const lang = (await db.query(`SELECT contract_type AS "contractType", cancellation_en AS "cancellationEn", cancellation_ar AS "cancellationAr", governing_language AS "governingLanguage",
+      number FROM bookings WHERE id = $1`, [bookingId])).rows[0];
+  const price = guestPriceLines({ totalWithVat: total, vatRate: String(c.booking.vatRate), charges: active.map((a) => ({ name: a.name, ratePercent: a.rate })) });
+  return { number: lang.number, contractType: lang.contractType, arrival: c.booking.arrival, departure: c.booking.departure, ...price, vatRate: c.booking.vatRate,
+    cancellationEn: lang.cancellationEn, cancellationAr: lang.cancellationAr, governingLanguage: lang.governingLanguage };
+}
+
+/** Guest names, phone numbers and room numbers are shown only to people allowed to see guest identity (Rooms edit, a posting role). */
+export async function maskGuests<T extends Record<string, unknown>>(db: Db, companyId: string, rows: T[]): Promise<T[]> {
+  if (await RC.canSeeIdentity(db, companyId)) return rows;
+  return rows.map((r) => ({ ...r, guest: null, guestAr: null, phone: null, guestVat: null, room: null, restricted: true }));
 }
 
 // ------------------------------------------------------------------ refundable security deposits (0045)

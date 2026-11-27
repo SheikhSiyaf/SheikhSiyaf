@@ -33,9 +33,9 @@ const RULES: Rule[] = [
   ['POST', new RegExp(`^/api/documents/${UUID}/(approve|reject)$`), async (db, m) => { const n = await docOwner(db, m[1]!); return n && { ...n, approve: true }; }],
   ['*', new RegExp(`^/api/documents/${UUID}(/.*)?$`), (db, m) => docOwner(db, m[1]!)],
   ['*', new RegExp(`^/api/attachments/${UUID}(/.*)?$`), async (db, m) => {
-    const r = (await db.query(`SELECT a.company_id, d.type, a.stock_note_id, a.employee_document_id, a.portal_upload_id FROM attachments a LEFT JOIN documents d ON d.id = a.document_id WHERE a.id = $1`, [m[1]])).rows[0];
+    const r = (await db.query(`SELECT a.company_id, d.type, a.stock_note_id, a.employee_document_id, a.portal_upload_id, a.booking_id FROM attachments a LEFT JOIN documents d ON d.id = a.document_id WHERE a.id = $1`, [m[1]])).rows[0];
     if (r?.portal_upload_id) return null;   // portal files: open to everyone on the client (the database decides who sent them)
-    return r ? { companyId: r.company_id, modules: r.employee_document_id ? ['HRM'] : r.stock_note_id ? ['Inventory', 'Restaurant'] : docModules(r.type) } : null;
+    return r ? { companyId: r.company_id, modules: r.booking_id ? ['Rooms'] : r.employee_document_id ? ['HRM'] : r.stock_note_id ? ['Inventory', 'Restaurant'] : docModules(r.type) } : null;
   }],
   // customers, suppliers, employees (lists stay open to every member: they fill the pickers everywhere)
   ['POST', new RegExp(`^/api/companies/${UUID}/contacts$`), (_db, m, req) => {
@@ -153,7 +153,9 @@ const RULES: Rule[] = [
   ['*', new RegExp(`^/api/einvoicing/devices/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'einvoice_devices', m[1]!, ['Sales'])],
   // rooms (billing and checking out make a sales invoice, so they need Sales too)
   ['POST', new RegExp(`^/api/bookings/${UUID}/(bill|check-out|deposit/apply|advance)$`), async (db, m) => { const n = await companyOf(db, 'bookings', m[1]!, ['Rooms']); return n && { ...n, also: ['Sales'] }; }],
-  ['*', new RegExp(`^/api/companies/${UUID}/(rooms|room-types|room-rates|bookings)(/.*)?$`), c(['Rooms'])],
+  ['*', new RegExp(`^/api/companies/${UUID}/(rooms|room-types|room-rates|room-settings|room-charges|bookings)(/.*)?$`), c(['Rooms'])],
+  ['*', new RegExp(`^/api/room-charges/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'room_charge_lines', m[1]!, ['Rooms'])],
+  ['POST', new RegExp(`^/api/booking-instalments/${UUID}/bill$`), async (db, m) => { const n = await companyOf(db, 'booking_instalments', m[1]!, ['Rooms']); return n && { ...n, also: ['Sales'] }; }],
   ['*', new RegExp(`^/api/room-types/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'room_types', m[1]!, ['Rooms'])],
   ['*', new RegExp(`^/api/room-rates/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'room_rates', m[1]!, ['Rooms'])],
   ['*', new RegExp(`^/api/rooms/${UUID}(/.*)?$`), (db, m) => companyOf(db, 'rooms', m[1]!, ['Rooms'])],

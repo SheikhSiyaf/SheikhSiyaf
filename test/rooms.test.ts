@@ -5,6 +5,9 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { as, owner, seed, type Fixture } from './helpers.js';
 import * as R from '../src/books/roomService.js';
 import * as S from '../src/books/documentsService.js';
+import * as RC from '../src/books/roomContractService.js';
+// the guest identity is checked before check-in (db/migrations/0095): details only, never a copy of an ID
+const ID = { idType: 'iqama', idNumber: '2123456789', nationality: 'Egyptian', verifiedBy: 'Front desk' };
 
 let f: Fixture;
 let dlx: string, std: string, r101: string, r102: string, r103: string, guest: string, stay: string;
@@ -69,7 +72,7 @@ describe('Bookings', () => {
     await as(f.staff, (db) => R.saveRoom(db, f.a.id, { number: '102', typeId: std, floor: '1', status: 'out_of_service' }, r102));
     await expect(as(f.staff, (db) => R.checkIn(db, stay, '2027-01-08'))).rejects.toThrow(/not in service/);
     await as(f.staff, (db) => R.saveRoom(db, f.a.id, { number: '102', typeId: std, floor: '1', status: 'active' }, r102));
-    await as(f.staff, (db) => R.checkIn(db, stay, '2027-01-08'));
+    await as(f.staff, async (db) => { await RC.saveGuestCheck(db, stay, ID); await R.checkIn(db, stay, '2027-01-08'); });
     expect((await as(f.staff, (db) => R.getBooking(db, stay))).status).toBe('in_house');
     await expect(as(f.staff, (db) => R.cancel(db, stay))).rejects.toThrow(/Only a reserved booking/);
   });
@@ -118,7 +121,7 @@ describe('The guest bill', () => {
 
   it('the database refuses checking out with nights or extras not billed', async () => {
     const id = await as(f.staff, (db) => R.createBooking(db, f.a.id, { contactId: guest, roomId: r101, arrival: '2027-04-01', departure: '2027-04-03' }));
-    await as(f.staff, (db) => R.checkIn(db, id, '2027-04-01'));
+    await as(f.staff, async (db) => { await RC.saveGuestCheck(db, id, ID); await R.checkIn(db, id, '2027-04-01'); });
     await expect(as(f.staff, (db) => db.query(`UPDATE bookings SET status = 'departed' WHERE id = $1`, [id]))).rejects.toThrow(/Bill every night/);
     await as(f.staff, (db) => R.bill(db, id, { issueDate: '2027-04-01' }));
     await as(f.staff, (db) => R.addExtra(db, id, { description: 'Minibar', unitPrice: '11.50' }));
@@ -170,7 +173,7 @@ describe('Refundable security deposits (0045)', () => {
   });
 
   it('keeping part for damage: an extra on the bill (with VAT), then the deposit pays the invoice; the rest goes back', async () => {
-    await as(f.staff, (db) => R.checkIn(db, bk, '2027-08-01'));
+    await as(f.staff, async (db) => { await RC.saveGuestCheck(db, bk, ID); await R.checkIn(db, bk, '2027-08-01'); });
     await as(f.staff, (db) => R.addExtra(db, bk, { date: '2027-08-02', description: 'Broken lamp', unitPrice: '115.00' }));
     const inv = (await as(f.staff, (db) => R.checkOut(db, bk, { day: '2027-08-03' })))!;
     const d = await doc(inv);
@@ -206,7 +209,7 @@ describe('Advance payments on a booking (0046)', () => {
     const adv = await as(f.staff, (db) => R.takeAdvance(db, bk, { amount: '1000.00', date: '2027-09-20', accountId: f.a.cash, method: 'card' }));
     expect((await owner.query('SELECT is_advance, net_total::text AS n, vat_total::text AS v FROM documents WHERE id = $1', [adv])).rows[0]).toEqual({ is_advance: true, n: '869.56', v: '130.43' });   // 999.99: never more than the 1,000.00 paid
     expect((await as(f.staff, (db) => R.getBooking(db, bk))).advances).toMatchObject([{ documentId: adv, total: '999.99', left: '999.99', due: '0.00' }]);
-    await as(f.staff, (db) => R.checkIn(db, bk, '2027-10-01'));
+    await as(f.staff, async (db) => { await RC.saveGuestCheck(db, bk, ID); await R.checkIn(db, bk, '2027-10-01'); });
     const inv = (await as(f.staff, (db) => R.checkOut(db, bk, { day: '2027-10-04' })))!;
     const d = await doc(inv);
     expect(d).toMatchObject({ status: 'issued', gross: '1349.99' });

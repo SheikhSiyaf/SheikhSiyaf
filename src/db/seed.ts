@@ -38,6 +38,7 @@ import { toMinor } from '../money.js';
 import { DEMO_COMPANIES, DEMO_FIRM, DEMO_PASSWORD, DEMO_RESTAURANT, DEMO_ROLES, DEMO_SELF, DEMO_SELF_ROLES, DEMO_USERS } from './demoData.js';
 import * as Rent from '../books/rentalService.js';
 import * as Room from '../books/roomService.js';
+import * as RoomContracts from '../books/roomContractService.js';
 import { DEFAULT_MODULES } from '../books/modules.js';
 import * as Rest from '../books/restaurantService.js';
 
@@ -171,14 +172,17 @@ export async function seed(adminUrl: string, o: { production?: boolean } = {}): 
         await Room.saveRoom(db, id, { number: '302', typeId: ste, floor: '3', status: 'out_of_service', notes: 'Bathroom renovation' }, room['302']);
         const guest = (name: string, phone: string) => ({ name, phone });
         const past = await Room.createBooking(db, id, { guest: guest('Khalid Al Harbi', '0551234567'), roomId: room['201'], arrival: daysAgo(9), departure: daysAgo(6), adults: 2, source: 'Website' });
+        await RoomContracts.saveGuestCheck(db, past, { idType: 'national_id', idNumber: '1000000001', nationality: 'Saudi', verifiedBy: 'Front desk' });
         await Room.checkIn(db, past, daysAgo(9));
         await Room.addExtra(db, past, { date: daysAgo(8), description: 'Laundry', quantity: '2', unitPrice: '23.00' });
         await Room.checkOut(db, past, { day: daysAgo(6) });
         const inHouse = await Room.createBooking(db, id, { guest: guest('Mona Al Zahrani', '0559876543'), roomId: room['202'], arrival: daysAgo(2), departure: daysAgo(-3), adults: 2, children: 1, source: 'Phone' });
+        await RoomContracts.saveGuestCheck(db, inHouse, { idType: 'national_id', idNumber: '1000000001', nationality: 'Saudi', verifiedBy: 'Front desk' });
         await Room.checkIn(db, inHouse, daysAgo(2));
         await Room.addExtra(db, inHouse, { date: daysAgo(1), description: 'Breakfast', quantity: '3', unitPrice: '69.00' });
         await Room.takeDeposit(db, inHouse, { amount: '500.00', date: daysAgo(2), accountId: acct['1000'], method: 'card' });
         const leaving = await Room.createBooking(db, id, { guest: guest('Peter Lindqvist', '+46701234567'), roomId: room['101'], arrival: daysAgo(3), departure: daysAgo(0), source: 'Travel agent', reference: 'TA-55120' });
+        await RoomContracts.saveGuestCheck(db, leaving, { idType: 'national_id', idNumber: '1000000001', nationality: 'Saudi', verifiedBy: 'Front desk' });
         await Room.checkIn(db, leaving, daysAgo(3));
         await Room.createBooking(db, id, { guest: guest('Sami Haddad', '0533334444'), roomId: room['102'], arrival: daysAgo(0), departure: daysAgo(-2), adults: 1, source: 'Walk-in' });
         const team = await Room.createBooking(db, id, { contactId: faisal, roomId: room['301'], arrival: daysAgo(-5), departure: daysAgo(-8), adults: 4, agreedRate: '1000.00', source: 'Email', notes: 'Company booking for the site team' });

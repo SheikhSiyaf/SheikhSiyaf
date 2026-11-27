@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { dateParam, today, uuidParam, type Ctx } from './context.js';
 import { sendAfterIssue } from './einvoice.js';
 import * as R from '../books/roomService.js';
+import * as RC from '../books/roomContractService.js';
 
 type P = { id: string };
 export function registerRoomRoutes(app: FastifyInstance, { as }: Ctx) {
@@ -59,4 +60,36 @@ export function registerRoomRoutes(app: FastifyInstance, { as }: Ctx) {
     if (documentId && issue) await sendAfterIssue(as, req, documentId);
     return { documentId };
   });
+
+  // contract options (0095): settings, extra charge lines, guest identity check, rental contract, renewals, registration record, receipt
+  app.get<{ Params: P }>('/api/companies/:id/room-settings', async (req) => as(req, (db) => RC.getSettings(db, id(req))));
+  app.post<{ Params: P; Body: RC.SettingsInput }>('/api/companies/:id/room-settings', async (req) => as(req, async (db) => { await RC.saveSettings(db, id(req), req.body ?? {}); return ok; }));
+  app.post<{ Params: P; Body: RC.ChargeInput }>('/api/companies/:id/room-charges', async (req) => as(req, async (db) => ({ id: await RC.saveCharge(db, id(req), req.body ?? {}) })));
+  app.post<{ Params: P; Body: RC.ChargeInput }>('/api/room-charges/:id', async (req) => as(req, async (db) => {
+    const t = (await db.query('SELECT company_id FROM room_charge_lines WHERE id = $1', [id(req)])).rows[0];
+    return { id: await RC.saveCharge(db, t?.company_id, req.body ?? {}, id(req)) };
+  }));
+  app.post<{ Params: P; Body: { contractType?: string } }>('/api/bookings/:id/contract-type', async (req) => as(req, async (db) => { await RC.changeContractType(db, id(req), String(req.body?.contractType ?? '')); return ok; }));
+  app.get<{ Params: P }>('/api/bookings/:id/guest-check', async (req) => as(req, (db) => RC.getGuestCheck(db, id(req))));
+  app.post<{ Params: P; Body: RC.GuestCheckInput }>('/api/bookings/:id/guest-check', async (req) => as(req, async (db) => ({ id: await RC.saveGuestCheck(db, id(req), req.body ?? {}) })));
+  app.get<{ Params: P }>('/api/bookings/:id/contract', async (req) => as(req, (db) => RC.getContract(db, id(req))));
+  app.post<{ Params: P; Body: RC.RentalInput }>('/api/bookings/:id/contract', async (req) => as(req, async (db) => ({ id: await RC.saveRental(db, id(req), req.body ?? {}) })));
+  app.post<{ Params: P }>('/api/bookings/:id/contract/sign', async (req) => as(req, async (db) => { await RC.signRental(db, id(req)); return ok; }));
+  app.post<{ Params: P; Body: { status?: string; number?: string | null } }>('/api/bookings/:id/contract/ejar', async (req) => as(req, async (db) => { await RC.setEjar(db, id(req), req.body ?? {}); return ok; }));
+  app.post<{ Params: P; Body: { date?: string; by?: string } }>('/api/bookings/:id/contract/non-renewal', async (req) => as(req, async (db) => { await RC.recordNonRenewal(db, id(req), req.body ?? {}); return ok; }));
+  app.post<{ Params: P; Body: RC.AddendumInput }>('/api/bookings/:id/contract/addenda', async (req) => as(req, async (db) => ({ id: await RC.addAddendum(db, id(req), req.body ?? {}) })));
+  app.post<{ Params: P; Body: { fileName?: string; data?: string } }>('/api/bookings/:id/contract/file', { bodyLimit: 15 * 1024 * 1024 }, async (req) =>
+    as(req, async (db) => ({ id: await RC.addContractFile(db, id(req), req.body ?? {}) })));
+  app.post<{ Params: P; Body: { issue?: boolean } }>('/api/booking-instalments/:id/bill', async (req) => {
+    const documentId = await as(req, (db) => RC.billInstalment(db, id(req), { issue: req.body?.issue === true }));
+    if (req.body?.issue === true) await sendAfterIssue(as, req, documentId);
+    return { documentId };
+  });
+  app.get<{ Params: P }>('/api/companies/:id/rooms/renewals', async (req) => as(req, (db) => RC.renewals(db, id(req))));
+  app.get<{ Params: P; Querystring: { from?: string; to?: string; format?: string } }>('/api/companies/:id/rooms/registration-record', async (req, reply) => {
+    const r = await as(req, (db) => RC.registrationRecord(db, id(req), { from: req.query.from, to: req.query.to }));
+    if (req.query.format !== 'csv') return r;
+    return reply.header('content-type', 'text/csv; charset=utf-8').header('content-disposition', 'attachment; filename="registration-record.csv"').header('x-content-type-options', 'nosniff').send(RC.registrationCsv(r.rows));
+  });
+  app.get<{ Params: P }>('/api/bookings/:id/receipt', async (req) => as(req, (db) => R.guestReceipt(db, id(req))));
 }

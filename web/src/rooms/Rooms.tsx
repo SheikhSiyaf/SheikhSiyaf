@@ -10,6 +10,8 @@ import { ErrorNote, Loading, errorText } from '../ui.tsx';
 import { bankAccounts, useGo, type Contact } from '../sales/common.tsx';
 import { accessTo } from '../../../src/books/modules.ts';
 import { addDays, groupNights, nights as nightsOf, nightsLine } from '../../../src/books/rooms.ts';
+import { missingShortStay, type ContractType } from '../../../src/books/roomContracts.ts';
+import { ContractFields, ContractPanel, ContractSettings, ContractsPage, EMPTY_ID, EMPTY_RENTAL, contractGaps, type IdentityForm, type RentalForm } from './Contracts.tsx';
 
 type Status = 'reserved' | 'in_house' | 'departed' | 'cancelled' | 'no_show';
 interface Season { id: string; typeId: string; name: string | null; from: string; to: string; rate: string }
@@ -19,7 +21,7 @@ interface Room { id: string; number: string; typeId: string; typeCode: string; t
   status: 'active' | 'out_of_service' | 'retired'; notes: string | null }
 interface BookingRow { id: string; number: string; status: Status; contactId: string; guest: string; guestAr: string | null; phone: string | null; guestVat: string | null;
   roomId: string; room: string; typeName: string; typeNameAr: string | null; arrival: string; departure: string; nights: number; adults: number; children: number;
-  agreedRate: string | null; source: string | null; reference: string | null; notes: string | null; billedTo: string | null }
+  agreedRate: string | null; source: string | null; reference: string | null; notes: string | null; billedTo: string | null; contractType: ContractType; restricted?: boolean }
 interface Charge { description: string; quantity: string; unitPrice: string; quoted: string; total: string; difference: string }
 interface Booking extends BookingRow {
   extras: { id: string; date: string; description: string; quantity: string; unitPrice: string; billed: boolean }[];
@@ -31,7 +33,7 @@ interface Booking extends BookingRow {
 }
 interface FrontDesk { day: string; arrivals: BookingRow[]; notArrived: BookingRow[]; departures: BookingRow[]; inHouse: BookingRow[]; rooms: number; outOfService: number;
   occupied: number; occupancy: number }
-interface Cal { from: string; to: string; nights: number; rooms: Room[]; bookings: { id: string; number: string; status: Status; roomId: string; guest: string; arrival: string; departure: string }[] }
+interface Cal { from: string; to: string; nights: number; rooms: Room[]; bookings: { id: string; number: string; status: Status; roomId: string; guest: string | null; arrival: string; departure: string }[] }
 
 const TONE: Record<Status, string> = { reserved: '', in_house: 'warn', departed: 'good', cancelled: '', no_show: 'bad' };
 function useRun() {
@@ -44,6 +46,8 @@ function useRun() {
   };
   return { run, busy, note: <>{msg.ok && <div className="notice">{msg.ok}</div>}{msg.bad && <div className="notice bad" role="alert">{msg.bad}</div>}</> };
 }
+/** A guest's name, or a note that it is restricted (guest names and room numbers are for people with permission). */
+export const useGuestName = () => { const { t } = useI18n(); const local = useLocalName(); return (b: { guest: string | null; guestAr?: string | null }) => (b.guest == null ? t('rc.restricted') : local(b.guest, b.guestAr ?? null)); };
 const StatusBadge = ({ s }: { s: Status }) => { const { t } = useI18n(); return <span className={`badge ${TONE[s]}`}>{t(`room.st.${s}` as Key)}</span>; };
 
 export function Rooms({ books, sub, item }: { books: CompanyBooks; sub?: string; item?: string }) {
@@ -51,6 +55,7 @@ export function Rooms({ books, sub, item }: { books: CompanyBooks; sub?: string;
   if (sub === 'room-calendar') return <CalendarPage books={books} canEdit={canEdit} />;
   if (sub === 'bookings') return item === 'new' ? <NewBooking books={books} /> : item ? <BookingPage key={item} books={books} id={item} canEdit={canEdit} /> : <Bookings books={books} canEdit={canEdit} />;
   if (sub === 'room-setup') return <Setup books={books} canEdit={canEdit} />;
+  if (sub === 'room-contracts') return <ContractsPage books={books} canEdit={canEdit} />;
   return <Desk books={books} canEdit={canEdit} />;
 }
 
@@ -58,6 +63,7 @@ export function Rooms({ books, sub, item }: { books: CompanyBooks; sub?: string;
 function Desk({ books, canEdit }: { books: CompanyBooks; canEdit: boolean }) {
   const { t } = useI18n();
   const local = useLocalName();
+  const guestName = useGuestName();
   const go = useGo(books.company.id);
   const d = useApi<FrontDesk>(`/api/companies/${books.company.id}/rooms/front-desk`);
   const { run, busy, note } = useRun();
@@ -71,8 +77,8 @@ function Desk({ books, canEdit }: { books: CompanyBooks; canEdit: boolean }) {
       {rows.length === 0 ? <div className="mut">{t('room.none')}</div> : (
         <div className="wrap"><table className="stack"><tbody>{rows.map((b) => (
           <tr key={b.id}>
-            <td><button className="link" onClick={() => go('Rooms', 'bookings', b.id)}>{local(b.guest, b.guestAr)}</button><div className="small mut ltr">{b.number}</div></td>
-            <td data-label={t('room.room')}><b>{b.room}</b> <span className="small mut">{local(b.typeName, b.typeNameAr)}</span></td>
+            <td><button className="link" onClick={() => go('Rooms', 'bookings', b.id)}>{guestName(b)}</button><div className="small mut ltr">{b.number}</div></td>
+            <td data-label={t('room.room')}><b>{b.room ?? '—'}</b> <span className="small mut">{local(b.typeName, b.typeNameAr)}</span></td>
             <td className="ltr small" data-label={t('room.dates')}>{b.arrival} → {b.departure}</td>
             <td className="num">{action?.(b)}</td>
           </tr>))}</tbody></table></div>
@@ -133,7 +139,7 @@ function CalendarPage({ books, canEdit }: { books: CompanyBooks; canEdit: boolea
                   const b = c.data!.bookings.find((x) => x.roomId === r.id && x.arrival <= d && x.departure > d);
                   if (b) {
                     const span = Math.min(nightsOf(d, b.departure), dates.length - i);
-                    cells.push(<td key={d} colSpan={span}><button className={`room-bar st-${b.status}`} onClick={() => go('Rooms', 'bookings', b.id)} title={`${b.number} · ${b.guest}`}>{b.guest}</button></td>);
+                    cells.push(<td key={d} colSpan={span}><button className={`room-bar st-${b.status}`} onClick={() => go('Rooms', 'bookings', b.id)} title={`${b.number} · ${b.guest ?? ''}`}>{b.guest ?? t('rc.restricted')}</button></td>);
                     i += span;
                   } else {
                     cells.push(<td key={d} className={r.status !== 'active' ? 'room-off' : ''}>{canEdit && r.status === 'active'
@@ -152,7 +158,7 @@ function CalendarPage({ books, canEdit }: { books: CompanyBooks; canEdit: boolea
               return (<div key={r.id} className="room-cal-item"><b>{r.number}</b> <span className="small mut">{local(r.typeName, r.typeNameAr)}</span>
                 {r.status !== 'active' && <span className="badge"> {t(`room.rs.${r.status}` as Key)}</span>}
                 {bs.length === 0 ? <div className="small mut">{t('room.freeAll')}</div> : bs.map((b) => (
-                  <div key={b.id}><button className="link" onClick={() => go('Rooms', 'bookings', b.id)}>{b.guest}</button> <span className="small ltr">{b.arrival} → {b.departure}</span> <StatusBadge s={b.status} /></div>))}
+                  <div key={b.id}><button className="link" onClick={() => go('Rooms', 'bookings', b.id)}>{b.guest ?? t('rc.restricted')}</button> <span className="small ltr">{b.arrival} → {b.departure}</span> <StatusBadge s={b.status} /></div>))}
               </div>);
             })}
           </div>
@@ -166,6 +172,7 @@ function CalendarPage({ books, canEdit }: { books: CompanyBooks; canEdit: boolea
 function Bookings({ books, canEdit }: { books: CompanyBooks; canEdit: boolean }) {
   const { t } = useI18n();
   const local = useLocalName();
+  const guestName = useGuestName();
   const go = useGo(books.company.id);
   const [status, setStatus] = useState<'' | Status>('');
   const list = useApi<BookingRow[]>(`/api/companies/${books.company.id}/bookings${status ? `?status=${status}` : ''}`);
@@ -185,8 +192,8 @@ function Bookings({ books, canEdit }: { books: CompanyBooks; canEdit: boolean })
             <tbody>{list.data.map((b) => (
               <tr key={b.id}>
                 <td><button className="link ltr" onClick={() => go('Rooms', 'bookings', b.id)}>{b.number}</button></td>
-                <td data-label={t('room.guest')}>{local(b.guest, b.guestAr)}</td>
-                <td data-label={t('room.room')}>{b.room} <span className="small mut">{local(b.typeName, b.typeNameAr)}</span></td>
+                <td data-label={t('room.guest')}>{guestName(b)}</td>
+                <td data-label={t('room.room')}>{b.room ?? '—'} <span className="small mut">{local(b.typeName, b.typeNameAr)}</span></td>
                 <td className="ltr small" data-label={t('room.dates')}>{b.arrival} → {b.departure} <span className="mut">({t('room.nightsN', { n: b.nights })})</span></td>
                 <td data-label={t('room.status')}><StatusBadge s={b.status} /></td>
               </tr>))}</tbody>
@@ -220,15 +227,21 @@ function NewBooking({ books }: { books: CompanyBooks }) {
   const [f, setF] = useState({ contactId: '', name: '', phone: '', vatNumber: '', roomId: preset.length === 2 ? preset[0]! : '', arrival: preset.length === 2 ? preset[1]! : today(),
     departure: addDays(preset.length === 2 ? preset[1]! : today(), 1), adults: '1', children: '0', agreedRate: '', source: '', notes: '' });
   const { run, busy, note } = useRun();
+  const [ctype, setCtype] = useState<ContractType>('short_stay');
+  const [idf, setIdf] = useState<IdentityForm>(EMPTY_ID);
+  const [rf, setRf] = useState<RentalForm>(EMPTY_RENTAL);
   const room = rooms.data?.find((r) => r.id === f.roomId);
   const quote = useQuote(books, types.data, room, f.arrival, f.departure, f.agreedRate);
   const set = (k: keyof typeof f, v: string) => setF({ ...f, [k]: v });
+  const gaps = contractGaps(ctype, rf, f.name || (f.contactId ? 'x' : ''));
+  const idGaps = ctype === 'short_stay' && Object.values(idf).some((v) => v.trim()) ? missingShortStay({ ...idf, checkIn: '2000-01-01', checkOut: '2000-01-02', guests: 1, verifiedAt: 'now' }) : [];
   const save = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
       const r = await api<{ id: string }>(`/api/companies/${books.company.id}/bookings`, { body: {
         contactId: f.contactId || null, guest: f.contactId ? null : { name: f.name, phone: f.phone, vatNumber: f.vatNumber },
-        roomId: f.roomId, arrival: f.arrival, departure: f.departure, adults: f.adults, children: f.children, agreedRate: f.agreedRate || null, source: f.source, notes: f.notes } });
+        roomId: f.roomId, arrival: f.arrival, departure: f.departure, adults: f.adults, children: f.children, agreedRate: f.agreedRate || null, source: f.source, notes: f.notes,
+        contractType: ctype, guestCheck: ctype === 'short_stay' && Object.values(idf).some((v) => v.trim()) ? idf : null, rental: ctype === 'long_term' ? rf : null } });
       go('Rooms', 'bookings', r.id);
     });
   };
@@ -265,15 +278,17 @@ function NewBooking({ books }: { books: CompanyBooks }) {
         <datalist id="room-sources">{['walk_in', 'phone', 'email', 'website', 'agent'].map((s) => <option key={s} value={t(`room.src.${s}` as Key)} />)}</datalist>
         <label className="f">{t('room.notes')}<input value={f.notes} onChange={(e) => set('notes', e.target.value)} /></label>
       </div>
-      {quote && (
+      <ContractFields type={ctype} setType={setCtype} idf={idf} setIdf={setIdf} rf={rf} setRf={setRf} />
+      {quote && ctype === 'short_stay' && (
         <div className="inset small" id="bk-quote">
           {quote.lines.map((l) => <div key={l.from}>{t('room.quoteLine', { n: l.nights, rate: fmt(l.rate) })}</div>)}
           <div><b>{t('room.quoteTotal', { n: quote.nights, total: fmt(quote.total), cur: books.company.currency })}</b>
             {quote.total !== quote.quoted && <span className="mut"> · {t('room.quoteDiff', { quoted: fmt(quote.quoted) })}</span>}</div>
         </div>
       )}
+      {gaps.length > 0 && <div className="notice bad" id="bk-rental-missing">{t('rc.missing', { list: gaps.map((n) => t(`rc.f.${n}` as Key)).join(', ') })}</div>}
       <div className="actions" style={{ marginTop: 10 }}>
-        <button className="b p" id="bk-save" disabled={busy || !f.roomId || (!f.contactId && !f.name.trim())}>{t('room.book')}</button>
+        <button className="b p" id="bk-save" disabled={busy || !f.roomId || (!f.contactId && !f.name.trim()) || gaps.length > 0 || idGaps.length > 0}>{t('room.book')}</button>
         <button type="button" className="b" onClick={() => go('Rooms', 'bookings')}>{t('cancel')}</button>
       </div>
     </form>
@@ -283,6 +298,7 @@ function NewBooking({ books }: { books: CompanyBooks }) {
 function BookingPage({ books, id, canEdit }: { books: CompanyBooks; id: string; canEdit: boolean }) {
   const { t } = useI18n();
   const local = useLocalName();
+  const guestName = useGuestName();
   const go = useGo(books.company.id);
   const d = useApi<Booking>(`/api/bookings/${id}`);
   const rooms = useApi<Room[]>(`/api/companies/${books.company.id}/rooms`);
@@ -317,10 +333,11 @@ function BookingPage({ books, id, canEdit }: { books: CompanyBooks; id: string; 
       <div className="card">
         <div className="actions"><h2 style={{ margin: 0 }} className="ltr">{b.number}</h2><StatusBadge s={b.status} /><span className="spacer" />
           {open && !edit && <button className="b small" onClick={() => setEdit({ roomId: b.roomId, arrival: b.arrival, departure: b.departure, adults: String(b.adults), children: String(b.children) })}>{t('room.change')}</button>}</div>
-        <div><b>{local(b.guest, b.guestAr)}</b>{b.phone && <span className="small mut ltr"> · {b.phone}</span>}{b.guestVat && <span className="small mut ltr"> · {t('room.vatNo', { n: b.guestVat })}</span>}</div>
-        <div className="small">{t('room.roomN', { n: b.room })} · {local(b.typeName, b.typeNameAr)} · <span className="ltr">{b.arrival} → {b.departure}</span> · {t('room.nightsN', { n: b.nights })} · {t('room.guestsN', { n: b.adults + b.children })}</div>
+        <div><b>{guestName(b)}</b>{b.phone && <span className="small mut ltr"> · {b.phone}</span>}{b.guestVat && <span className="small mut ltr"> · {t('room.vatNo', { n: b.guestVat })}</span>}</div>
+        <div className="small">{t('room.roomN', { n: b.room ?? '—' })} · {local(b.typeName, b.typeNameAr)} · <span className="ltr">{b.arrival} → {b.departure}</span> · {t('room.nightsN', { n: b.nights })} · {t('room.guestsN', { n: b.adults + b.children })}</div>
         {b.agreedRate && <div className="small">{t('room.agreedRateN', { rate: fmt(b.agreedRate) })}</div>}
         {(b.source || b.notes) && <div className="small mut">{[b.source, b.notes].filter(Boolean).join(' · ')}</div>}
+        <ContractPanel books={books} id={id} type={b.contractType} canEdit={canEdit} restricted={!!b.restricted} status={b.status} reload={d.reload} />
         {edit && (
           <form className="inset" style={{ marginTop: 8 }} onSubmit={(e) => { e.preventDefault(); post(`/api/bookings/${id}`, edit, t('room.saved'), () => setEdit(undefined)); }}>
             <div className="row">
@@ -338,7 +355,7 @@ function BookingPage({ books, id, canEdit }: { books: CompanyBooks; id: string; 
         )}
       </div>
 
-      <div className="card">
+      {b.contractType !== 'long_term' && <div className="card">
         <div className="actions"><h2 style={{ margin: 0 }}>{t('room.extras')}</h2><span className="spacer" />
           {open && !extra && <button className="b small" id="bk-extra" onClick={() => setExtra({ date: today(), description: '', quantity: '1', unitPrice: '' })}>{t('room.addExtra')}</button>}</div>
         {extra && (
@@ -359,7 +376,7 @@ function BookingPage({ books, id, canEdit }: { books: CompanyBooks; id: string; 
             <tr key={x.id}><td className="ltr small">{x.date}</td><td>{x.description}</td><td className="num">{Number(x.quantity)} × {fmt(x.unitPrice)}</td>
               <td className="num">{x.billed ? <span className="small mut">{t('room.billed')}</span> : open ? <button className="b small" disabled={busy} onClick={() => post(`/api/booking-extras/${x.id}/delete`, {}, t('room.removed'))}>{t('room.remove')}</button> : null}</td></tr>))}</tbody></table>
         )}
-      </div>
+      </div>}
 
       <div className="card">
         <div className="actions"><h2 style={{ margin: 0 }}>{t('adv.title')}</h2><span className="spacer" />
@@ -419,7 +436,7 @@ function BookingPage({ books, id, canEdit }: { books: CompanyBooks; id: string; 
         )}
       </div>
 
-      {b.unbilled && (
+      {b.unbilled && b.contractType !== 'long_term' && (
         <div className="card">
           <h2>{t('room.billTitle')}</h2>
           {b.unbilled.lines.length === 0 ? <div className="mut">{t('room.allBilled')}</div> : (
@@ -554,6 +571,7 @@ function Setup({ books, canEdit }: { books: CompanyBooks; canEdit: boolean }) {
           </table></div>
         )}
       </div>
+      <ContractSettings books={books} canEdit={canEdit} />
     </>
   );
 }

@@ -756,3 +756,25 @@ Every change below is covered by a test in `test/`.
 | Change | Why |
 |---|---|
 | `doc_fx_type` now also allows `expense` | An expense can be written in another currency (with the rate typed on it), like a bill. The ledger still holds the converted amounts in the company's currency, the bank leaves the converted amount, and a void reverses the same figures. Employee claims stay in the company's currency. Reversible once no expense is in another currency. |
+
+## 0094_it_expense_account.sql
+| Change | Why |
+|---|---|
+| Adds the expense account 5430 "IT and software expenses" (code range 5430 to 5499) to every existing company that has an expense account; the standard chart template carries it too | A cost for IT and computer services belongs in Expenses and the P&L, not on the asset account 1530 "Computers and IT equipment". (This entry was missing from the log when 0094 was released.) |
+
+
+## 0095_rooms_contracts.sql
+| Change | Why |
+|---|---|
+| New function `app_is_company_admin(company)`: the firm partner, or the person whose job title may manage users in a company that runs its own books | "Administrator" for contract options means the company's top role (the platform Administrator never sees books). Used by the settings, charge lines and contract-type rules. |
+| New `room_settings` (one row per company: maximum stay in days, off by default; governing language, Arabic unless changed; frozen cities, starting with Riyadh; contract terms and cancellation terms in English and Arabic), RLS: everyone on the company reads, only the company administrator writes, audited | Settings that may change with the rules, kept as data not code. |
+| New `room_charge_lines` (name, rate in percent, on or off, income account, VAT code; no rate built in, off by default; refused unless the account is an income account), administrator writes, audited, never deleted | Optional extra charges (for example a municipal or tourism charge) added to short-stay bills. |
+| `bookings` gets `contract_type` (short_stay default, long_term) and a snapshot of the terms, cancellation terms and governing language taken when the booking is made; trigger `bookings_contract_rules`: only an administrator changes the type and only before contract details exist; a short stay may not exceed the maximum stay when one is set | The contract type decides the required fields; a booking keeps the terms it was made with. |
+| `before_booking` replaced (same rules as 0044) so checking a long-term rental out does not need every night billed; trigger `booking_bills_contract` refuses nightly bills on a long-term rental | A rental is billed by instalment, not by the night. |
+| New `booking_guest_checks` (ID type, ID number, nationality, who verified, when; no file or picture column; one per short stay), RLS: only people who can post read or write, audit rows carry only the last four characters of the ID number (`audit_identity_row`), never deleted | The guest identity is checked and the details kept; no copy of an ID is stored anywhere. Viewers and reviewers cannot read it. |
+| New `booking_tenancies` (landlord and tenant identity, property, city, rent per period, deposit, VAT code, income account, Ejar status and number, last registered rent, non-renewal notice date and who gave it, signed time), same access and audit rules; once signed, only the Ejar fields, the last registered rent and the notice can change | A signed contract is never edited; changes are by addendum. |
+| New `booking_addenda` (append only: effective date, new rent, new end date, reason); trigger refuses a rent above the last registered rent when the city is on the frozen list, and moves the booking's end date | Rent-freeze rule enforced in the database as well as on the screen. |
+| New `booking_instalments` (the payment schedule; one invoice each, billed once; a billed instalment never changes) | Rent posts to the books as an ordinary invoice. |
+| `attachments` gets `booking_id` (the registered Ejar contract): PDF only, only on a long-term rental, kept for good; the owner-of-attachment check now counts five kinds; `before_attachment_change` extended (same rules as 0024) | The registered contract PDF is attached, never generated; a picture (an ID photo) is refused by the database. |
+| New function `room_log_identity_access` | Viewing a guest check and exporting the registration record are written to the audit log. |
+

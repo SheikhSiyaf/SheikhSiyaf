@@ -21,7 +21,7 @@ export const NAV: Module[] = [
   { key: 'Inventory', subs: [s('items'), h('warehouse-desk'), s('grn'), s('gdn'), s('stock-value')] },
   { key: 'Restaurant', subs: [s('food-sales'), s('menu'), s('materials'), h('stock-desk'), h('materials-in'), h('wastage'), s('material-value')] },
   { key: 'Assets', subs: [s('register'), s('depreciation')] },
-  { key: 'Rooms', subs: [s('front-desk'), s('room-calendar'), s('bookings'), h('room-setup')] },
+  { key: 'Rooms', subs: [s('front-desk'), s('room-calendar'), s('bookings'), s('room-contracts'), h('room-setup')] },
   { key: 'Rentals', subs: [s('rental-board'), s('rental-contracts'), h('equipment')] },
   { key: 'Projects', subs: [s('projects'), s('project-report')] },
   { key: 'HRM', subs: [s('overview'), s('employees'), s('attendance'), s('leave'), s('payroll'), h('loans'), h('end-of-service'), h('hr-documents')] },

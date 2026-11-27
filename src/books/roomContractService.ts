@@ -7,6 +7,8 @@ import { fromMinor, toMinor } from '../money.js';
 import { addDays as addDaysDoc } from './documents.js';
 import { issueDocument, saveDraft } from './documentsService.js';
 import * as C from './roomContracts.js';
+import type { RegistrationRow } from './roomContractCsv.js';
+export { registrationCsv, type RegistrationRow } from './roomContractCsv.js';
 
 const bad = (message: string, key?: string, details?: string[]): never => { throw new HttpError(400, message, key, details); };
 const notFound = (): never => { throw new HttpError(404, 'Not found.', 'err.notFound'); };
@@ -299,8 +301,6 @@ export async function renewals(db: Db, companyId: string, day = today()) {
 }
 
 // ------------------------------------------------------------------ the registration record (guest reporting)
-export interface RegistrationRow { booking: string; checkIn: string; checkOut: string; guests: number; guest: string; room: string; idType: string; idNumber: string; nationality: string;
-  verifiedBy: string; verifiedAt: string }
 /** The data guest reporting needs, for stays that overlap the dates: who stayed, how identified, when. Reading it is logged. No live integration:
  *  this is the data and the export, ready for the day an integration is built. */
 export async function registrationRecord(db: Db, companyId: string, f: { from?: string; to?: string } = {}): Promise<{ rows: RegistrationRow[] }> {
@@ -312,11 +312,6 @@ export async function registrationRecord(db: Db, companyId: string, f: { from?: 
       AND ($2::date IS NULL OR b.departure > $2) AND ($3::date IS NULL OR b.arrival <= $3) ORDER BY b.arrival, r.number LIMIT 5000`, [companyId, f.from || null, f.to || null])).rows;
   await db.query('SELECT room_log_identity_access($1, $2, $3::jsonb)', [companyId, 'export', JSON.stringify({ from: f.from ?? null, to: f.to ?? null, rows: rows.length })]);
   return { rows };
-}
-const csvCell = (v: unknown) => { const s = String(v ?? ''); return /[",\n\r]/.test(s) || /^[=+\-@]/.test(s) ? `"${(/^[=+\-@]/.test(s) ? "'" + s : s).replace(/"/g, '""')}"` : s; };
-export function registrationCsv(rows: RegistrationRow[]): string {
-  const head = ['Booking', 'Check-in', 'Check-out', 'Guests', 'Guest', 'Room', 'ID type', 'ID number', 'Nationality', 'Verified by', 'Verified at'];
-  return '﻿' + [head, ...rows.map((r) => [r.booking, r.checkIn, r.checkOut, r.guests, r.guest, r.room, r.idType, r.idNumber, r.nationality, r.verifiedBy, r.verifiedAt])].map((l) => l.map(csvCell).join(',')).join('\r\n') + '\r\n';
 }
 
 /** Changes a reserved booking's contract type, before any contract details are saved. Administrators only. */

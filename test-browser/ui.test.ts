@@ -1942,3 +1942,114 @@ describe('The sign-in and sign-up pages', () => {
     await db.query(`UPDATE email_outbox SET status = 'failed', last_error = 'test: not sent' WHERE status = 'queued' AND subject LIKE 'Staff change%'`);
   });
 });
+
+// Rooms contract options (db/migrations/0095): in the Corniche Hotel demo, on the real screens.
+describe('Rooms contract options', () => {
+  let hotel: string, clerk: string, viewer: string | undefined, room: string, rooms: Page;
+  beforeAll(async () => {
+    hotel = (await db.query(`SELECT c.id FROM companies c WHERE 'Rooms' = ANY (c.modules) AND EXISTS (SELECT 1 FROM rooms r WHERE r.company_id = c.id AND r.status = 'active') ORDER BY c.name LIMIT 1`)).rows[0].id;
+    clerk = (await db.query(`SELECT u.email FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.company_id = $1 AND u.kind = 'client' AND m.role = 'client_accountant' AND u.status = 'active' LIMIT 1`, [hotel])).rows[0].email;
+    viewer = (await db.query(`SELECT u.email FROM users u JOIN memberships m ON m.user_id = u.id WHERE m.company_id = $1 AND u.kind = 'client' AND m.role = 'client_viewer' AND u.status = 'active' LIMIT 1`, [hotel])).rows[0]?.email;
+    room = (await db.query(`SELECT id FROM rooms WHERE company_id = $1 AND status = 'active' ORDER BY number LIMIT 1`, [hotel])).rows[0].id;
+    ({ page: rooms } = await newPage());
+    await signIn(rooms, clerk);
+  });
+
+  async function newBooking(p: Page, arrival: string, departure: string) {
+    await p.goto(`${BASE}/c/${hotel}/Rooms/bookings/new`, { waitUntil: 'networkidle' });
+    await p.locator('#bk-name').fill('Browser Guest');
+    await p.locator('#bk-room').selectOption(room);
+    await p.locator('#bk-arrival').fill(arrival);
+    await p.locator('#bk-departure').fill(departure);
+  }
+
+  it('a short stay says no ID copy is kept, can be reserved, and check-in is refused until the identity is checked', async () => {
+    await newBooking(rooms, '2031-03-01', '2031-03-03');
+    expect(await rooms.locator('#bk-id-notice').innerText()).toMatch(/Do not scan, photograph or upload/);
+    expect(await rooms.locator('input[type=file]').count()).toBe(0);                       // no way to upload an ID anywhere on the form
+    await rooms.locator('#bk-id-number').fill('2123456789');                               // started but incomplete: saving is blocked and the gaps are named
+    expect(await rooms.locator('#bk-id-missing').innerText()).toMatch(/ID type.*Nationality.*Verified by/);
+    expect(await rooms.locator('#bk-save').isDisabled()).toBe(true);
+    await rooms.locator('#bk-id-number').fill('');
+    await rooms.locator('#bk-save').click();
+    await rooms.locator('#bk-checkin').waitFor({ timeout: 15000 });
+    expect(await rooms.locator('#guest-check-missing').innerText()).toMatch(/must be checked before check-in/);
+    await rooms.locator('#guest-receipt').waitFor();
+  });
+
+  it('the identity check saves details only, then the booking shows who verified it', async () => {
+    await rooms.locator('#guest-check-add').click();
+    await rooms.locator('#gc-type').selectOption('iqama');
+    await rooms.locator('#gc-number').fill('2123456789');
+    await rooms.locator('#gc-nationality').fill('Egyptian');
+    await rooms.locator('#gc-verified').fill('Huda');
+    await rooms.locator('#gc-save').click();
+    await waitForText(rooms, 'Verified by Huda');
+    expect(await rooms.locator('#guest-check').innerText()).toContain('2123456789');
+    expect(await rooms.locator('input[type=file]').count()).toBe(0);
+  });
+
+  it('a long-term rental shows the Ejar warning until registered, names missing details, and signs', async () => {
+    await newBooking(rooms, '2031-05-01', '2031-11-01');
+    await rooms.locator('#bk-type').selectOption('long_term');
+    expect(await rooms.locator('#bk-ejar-warning').innerText()).toBe('Rental contracts must be registered in Ejar.');
+    expect(await rooms.locator('#bk-rental-missing').innerText()).toMatch(/Landlord name/);
+    expect(await rooms.locator('#bk-save').isDisabled()).toBe(true);
+    const fill = async (label: string, v: string) => rooms.getByLabel(label, { exact: true }).fill(v);
+    await fill('Landlord name', 'Tower Owner Co'); await rooms.getByLabel('Landlord ID type').selectOption('national_id'); await fill('Landlord ID number', '1000000001');
+    await rooms.getByLabel('Tenant ID type').selectOption('iqama'); await fill('Tenant ID number', '2000000002'); await fill('Property', 'Tower 1'); await fill('City', 'Riyadh');
+    await fill('Rent (before VAT)', '3000'); await rooms.getByLabel('Rent is paid').selectOption('monthly'); await rooms.getByLabel('VAT on the rent').selectOption('exempt');
+    await rooms.locator('#bk-save').click();
+    await rooms.locator('#rental').waitFor({ timeout: 15000 });
+    expect(await rooms.locator('#rental-warning').innerText()).toBe('Rental contracts must be registered in Ejar.');
+    await rooms.locator('#rental-sign').click();
+    await waitForText(rooms, 'Signed on');
+    expect(await rooms.locator('#rental tbody tr').count()).toBeGreaterThanOrEqual(6);                       // six monthly instalments
+    await rooms.locator('#ejar-edit').click();
+    await rooms.locator('#ejar-status').selectOption('registered');
+    await rooms.locator('#ejar-number').fill('10234567');
+    await rooms.locator('#ejar-save').click();
+    await rooms.locator('#ejar-edit').waitFor({ timeout: 15000 });   // the form closes once the registration is saved
+    await expect.poll(() => rooms.locator('#rental-ejar').innerText(), { timeout: 15000 }).toBe('Registered');
+    await expect.poll(() => rooms.locator('#rental-warning').count(), { timeout: 15000 }).toBe(0);
+  });
+
+  it('reads right to left in Arabic and fits a phone', async () => {
+    await rooms.goto(`${BASE}/c/${hotel}/Rooms/bookings/new`, { waitUntil: 'networkidle' });
+    await rooms.locator('#bk-type').waitFor();
+    await rooms.getByRole('button', { name: 'EN | AR' }).click();
+    await rooms.waitForTimeout(900);
+    expect(await rooms.evaluate(() => document.documentElement.dir)).toBe('rtl');
+    expect(await rooms.locator('#bk-id-notice').innerText()).toContain('لا تصوّر');
+    await rooms.locator('#bk-type').selectOption('long_term');
+    expect(await rooms.locator('#bk-ejar-warning').innerText()).toBe('يجب تسجيل عقود الإيجار في منصة إيجار.');
+    await rooms.getByRole('button', { name: 'EN | AR' }).click();
+    await rooms.waitForTimeout(900);
+    const { page: phone } = await newPage(390);
+    await signIn(phone, clerk);
+    await phone.goto(`${BASE}/c/${hotel}/Rooms/bookings/new`, { waitUntil: 'networkidle' });
+    await phone.locator('#bk-type').selectOption('long_term');
+    expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  });
+
+  it('a viewer sees no guest names, room numbers or identity, and cannot open the registration record', async () => {
+    if (!viewer) return;
+    const { page: v } = await newPage();
+    await signIn(v, viewer);
+    await v.goto(`${BASE}/c/${hotel}/Rooms/bookings`, { waitUntil: 'networkidle' });
+    const text = await v.locator('main').innerText();
+    expect(text).not.toContain('Browser Guest');
+    expect(text).toContain('Restricted');
+    await v.goto(`${BASE}/c/${hotel}/Rooms/room-contracts`, { waitUntil: 'networkidle' });
+    expect(await v.locator('#registration-record').count()).toBe(0);
+  });
+
+  it('the contracts page lists renewals and shows the registration record export with no integration claimed', async () => {
+    await rooms.goto(`${BASE}/c/${hotel}/Rooms/room-contracts`, { waitUntil: 'networkidle' });
+    await rooms.locator('#registration-record').waitFor();
+    expect(await rooms.locator('#registration-record').innerText()).toMatch(/nothing is sent to Shomoos/i);
+    await rooms.locator('#reg-from').fill('2031-01-01'); await rooms.locator('#reg-to').fill('2031-12-31');
+    await rooms.locator('#reg-show').click();
+    await waitForText(rooms, 'Browser Guest');
+  });
+});

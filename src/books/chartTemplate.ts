@@ -77,4 +77,5 @@ export const CHART_TEMPLATE: TemplateAccount[] = [
   { code: '5220', name: 'End of service benefits', nameAr: 'مكافأة نهاية الخدمة', type: 'expense' },
   { code: '5300', name: 'Utilities and telecom', nameAr: 'المرافق والاتصالات', type: 'expense' },
   { code: '5400', name: 'Office and general expenses', nameAr: 'مصروفات مكتبية وعامة', type: 'expense' },
+  { code: '5410', name: 'IT and software expenses', nameAr: 'مصروفات تقنية المعلومات والبرمجيات', type: 'expense' },   // IT costs that are spent, not bought as equipment (1530)
 ];

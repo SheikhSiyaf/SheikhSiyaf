@@ -22,7 +22,7 @@ export function ExpensesByCategory({ books }: { books: CompanyBooks }) {
   const { t } = useI18n();
   const [from, setFrom] = useState(`${today().slice(0, 4)}-01-01`);
   const [to, setTo] = useState(today());
-  const r = useApi<{ rows: Category[]; total: string }>(`/api/companies/${books.company.id}/reports/expenses-by-category?from=${from}&to=${to}`);
+  const r = useApi<{ rows: Category[]; total: string; voided?: string }>(`/api/companies/${books.company.id}/reports/expenses-by-category?from=${from}&to=${to}`);
   return (
     <div className="card">
       <div className="actions" style={{ marginBottom: 8 }}>
@@ -36,6 +36,7 @@ export function ExpensesByCategory({ books }: { books: CompanyBooks }) {
         <>
           <Bars rows={[...r.data.rows].sort((a, b) => (toMinor(b.spent) > toMinor(a.spent) ? 1 : -1))} cur={books.company.currency} />
           <table className="totals"><tbody><tr className="total"><td>{t('total')}</td><td className="num ltr">{fmt(r.data.total)}</td></tr></tbody></table>
+          {r.data.voided && toMinor(r.data.voided) !== 0n && <p className="mut small" id="exp-voided-note">{t('exp.voidedNote', { amount: fmt(r.data.voided), cur: books.company.currency })}</p>}
         </>
       )}
     </div>

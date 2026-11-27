@@ -52,10 +52,14 @@ describe('voiding an expense', () => {
   it('a date typed in by the caller is respected: the reversal then falls in that month, and the totals still agree with Profit and Loss', async () => {
     const id = await record('2026-02-12', '20.00');
     await as(f.staff, (db) => E.voidExpense(db, id, '2026-03-12'));
-    expect(await spent('2026-02-01', '2026-02-28')).toBe('20.00');
-    expect(await spent('2026-03-01', '2026-03-31')).toBe('-20.00');
+    // the Expenses screens count live spending only: neither month shows the voided expense or its reversal (no negative month)...
+    expect(await spent('2026-02-01', '2026-02-28')).toBe('0.00');
+    expect(await spent('2026-03-01', '2026-03-31')).toBe('0.00');
+    // ...while Profit and Loss reads the ledger as it is (the expense stays in February, the reversal sits in March), and the Expenses report says so
     expect(await pnlExpenses('2026-02-01', '2026-02-28')).toBe('20.00');
     expect(await pnlExpenses('2026-03-01', '2026-03-31')).toBe('-20.00');
+    expect((await as(f.staff, (db) => E.expensesByCategory(db, f.a.id, '2026-03-01', '2026-03-31'))).voided).toBe('-20.00');
+    expect((await as(f.staff, (db) => E.expensesByCategory(db, f.a.id, '2026-02-01', '2026-02-28'))).voided).toBe('20.00');
     expect(await tbNet('5000')).toBe(0);   // over the whole year the pair still cancels
   });
 
@@ -64,7 +68,8 @@ describe('voiding an expense', () => {
     await addPeriod(f.a.id, '2026-04-01', '2026-04-30', true);   // April is closed
     const used = await as(f.staff, (db) => E.voidExpense(db, id));
     expect(used).toBe(new Date().toISOString().slice(0, 10));
-    expect(await spent('2026-04-01', '2026-04-30')).toBe('50.00');
+    expect(await spent('2026-04-01', '2026-04-30')).toBe('0.00');   // live spending only: the voided expense is not counted, whichever month it sits in
+    expect(await pnlExpenses('2026-04-01', '2026-04-30')).toBe('50.00');   // but the closed month in the ledger never changed
   });
 
   const usd = (over: Record<string, unknown> = {}) => ({ type: 'expense' as const, payee: 'US software vendor', paidFromAccountId: f.a.cash, issueDate: '2026-05-05', currency: 'USD', fxRate: '3.75',

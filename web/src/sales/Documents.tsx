@@ -360,8 +360,14 @@ export function DocEditor({ books, type, id, presetContactId, onChanged }: { boo
                     </td>
                     <td className="dl-acct">
                       <select value={l.accountId} onChange={(e) => setLine(i, { accountId: e.target.value })} aria-label={t('journal.account')}>
-                        {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {local(a.name, a.nameAr)}{a.costCentreRequired ? ' *' : ''}</option>)}
+                        {side === 'purchases' && accounts.some((a) => a.type === 'asset')
+                          ? (<>
+                              <optgroup label={t('doc.acctExpenses')}>{accounts.filter((a) => a.type !== 'asset').map((a) => <option key={a.id} value={a.id}>{a.code} {local(a.name, a.nameAr)}{a.costCentreRequired ? ' *' : ''}</option>)}</optgroup>
+                              <optgroup label={t('doc.acctAssets')}>{accounts.filter((a) => a.type === 'asset').map((a) => <option key={a.id} value={a.id}>{a.code} {local(a.name, a.nameAr)}</option>)}</optgroup>
+                            </>)
+                          : accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {local(a.name, a.nameAr)}{a.costCentreRequired ? ' *' : ''}</option>)}
                       </select>
+                      {side === 'purchases' && acct?.type === 'asset' && <div className="notice warn small" role="note" id={`doc-asset-warn-${i}`}>{t('doc.assetWarn', { account: `${acct.code} ${local(acct.name, acct.nameAr)}` })}</div>}
                     </td>
                     <td className="dl-cc">
                       <select value={l.costCentreId} onChange={(e) => setLine(i, { costCentreId: e.target.value })} aria-label={t('journal.costCentre')}

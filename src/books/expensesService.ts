@@ -136,9 +136,15 @@ export async function generateRecurring(db: Db, companyId: string, onlyId?: stri
 
 // ------------------------------------------------------------------ categories (expense accounts)
 export async function categories(db: Db, companyId: string, from: string, to: string) {
+  // "Spent" counts LIVE spending only: a voided expense and its reversing entry are both left out, so voiding never leaves a negative total in the month
+  // of the void. Profit and Loss reads the ledger as it is and still holds both; expensesByCategory() shows that difference as "voided".
   const { rows } = await db.query(
-    `SELECT a.id, a.code, a.name, a.name_ar AS "nameAr", a.cost_centre_required AS "costCentreRequired",
-            coalesce(sum(l.debit - l.credit) FILTER (WHERE e.entry_date BETWEEN $2 AND $3), 0)::numeric(18,2)::text AS spent
+    `WITH voided AS (
+       SELECT journal_entry_id AS id FROM documents WHERE company_id = $1 AND type = 'expense' AND status = 'voided' AND journal_entry_id IS NOT NULL
+       UNION SELECT void_entry_id FROM documents WHERE company_id = $1 AND type = 'expense' AND status = 'voided' AND void_entry_id IS NOT NULL)
+     SELECT a.id, a.code, a.name, a.name_ar AS "nameAr", a.cost_centre_required AS "costCentreRequired",
+            coalesce(sum(l.debit - l.credit) FILTER (WHERE e.entry_date BETWEEN $2 AND $3 AND e.id NOT IN (SELECT id FROM voided)), 0)::numeric(18,2)::text AS spent,
+            coalesce(sum(l.debit - l.credit) FILTER (WHERE e.entry_date BETWEEN $2 AND $3 AND e.id IN (SELECT id FROM voided)), 0)::numeric(18,2)::text AS voided
      FROM accounts a LEFT JOIN journal_lines l ON l.account_id = a.id LEFT JOIN journal_entries e ON e.id = l.entry_id
      WHERE a.company_id = $1 AND a.type = 'expense' GROUP BY a.id ORDER BY a.code`, [companyId, from, to]);
   return rows;
@@ -182,8 +188,12 @@ export async function expenseOverview(db: Db, companyId: string) {
 
 /** Spending per expense account, from the ledger (expenses, bills and journal entries alike). */
 export async function expensesByCategory(db: Db, companyId: string, from: string, to: string) {
-  const rows = (await categories(db, companyId, from, to)).filter((r) => toMinor(r.spent) !== 0n);
-  return { from, to, rows, total: fromMinor(rows.reduce((s, r) => s + toMinor(r.spent), 0n)) };
+  const all = await categories(db, companyId, from, to);
+  const rows = all.filter((r) => toMinor(r.spent) !== 0n);
+  // what Profit and Loss holds on top of this total: voided expenses and their reversals that fall inside the dates (a voided expense stays in the
+  // month it was recorded, and its reversal sits in the month it was voided, so over a single month this can be more or less than zero)
+  const voided = fromMinor(all.reduce((s, r) => s + toMinor(r.voided), 0n));
+  return { from, to, rows, total: fromMinor(rows.reduce((s, r) => s + toMinor(r.spent), 0n)), voided };
 }
 
 /** Spending per supplier or payee, from bills and expenses (less supplier credits). */

@@ -13,9 +13,9 @@ let planId: string;
 beforeAll(async () => { planId = (await owner.query(`SELECT id FROM plans WHERE code = 'nusuh'`)).rows[0].id; });
 afterEach(() => { delete process.env.TRIAL_EMAILS; });
 
-const trial = async (): Promise<Fixture> => {
+const trial = async (startOn = '2025-10-01'): Promise<Fixture> => {
   const f = await seed();
-  await as(f.platformOwner, (db) => B.saveSubscription(db, f.firmId, { planId, cycle: 'yearly', startOn: '2025-10-01', trial: true }));
+  await as(f.platformOwner, (db) => B.saveSubscription(db, f.firmId, { planId, cycle: 'yearly', startOn, trial: true }));
   return f;
 };
 const price = async (key: string) => Number((await owner.query(`SELECT l->>'amount' AS a FROM jsonb_array_elements(public_site_data()->'lines') l WHERE l->>'key' = $1`, [key])).rows[0].a);
@@ -230,11 +230,12 @@ describe('Alert e-mails to the owner', () => {
 });
 
 describe('Through the API: the lock lets a customer buy, but nothing else', () => {
-  let clock = d('2025-10-20T07:00:00Z');
+  // (dated in 2030 on purpose: other test files move every trial along with clocks of 2025 and 2026 and with the real clock, and must never touch these)
+  let clock = d('2030-10-20T07:00:00Z');
   let server: ReturnType<typeof buildServer>;
   let f: Fixture; const cookies: Record<string, string> = {};
   beforeAll(async () => {
-    f = await trial();
+    f = await trial('2030-10-01');
     const hash = await hashPassword('pw-123456');
     const emails: Record<string, string> = {};
     for (const [k, id] of Object.entries({ admin: f.admin, owner: f.platformOwner })) emails[k] = (await owner.query('UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING email', [hash, id])).rows[0].email;
@@ -249,7 +250,7 @@ describe('Through the API: the lock lets a customer buy, but nothing else', () =
   const call = (who: string, method: 'GET' | 'POST', url: string, payload?: unknown) => server.inject({ method, url, payload: payload as never, headers: { cookie: cookies[who]! } });
 
   it('after the trial ended (locked) the customer can place an order and confirm its payment, but cannot post', async () => {
-    expect((await call('admin', 'POST', `/api/companies/${f.a.id}/entries`, { date: '2025-10-05', memo: 'x', lines: [] })).statusCode).toBe(403);
+    expect((await call('admin', 'POST', `/api/companies/${f.a.id}/entries`, { date: '2030-10-05', memo: 'x', lines: [] })).statusCode).toBe(403);
     const placed = await call('admin', 'POST', '/api/trial/order', { modules: ['CRM'], cleanup: false });
     expect(placed.statusCode, placed.body).toBe(200);
     expect(placed.json().order.modules).toEqual(['CRM']);
@@ -274,18 +275,18 @@ describe('Through the API: the lock lets a customer buy, but nothing else', () =
     const done = await call('owner', 'POST', `/api/owner/tenants/${f.firmId}/trial/mark-paid`, { reference: 'API-1', reason: 'Bank checked' });
     expect(done.statusCode, done.body).toBe(200);
     expect((await call('admin', 'GET', '/api/trial')).json()).toMatchObject({ level: 'full', trialing: false });
-    expect((await call('admin', 'POST', `/api/companies/${f.a.id}/entries`, { date: '2025-10-05', memo: 'x', lines: [] })).statusCode).not.toBe(403);   // no longer stopped by the lock
+    expect((await call('admin', 'POST', `/api/companies/${f.a.id}/entries`, { date: '2030-10-05', memo: 'x', lines: [] })).statusCode).not.toBe(403);   // no longer stopped by the lock
   });
 
   it('a closed account cannot place an order (it can only export)', async () => {
-    const g = await trial();
+    const g = await trial('2030-10-01');
     const hash = await hashPassword('pw-123456');
     const email = (await owner.query('UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING email', [hash, g.admin])).rows[0].email;
     const login = await server.inject({ method: 'POST', url: '/api/login', payload: { email, password: 'pw-123456' } });
     const ck = String(login.headers['set-cookie']).split(';')[0]!;
-    clock = d('2025-12-20T07:00:00Z');   // after the grace period
+    clock = d('2030-12-20T07:00:00Z');   // after the grace period
     const res = await server.inject({ method: 'POST', url: '/api/trial/order', payload: { modules: [] }, headers: { cookie: ck } });
     expect(res.statusCode).toBe(403);
-    clock = d('2025-10-20T07:00:00Z');
+    clock = d('2030-10-20T07:00:00Z');
   });
 });
